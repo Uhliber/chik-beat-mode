@@ -1,0 +1,135 @@
+@import 'tailwindcss';
+
+/* Body default: Montserrat (Google Fonts) — clean and reliably readable.
+   Cubao is reserved for big display headings, Quiapo for subtitles / Filipino flavor. */
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap');
+
+/* Local typefaces — Cubao for display headings, Quiapo for subtitles. */
+@font-face {
+  font-family: 'Cubao';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/CubaoFree2-Regular.ttf') format('truetype');
+}
+@font-face {
+  font-family: 'Quiapo';
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url('/fonts/QuiapoFree2-Light.ttf') format('truetype');
+}
+@font-face {
+  font-family: 'Quiapo';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/QuiapoFree2-Regular.ttf') format('truetype');
+}
+
+@theme {
+  --color-cream: #f7edd8;
+  --color-cream-soft: #fcf6e6;
+  --color-coral: #e66b4f;
+  --color-coral-deep: #c9543b;
+
+  --color-chik: #e15a3f;
+  --color-wally: #e9b040;
+  --color-hindo: #82a872;
+  --color-pop: #3fafa1;
+  --color-tambo: #9b7bc0;
+  --color-riki: #c982a8;
+
+  --color-chik-muted: #f0b5a6;
+  --color-wally-muted: #f4dba1;
+  --color-hindo-muted: #c5d6b8;
+  --color-pop-muted: #a8d9d2;
+  --color-tambo-muted: #d2c2e0;
+  --color-riki-muted: #eccedc;
+
+  --color-table: #f4e6c8;
+  --color-table-edge: #d9c7a4;
+
+  --font-display:  'Cubao', 'Montserrat', system-ui, sans-serif;
+  --font-subtitle: 'Quiapo', 'Montserrat', system-ui, sans-serif;
+  --font-body:     'Montserrat', system-ui, sans-serif;
+}
+
+@layer base {
+  html,
+  body,
+  #app {
+    height: 100%;
+    margin: 0;
+  }
+
+  body {
+    font-family: var(--font-body);
+    background: radial-gradient(circle at 50% 35%, #f08768 0%, var(--color-coral) 55%, var(--color-coral-deep) 100%);
+    color: #2a1d12;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  .font-display {
+    font-family: var(--font-display);
+    font-feature-settings: 'aalt' 1, 'salt' 1, 'ss01' 1;
+  }
+  .font-subtitle {
+    font-family: var(--font-subtitle);
+    letter-spacing: 0.02em;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+}
+
+@layer utilities {
+  .preserve-3d {
+    transform-style: preserve-3d;
+  }
+
+  .backface-hidden {
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+  }
+
+  .perspective-table {
+    perspective: 1400px;
+    perspective-origin: 50% 30%;
+  }
+}
+
+/* Word color helpers — used to set CSS variable --word-color from a single class */
+.word-chik   { --word-color: var(--color-chik);   --word-muted: var(--color-chik-muted); }
+.word-wally  { --word-color: var(--color-wally);  --word-muted: var(--color-wally-muted); }
+.word-hindo  { --word-color: var(--color-hindo);  --word-muted: var(--color-hindo-muted); }
+.word-pop    { --word-color: var(--color-pop);    --word-muted: var(--color-pop-muted); }
+.word-tambo  { --word-color: var(--color-tambo);  --word-muted: var(--color-tambo-muted); }
+.word-riki   { --word-color: var(--color-riki);   --word-muted: var(--color-riki-muted); }
+
+/* Halo-Halo sparkle on the special Chik */
+@keyframes halo-sparkle {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 240, 200, 0); }
+  50%      { box-shadow: 0 0 18px 4px rgba(255, 230, 160, 0.85); }
+}
+.halo-glow {
+  animation: halo-sparkle 1.6s ease-in-out infinite;
+}
+
+/* Active-beat ring (Play mode) — pulses on the seat that currently owns the beat. */
+@keyframes beat-active-pulse {
+  0%, 100% { transform: scale(1);   filter: brightness(1); }
+  50%      { transform: scale(1.05); filter: brightness(1.15); }
+}
+.beat-active-ring {
+  animation: beat-active-pulse 0.9s ease-in-out infinite;
+}
+
+/* 3-dot beat HUD pip — fades / scales on a stagger to suggest a metronome. */
+@keyframes beat-dot {
+  0%, 100% { transform: scale(0.7); opacity: 0.45; }
+  50%      { transform: scale(1.15); opacity: 1; }
+}
