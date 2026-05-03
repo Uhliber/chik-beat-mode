@@ -3,10 +3,23 @@ import { computed, ref, watch } from 'vue';
 import CardFan from './CardFan.vue';
 import BasePile from './BasePile.vue';
 import SpeechBubble from './SpeechBubble.vue';
+import { useResponsive } from '@/composables/useResponsive';
 import type { Player } from '@/game/Player';
 import type { Card } from '@/game/Card';
 import type { ChantWord } from '@/game/types';
 import type { BasePile as BasePileType } from '@/game/Game';
+
+const { width: viewportW, isMobile } = useResponsive();
+
+/** Max fan width for the HUMAN hand. Keeps a 14-card hand from clipping off the edges. */
+const humanHandMaxWidth = computed(() => {
+  if (isMobile.value) {
+    // Leave ~36 px breathing room on each side of a phone screen.
+    return Math.max(280, viewportW.value - 72);
+  }
+  // Desktop: cap at a comfortable arc — wide enough to spread, narrow enough to read.
+  return 720;
+});
 
 const props = defineProps<{
   player: Player;
@@ -23,6 +36,12 @@ const props = defineProps<{
   shoutKey?: number;
   inFlightIds?: Set<string>;
   lastPlayedCardId?: string | null;
+  /**
+   * Compact opponent rendering (mobile). Skips the fanned hand entirely and shrinks the
+   * owned base — the player is represented by their pill + mini base only. The card-count
+   * badge on the pill stands in for the hand.
+   */
+  compact?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -55,6 +74,23 @@ const onCardAimStart = (payload: { card: Card; el: HTMLElement; clientX: number;
     <!-- Speech bubble -->
     <div class="h-9 flex items-end">
       <SpeechBubble :word="shouted ?? null" :visible="showBubble" />
+    </div>
+
+    <!-- Compact opponents (mobile) draw their fanned hand ABOVE the pill so the cards
+         look like they're being held above the player tag. Max 5 visible, "+N" overflow. -->
+    <div
+      v-if="compact && !isHumanSeat && player.hand.length > 0"
+      class="-mb-1"
+    >
+      <CardFan
+        :cards="player.hand"
+        :face-up="false"
+        :card-width="32"
+        :fan-angle="32"
+        :arc="6"
+        :interactive="false"
+        :max-visible="5"
+      />
     </div>
 
     <!-- Name plate (compact, no word duplication since the base art is shown below).
@@ -109,8 +145,20 @@ const onCardAimStart = (payload: { card: Card; el: HTMLElement; clientX: number;
       />
     </div>
 
-    <!-- AI seats: base sits between name plate and hand (cards drop onto base from above). -->
-    <template v-if="!isHumanSeat">
+    <!-- Compact opponent (mobile) — fan was rendered above the pill; mini base sits below. -->
+    <template v-if="compact && !isHumanSeat">
+      <div v-if="ownedBasePile" class="mt-1" :data-base-slot="player.ownedBaseWord">
+        <BasePile
+          :pile="ownedBasePile"
+          :size="44"
+          :in-flight-ids="inFlightIds"
+          :last-played-card-id="lastPlayedCardId"
+        />
+      </div>
+    </template>
+
+    <!-- Desktop opponent: base sits between name plate and hand (cards drop onto base from above). -->
+    <template v-else-if="!isHumanSeat">
       <div v-if="ownedBasePile" class="mt-1" :data-base-slot="player.ownedBaseWord">
         <BasePile
           :pile="ownedBasePile"
@@ -142,6 +190,7 @@ const onCardAimStart = (payload: { card: Card; el: HTMLElement; clientX: number;
           :fan-angle="42"
           :arc="20"
           :interactive="true"
+          :max-width="humanHandMaxWidth"
           @card-aim-start="onCardAimStart"
         />
       </div>

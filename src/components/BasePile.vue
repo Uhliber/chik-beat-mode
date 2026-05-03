@@ -36,8 +36,6 @@ const baseImage = computed(() => {
   return `/cards/${props.pile.slot}-base.png`;
 });
 
-const totalRemaining = computed(() => visiblePile.value.length);
-
 /** Per-card offset (in px) for the small fan: each newer card sits up + slightly right of the prior. */
 const stackOffset = (i: number, n: number) => {
   // i = 0 is oldest visible, i = n-1 is newest (top).
@@ -95,13 +93,6 @@ const stackOffset = (i: number, n: number) => {
       </div>
     </div>
 
-    <!-- Pile size badge -->
-    <div
-      v-if="totalRemaining > stack.length"
-      class="absolute left-1/2 -translate-x-1/2 -bottom-4 text-[10px] font-bold bg-black/40 text-cream-soft rounded-full px-2 py-0.5 z-50"
-    >
-      {{ totalRemaining }}
-    </div>
   </div>
 </template>
 
