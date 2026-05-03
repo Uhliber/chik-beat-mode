@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import type { GameEvent, ChantWord, BaseSlot, CardKind } from '@/game/types';
 import IconTrophy from './icons/IconTrophy.vue';
 
 const props = defineProps<{ events: GameEvent[] }>();
+
+/** When true, the body is collapsed and only the header strip is visible. */
+const collapsed = ref(false);
 
 const formatted = computed(() =>
   props.events
@@ -70,13 +73,17 @@ function format(e: GameEvent): string {
       return `${e.playerId.toUpperCase()}'s beat`;
     case 'beatSkipped':
       return `${e.playerId.toUpperCase()} skipped (no ${cap(e.beat)})`;
+    case 'soloPenalty':
+      return `${e.playerId.toUpperCase()} solo penalty — ${cap(e.cardWord)} on ${cap(e.expectedBeat)} beat (+${(e.penaltyMs / 1000).toFixed(1)} s)`;
+    case 'soloAutoFinish':
+      return `Stuck — auto-cleared ${e.cardCount} card${e.cardCount === 1 ? '' : 's'} (+${(e.totalPenaltyMs / 1000).toFixed(0)} s)`;
     case 'winner':
       return `${e.playerId.toUpperCase()} WINS`;
   }
 }
 
 function tone(e: GameEvent): 'info' | 'good' | 'bad' | 'win' | 'muted' {
-  if (e.kind === 'tie' || e.kind === 'miscall' || e.kind === 'penaltyTaken') return 'bad';
+  if (e.kind === 'tie' || e.kind === 'miscall' || e.kind === 'penaltyTaken' || e.kind === 'soloPenalty') return 'bad';
   if (e.kind === 'slam' || e.kind === 'gameOpened') return 'good';
   if (e.kind === 'winner') return 'win';
   if (e.kind === 'beatChanged' || e.kind === 'beatSkipped') return 'muted';
@@ -86,10 +93,46 @@ function tone(e: GameEvent): 'info' | 'good' | 'bad' | 'win' | 'muted' {
 
 <template>
   <div class="rounded-2xl bg-cream-soft/95 shadow-lg ring-1 ring-black/10 text-sm overflow-hidden flex flex-col">
-    <header class="px-3 py-2 font-extrabold uppercase tracking-wider text-cream-soft" :style="{ background: 'var(--color-coral)' }">
-      Event log
+    <!-- Header doubles as a click target — toggles the body open/closed. -->
+    <header
+      class="px-3 py-2 font-extrabold uppercase tracking-wider text-cream-soft flex items-center justify-between cursor-pointer select-none transition-colors"
+      :style="{ background: 'var(--color-coral)' }"
+      @click="collapsed = !collapsed"
+    >
+      <span>Event log</span>
+      <button
+        type="button"
+        class="w-6 h-6 rounded-full flex items-center justify-center hover:bg-black/15 transition-colors"
+        :aria-label="collapsed ? 'Expand event log' : 'Minimize event log'"
+        @click.stop="collapsed = !collapsed"
+      >
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 12 12"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          :style="{
+            transition: 'transform 220ms ease-out',
+            transform: collapsed ? 'rotate(180deg)' : 'rotate(0deg)',
+          }"
+        >
+          <polyline points="3 7 6 4 9 7" />
+        </svg>
+      </button>
     </header>
-    <div class="flex-1 overflow-y-auto max-h-[40vh] md:max-h-[60vh] divide-y divide-coral/10">
+    <!-- Body collapses with a subtle max-height + opacity animation. -->
+    <div
+      class="flex-1 overflow-y-auto divide-y divide-coral/10"
+      :style="{
+        maxHeight: collapsed ? '0px' : '60vh',
+        opacity: collapsed ? 0 : 1,
+        transition: 'max-height 280ms ease-out, opacity 200ms ease-out',
+      }"
+    >
       <div
         v-for="ev in formatted"
         :key="ev.id"

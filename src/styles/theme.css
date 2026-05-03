@@ -61,6 +61,7 @@
   #app {
     height: 100%;
     margin: 0;
+    overscroll-behavior: none;
   }
 
   body {
@@ -68,6 +69,7 @@
     background: radial-gradient(circle at 50% 35%, #f08768 0%, var(--color-coral) 55%, var(--color-coral-deep) 100%);
     color: #2a1d12;
     overflow: hidden;
+    overscroll-behavior: none;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }
