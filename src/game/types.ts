@@ -52,6 +52,4 @@ export type GameEvent =
   | { kind: 'penaltyTaken'; playerId: PlayerId; cardIds: string[]; fromBase: BaseSlot[] }
   | { kind: 'beatChanged'; seatIndex: number; playerId: PlayerId }
   | { kind: 'beatSkipped'; seatIndex: number; playerId: PlayerId; beat: ChantWord }
-  | { kind: 'soloPenalty'; playerId: PlayerId; cardId: string; cardWord: ChantWord; expectedBeat: ChantWord; penaltyMs: number }
-  | { kind: 'soloAutoFinish'; playerId: PlayerId; cardCount: number; totalPenaltyMs: number }
   | { kind: 'winner'; playerId: PlayerId };

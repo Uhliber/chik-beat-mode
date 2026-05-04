@@ -2,17 +2,7 @@
 import IconTrophy from './icons/IconTrophy.vue';
 import Confetti from './Confetti.vue';
 
-defineProps<{
-  winnerId: string | null;
-  /** Title override (Solo uses "Cleared!" instead of "Winner"). */
-  title?: string;
-  /** Big centred line — falls back to winnerId.toUpperCase(). Used for Solo to show the time. */
-  headline?: string;
-  /** Optional sub-line below the headline (e.g. "New best!"). */
-  subtitle?: string;
-  /** Sub-line tone — 'celebrate' = amber + bold for new-best. */
-  subtitleTone?: 'info' | 'celebrate';
-}>();
+defineProps<{ winnerId: string | null }>();
 defineEmits<{ (e: 'restart'): void }>();
 </script>
 
@@ -36,21 +26,14 @@ defineEmits<{ (e: 'restart'): void }>();
         class="rounded-3xl p-8 max-w-md text-center"
         style="background: var(--color-cream-soft); box-shadow: 0 20px 60px rgba(0,0,0,0.4)"
       >
-        <div class="text-sm uppercase tracking-widest text-coral-deep font-bold">{{ title ?? 'Winner' }}</div>
+        <div class="text-sm uppercase tracking-widest text-coral-deep font-bold">Winner</div>
         <div
           class="flex items-center justify-center gap-3 my-3 text-5xl font-display font-black uppercase"
           style="color: var(--color-coral)"
         >
           <IconTrophy :size="48" />
-          <span>{{ headline ?? winnerId.toUpperCase() }}</span>
+          <span>{{ winnerId.toUpperCase() }}</span>
           <IconTrophy :size="48" />
-        </div>
-        <div
-          v-if="subtitle"
-          class="-mt-1 mb-2 text-base font-extrabold tracking-wider uppercase"
-          :class="subtitleTone === 'celebrate' ? 'text-amber-600' : 'text-stone-600'"
-        >
-          {{ subtitle }}
         </div>
         <button
           type="button"

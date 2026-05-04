@@ -2,17 +2,14 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import PlayerSeat from './PlayerSeat.vue';
 import BasesArea from './BasesArea.vue';
-import CardFan from './CardFan.vue';
 import SlamWheel, { type WheelTarget } from './SlamWheel.vue';
 import BeatSliceOverlay from './BeatSliceOverlay.vue';
-import { useSeatLayout, type SeatLayoutMode } from '@/composables/useSeatLayout';
-import { useResponsive } from '@/composables/useResponsive';
-import { flyCardSlam, flyCardPenalty, bounceBackInPlace } from '@/composables/useCardAnimation';
+import { useSeatLayout } from '@/composables/useSeatLayout';
+import { flyCardSlam, flyCardPenalty } from '@/composables/useCardAnimation';
 import type { Game } from '@/game/Game';
 import type { Card } from '@/game/Card';
 import type { Player } from '@/game/Player';
 import type { GameEvent, ChantWord, BaseSlot } from '@/game/types';
-import type { SimMode } from '@/game/SimulationController';
 
 const props = defineProps<{
   game: Game;
@@ -20,8 +17,8 @@ const props = defineProps<{
   speed: number;
   /** Reactive version stamp so we re-read the (shallow-ref) game state. */
   version: number;
-  /** Game mode — 'play' shows the active-beat highlight + pie-slice overlay; 'solo' is the time-attack variant. */
-  mode: SimMode;
+  /** Game mode — 'play' shows the active-beat highlight + pie-slice overlay. */
+  mode: 'simulation' | 'play';
   /** Index in game.players of the active-beat seat (-1 outside Play mode / pre-open). */
   activeBeatSeatIndex: number;
   /** Tick index within the active player's turn (0..total-1; -1 outside Play mode). */
@@ -130,25 +127,6 @@ function legalOpeningSlot(): BaseSlot {
 }
 
 function onAimStart(payload: { card: Card; el: HTMLElement; clientX: number; clientY: number; player: Player }) {
-  // SOLO: every slam goes to Main. No wheel chips, no opening filter — click OR drag,
-  // either way, on release we always commit to 'main'.
-  if (props.mode === 'solo') {
-    aim.value = {
-      card: payload.card,
-      player: payload.player,
-      startX: payload.clientX,
-      startY: payload.clientY,
-      cursorX: payload.clientX,
-      cursorY: payload.clientY,
-      targets: [],
-      hasDragged: false,
-    };
-    window.addEventListener('pointermove', onAimMove);
-    window.addEventListener('pointerup', onAimUp);
-    window.addEventListener('pointercancel', onAimCancel);
-    window.addEventListener('keydown', onAimKey);
-    return;
-  }
   // OPENING phase: only the Halo-Halo card is interactive. Other cards do nothing
   // (no aim mode at all → also no penalty path).
   if (!props.game.opened && !payload.card.isHaloHalo) {
@@ -200,24 +178,6 @@ function onAimUp() {
     return;
   }
 
-  // SOLO: only one target ever. The SlamWheel draws a cancel ring with radius
-  // AIM_THRESHOLD_PX around the start point and switches its label/tint based on whether
-  // the cursor is inside that ring. Mirror that geometry exactly:
-  //  - tap (no drag) → slam Main
-  //  - drag, release INSIDE the cancel ring → cancel (no slam)
-  //  - drag, release OUTSIDE the cancel ring → slam Main (the player committed by
-  //    dragging clear of the cancel zone)
-  if (props.mode === 'solo') {
-    const dx = a.cursorX - a.startX;
-    const dy = a.cursorY - a.startY;
-    const insideCancelRing = a.hasDragged && Math.hypot(dx, dy) < AIM_THRESHOLD_PX;
-    if (!insideCancelRing) {
-      emit('slam-from-human', { card: a.card, player: a.player, targetBase: 'main' });
-    }
-    cleanupAim();
-    return;
-  }
-
   // OPENING: we only ever entered aim mode for the Halo-Halo card. Any release commits
   // to the legal target — there's no penalty path during the opening, and no game state
   // to "cancel" out of yet. This guarantees the Halo-Halo can only land on the right place.
@@ -259,30 +219,18 @@ function cleanupAim() {
   window.removeEventListener('keydown', onAimKey);
 }
 
-const { isMobile, width: viewportWidth } = useResponsive();
-
-// Responsive seat radius. On mobile portrait, seats sit in the UPPER semicircle so the
-// vertical budget is tighter — seat radius is smaller and clamped against viewport height.
+// Responsive seat radius based on viewport.
 const radius = ref(280);
 const updateRadius = () => {
   if (!tableRef.value) return;
   const w = tableRef.value.clientWidth;
   const h = tableRef.value.clientHeight;
-  if (isMobile.value) {
-    // Bound by width (seats must fit horizontally) and by height/3 (P1 needs a hand area below).
-    radius.value = Math.max(110, Math.min(160, Math.min(w * 0.40, h * 0.22)));
-  } else {
-    const m = Math.min(w, h);
-    radius.value = Math.max(150, Math.min(330, m * 0.36));
-  }
+  const m = Math.min(w, h);
+  radius.value = Math.max(150, Math.min(330, m * 0.36));
 };
 
 const playerCount = computed(() => props.game.players.length);
-const seatLayoutMode = computed<SeatLayoutMode>(() => (isMobile.value ? 'semicircle' : 'radial'));
-const { seats } = useSeatLayout(playerCount, radius, seatLayoutMode);
-
-// Recompute the radius when the viewport mode flips (desktop ⇄ mobile breakpoint).
-watch(isMobile, () => updateRadius());
+const { seats } = useSeatLayout(playerCount, radius);
 
 const ro = new ResizeObserver(() => updateRadius());
 watch(tableRef, (el) => {
@@ -341,23 +289,7 @@ function rectToEl(rect: CapturedRect): HTMLElement {
   return anchor;
 }
 
-// Solo auto-finish stagger: when the engine emits soloAutoFinish (player got stuck),
-// the next batch of slam events all fire synchronously in the same tick. We assign each
-// an ascending index so flyCardSlam can be deferred — otherwise 14 cards would burst
-// from the halo at once, overlapping into a single blob at main. The flag clears via
-// a microtask so subsequent unrelated slams aren't affected.
-let autoFinishStaggerIndex = 0;
-let autoFinishActive = false;
-const AUTO_FINISH_STAGGER_MS = 90;
-
 function handleEvent(e: GameEvent) {
-  if (e.kind === 'soloAutoFinish') {
-    autoFinishActive = true;
-    autoFinishStaggerIndex = 0;
-    // After this microtask flush, the burst is over — stop deferring.
-    queueMicrotask(() => { autoFinishActive = false; });
-    return;
-  }
   if (e.kind === 'slam') {
     // Speech bubble.
     shoutCounter++;
@@ -365,28 +297,19 @@ function handleEvent(e: GameEvent) {
     // Highlight this as the last-played card across the table.
     lastPlayedCardId.value = e.cardId;
 
-    // Find the source card element BEFORE Vue re-renders. If the slammed card isn't
-    // currently rendered in any fan (e.g. opponent compact view caps at 5 visible cards
-    // and the slammed card was buried behind the +N overflow), fall back to the seat
-    // element as the flight origin — so the back→face flip animation ALWAYS runs.
+    // Find the source card element BEFORE Vue re-renders.
     const cardEl = findCardEl(e.cardId);
     const card = findCardObject(e.cardId);
     let targetEl = findBaseEl(e.targetBase);
     if (!targetEl) targetEl = findBaseEl('main');
-    const sourceEl = cardEl ?? findSeatEl(e.playerId);
 
-    if (sourceEl && targetEl && card) {
-      const fromRect = captureRect(sourceEl);
+    if (cardEl && targetEl && card) {
+      const fromRect = captureRect(cardEl);
       const toRect = captureRect(targetEl);
-      // Hide the source ONLY if it's the actual rendered card (not the seat fallback).
-      if (cardEl) cardEl.style.visibility = 'hidden';
+      // Hide the source so the original "doesn't double".
+      cardEl.style.visibility = 'hidden';
       markInFlight(e.cardId);
-      // Solo auto-finish: defer each card's flight by a stagger so 14 cards arc into Main
-      // sequentially instead of as a single overlapping burst. rectToEl is created INSIDE
-      // the launch closure so the portal anchor's 50ms self-cleanup doesn't fire before
-      // the deferred launch runs.
-      const staggerMs = autoFinishActive ? autoFinishStaggerIndex++ * AUTO_FINISH_STAGGER_MS : 0;
-      const launch = () => flyCardSlam({
+      flyCardSlam({
         cardId: e.cardId,
         fromEl: rectToEl(fromRect),
         toEl: rectToEl(toRect),
@@ -395,16 +318,6 @@ function handleEvent(e: GameEvent) {
         speed: props.speed,
         onComplete: () => clearInFlight(e.cardId),
       });
-      if (staggerMs > 0) setTimeout(launch, staggerMs);
-      else launch();
-    }
-  } else if (e.kind === 'soloPenalty') {
-    // Solo wrong-card: card stays in the halo. Animate a quick tug toward main + shake
-    // on the actual mounted element so the player can see WHICH card was rejected.
-    const cardEl = findCardEl(e.cardId);
-    const mainEl = findBaseEl('main');
-    if (cardEl && mainEl) {
-      bounceBackInPlace(cardEl, mainEl, props.speed);
     }
   } else if (e.kind === 'penaltyTaken') {
     e.cardIds.forEach((cardId, i) => {
@@ -427,61 +340,6 @@ function handleEvent(e: GameEvent) {
 }
 
 
-/**
- * Solo-mode shim: CardFan emits without a `player` field, so we attach player[0] here.
- * Pre-open: ANY card click counts as "I want to start" — we substitute the Halo-Halo
- * card so the open always lands cleanly. The clicked-card identity is lost, but the
- * pulsing halo telegraphs that it's the real opener.
- */
-function onSoloCardAim(payload: { card: Card; el: HTMLElement; clientX: number; clientY: number }) {
-  const player = props.game.players[0];
-  if (!player) return;
-  let card = payload.card;
-  if (!props.game.opened) {
-    const halo = player.hand.find((c) => c.isHaloHalo);
-    if (!halo) return;
-    card = halo;
-  }
-  onAimStart({ ...payload, card, player });
-}
-
-/** Pre-open: pulse the Halo-Halo card to telegraph WHICH card is the actual opener. */
-function soloCardPulse(cardId: string): boolean {
-  if (props.game.opened) return false;
-  const player = props.game.players[0];
-  const card = player?.hand.find((c) => c.id === cardId);
-  return !!card?.isHaloHalo;
-}
-
-/**
- * Solo mobile fan layers: split the player's hand into N stacked arcs at the bottom of
- * the screen. The FRONT-most layer (idx N-1) sits closest to the viewport bottom AND has
- * the highest z-index so it renders on top of the layers behind it. Each subsequent layer
- * back-stacks UPWARD (larger `bottom` value) and behind (lower z) — like a hand of cards
- * sliced into rows. Re-evaluates when the hand shrinks so layers re-distribute smoothly.
- */
-const SOLO_LAYER_COUNT = 4;
-const SOLO_LAYER_GAP_PX = 56;     // vertical distance between consecutive layers
-const SOLO_BOTTOM_INSET_PX = 88;  // space reserved below the front-most layer for the foot bar
-const soloLayeredFans = computed(() => {
-  const hand = props.game.players[0]?.hand ?? [];
-  if (hand.length === 0) return [];
-  const n = Math.min(SOLO_LAYER_COUNT, Math.max(1, Math.ceil(hand.length / 4)));
-  const perLayer = Math.ceil(hand.length / n);
-  const layers: Array<{ idx: number; bottom: number; cards: Card[] }> = [];
-  for (let i = 0; i < n; i++) {
-    const slice = hand.slice(i * perLayer, (i + 1) * perLayer);
-    if (slice.length === 0) break;
-    layers.push({
-      idx: i,
-      // idx 0 = back layer (highest on screen), idx n-1 = front (lowest, on top z-wise).
-      bottom: SOLO_BOTTOM_INSET_PX + (n - 1 - i) * SOLO_LAYER_GAP_PX,
-      cards: slice,
-    });
-  }
-  return layers;
-});
-
 function findCardObject(cardId: string): Card | null {
   for (const p of props.game.players) {
     const c = p.hand.find((x) => x.id === cardId);
@@ -498,14 +356,9 @@ function findCardObject(cardId: string): Card | null {
 </script>
 
 <template>
-  <div
-    ref="tableRef"
-    class="relative w-full h-full overflow-hidden"
-    :class="!isMobile ? 'perspective-table' : ''"
-  >
-    <!-- Table surface — tilted ellipse on desktop, flat rounded-rect on mobile. -->
+  <div ref="tableRef" class="relative w-full h-full overflow-hidden perspective-table">
+    <!-- The tilted table surface -->
     <div
-      v-if="!isMobile"
       class="absolute left-1/2 top-1/2 rounded-[40%/30%]"
       :style="{
         width: 'min(90vw, 1100px)',
@@ -515,138 +368,46 @@ function findCardObject(cardId: string): Card | null {
         boxShadow: '0 30px 60px rgba(0, 0, 0, 0.35), inset 0 0 0 8px rgba(217, 199, 164, 0.5)',
       }"
     />
-    <div
-      v-else
-      class="absolute left-1/2 top-1/2 rounded-3xl"
-      :style="{
-        width: 'min(96vw, 460px)',
-        height: 'min(82dvh, 760px)',
-        transform: 'translate(-50%, -50%)',
-        background: 'radial-gradient(ellipse at 50% 35%, var(--color-table) 0%, var(--color-table-edge) 95%)',
-        boxShadow: '0 18px 36px rgba(0, 0, 0, 0.30), inset 0 0 0 4px rgba(217, 199, 164, 0.5)',
-      }"
-    />
 
-    <!-- Beat-mode pie overlay. Mode 'half' on mobile (top-half wedges = opponents,
-         bottom-half = single P1 wedge). 'radial' on desktop. -->
+    <!-- Beat-mode pie overlay: highlights the active player's wedge of the table.
+         Sits behind the bases / seats. Radius scales with the seat radius so the wedge
+         always reaches comfortably under each seat. -->
     <div v-if="mode === 'play' && game.players.length > 0" class="absolute inset-0 pointer-events-none">
       <BeatSliceOverlay
         :players="game.players"
         :active-index="activeBeatSeatIndex"
-        :radius="Math.round(radius * (isMobile ? 1.05 : 0.78))"
-        :inner-radius="Math.round(radius * (isMobile ? 0.42 : 0.32))"
-        :mode="isMobile ? 'half' : 'radial'"
+        :radius="Math.round(radius * 0.78)"
+        :inner-radius="Math.round(radius * 0.32)"
       />
     </div>
 
-    <!-- Bases at the center. Layered on mobile (unowned peek out behind main),
-         row-aligned on desktop, solo = bigger main alone. Offset rules:
-           - non-solo mobile  : UP  (-72px)  — keeps the bases clear of the bottom hand fan.
-           - solo desktop     : DOWN (+80px) — keeps the halo centred around main.
-           - solo mobile      : UP  (-90px) — main moves up to sit just below the ChantTicker
-                                              so the U-shape pile owns the bottom half.
-           - non-solo desktop : no offset. -->
+    <!-- Bases at the center -->
     <div
       class="absolute left-1/2 top-1/2"
-      :style="{
-        transform: `translate(-50%, -50%)${
-          mode === 'solo'
-            ? (isMobile ? ' translateY(-120px)' : ' translateY(80px)')
-            : (isMobile ? ' translateY(-72px)' : '')
-        }`,
-        transformStyle: 'preserve-3d',
-        // Solo mobile: layered fans live below the main base; bump z to ensure the base
-        // stays on top in the rare overlap (e.g. tall ChantTicker bubble + small viewport).
-        zIndex: mode === 'solo' && isMobile ? 50 : 'auto',
-      }"
+      style="transform: translate(-50%, -50%); transform-style: preserve-3d;"
     >
       <BasesArea
         :game="game"
         :in-flight-ids="inFlightIds"
         :last-played-card-id="lastPlayedCardId"
-        :layout="mode === 'solo' ? 'solo' : isMobile ? 'layered' : 'row'"
-        :compact="mode === 'solo' && isMobile"
       />
     </div>
 
-    <!-- SOLO desktop: a single CardFan in 'circle' mode wraps the central main base.
-         Click or drag a card → onAimStart → onAimUp → slam to Main. The vertical offset
-         matches the BasesArea push-down so the halo stays centred around the main base
-         AND clears the timer/ticker HUD. -->
+    <!-- Player seats arranged radially. Each seat rotates so its hand fans toward the center.
+         For the human seat we apply a small inward translation so the owned base (which now sits
+         BELOW the hand) has room to render without clipping the viewport edge.
+         The human seat also gets a high z-index so its (wider) fanned hand renders on top of
+         any neighbouring seats and the event log. -->
     <div
-      v-if="mode === 'solo' && !isMobile"
-      class="absolute left-1/2 top-1/2"
-      :style="{
-        transform: 'translate(-50%, -50%) translateY(80px)',
-      }"
-      :data-seat-player="game.players[0]?.id"
-    >
-      <CardFan
-        v-if="game.players[0]"
-        :cards="game.players[0].hand"
-        :face-up="true"
-        :interactive="true"
-        :card-width="56"
-        fan-mode="circle"
-        :circle-radius="Math.max(140, Math.min(280, radius * 0.95))"
-        :card-pulse="soloCardPulse"
-        @card-aim-start="onSoloCardAim"
-      />
-    </div>
-
-    <!-- SOLO mobile: cards stacked into LAYERED FANS at the bottom of the screen. Each
-         layer is a bottom-anchored arc; layers offset vertically with the FRONT-most layer
-         (closest to screen bottom) sitting on top via z-index. Same click flow as before
-         (card-aim-start → onSoloCardAim → onAimUp → slam to main). -->
-    <template v-if="mode === 'solo' && isMobile && game.players[0]">
-      <div
-        v-for="layer in soloLayeredFans"
-        :key="layer.idx"
-        class="absolute left-1/2"
-        :style="{
-          bottom: `${layer.bottom}px`,
-          transform: 'translateX(-50%)',
-          zIndex: layer.idx,
-        }"
-        :data-seat-player="game.players[0]?.id"
-      >
-        <CardFan
-          :cards="layer.cards"
-          :face-up="true"
-          :interactive="true"
-          :card-width="60"
-          :max-width="Math.min(viewportWidth - 24, 360)"
-          :card-pulse="soloCardPulse"
-          @card-aim-start="onSoloCardAim"
-        />
-      </div>
-    </template>
-
-    <!-- Player seats (Simulation / Play). Position via useSeatLayout (radial on desktop,
-         semicircle on mobile). Desktop human seat lifts INWARD by 90px so the owned base
-         (below the hand) has breathing room. Mobile opponent seats lift UPWARD by ~50px so
-         their owned bases occupy the empty space above the central main base. -->
-    <div
-      v-if="mode !== 'solo'"
       v-for="(seat, i) in seats"
       :key="game.players[i]?.id"
       class="absolute left-1/2 top-1/2"
       :style="{
-        transform: (() => {
-          const t = seat.transform;
-          const p = game.players[i];
-          if (!p) return t;
-          if (!isMobile && !p.isAI) return t + ' translateY(-90px)';
-          if (isMobile && p.isAI) return t + ' translateY(-50px)';
-          return t;
-        })(),
+        transform: game.players[i] && !game.players[i].isAI
+          ? seat.transform + ' translateY(-90px)'
+          : seat.transform,
         transformOrigin: 'center',
-        // Active-beat seat sits ABOVE neighbours so cards/bubble/pill aren't covered by the
-        // adjacent seats' content. Human seat (P1) keeps a high baseline z so its hand fan
-        // also sits above neighbours.
-        zIndex: mode === 'play' && i === activeBeatSeatIndex
-          ? 35
-          : (game.players[i] && !game.players[i].isAI ? 25 : 5),
+        zIndex: game.players[i] && !game.players[i].isAI ? 25 : 5,
       }"
       :data-seat-player="game.players[i]?.id"
     >
@@ -655,7 +416,6 @@ function findCardObject(cardId: string): Card | null {
           v-if="game.players[i]"
           :player="game.players[i]"
           :is-human-seat="!game.players[i].isAI"
-          :compact="isMobile && !!game.players[i].isAI"
           :is-active-beat="mode === 'play' && i === activeBeatSeatIndex"
           :beat-tick-index="i === activeBeatSeatIndex ? activeBeatTickIndex : -1"
           :beat-total-ticks="activeBeatTotalTicks"

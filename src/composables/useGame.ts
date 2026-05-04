@@ -5,21 +5,6 @@ import { SimulationController, type SimStatus, type SimMode } from '@/game/Simul
 import type { GameEvent, PlayerId } from '@/game/types';
 import { useBeatAudio } from './useBeatAudio';
 
-const SOLO_BEST_KEY = 'chik-solo-best-time-ms';
-
-function loadSoloBestTime(): number | null {
-  if (typeof window === 'undefined') return null;
-  const raw = window.localStorage.getItem(SOLO_BEST_KEY);
-  if (!raw) return null;
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : null;
-}
-
-function saveSoloBestTime(ms: number): void {
-  if (typeof window === 'undefined') return;
-  window.localStorage.setItem(SOLO_BEST_KEY, String(Math.round(ms)));
-}
-
 export interface GameViewState {
   /** Reactive copy of game state — incremented to force re-reads on each event. */
   version: number;
@@ -55,38 +40,6 @@ export function useGame() {
   /** Slider: how many metronome ticks per player turn. Default 5. */
   const beatsPerPlayer = ref<number>(5);
   const beatAudio = useBeatAudio();
-  // ---------------------------------------------------------------------------
-  // SOLO MODE state — time-attack timer + accumulated +2s penalties + persisted best.
-  // The display value is `soloElapsedMs + soloPenaltyMs`; the RAF loop only mutates
-  // `soloElapsedMs` so penalty hits jump the clock immediately without timer drift.
-  // ---------------------------------------------------------------------------
-  const soloElapsedMs = ref(0);
-  const soloPenaltyMs = ref(0);
-  const soloRunning = ref(false);
-  const soloBestTimeMs = ref<number | null>(loadSoloBestTime());
-  const soloLastFinalMs = ref<number | null>(null);
-  const soloIsNewBest = ref(false);
-  let soloRafId: number | null = null;
-  let soloStartedAt = 0;
-  const startSoloTimer = () => {
-    if (soloRunning.value) return;
-    soloRunning.value = true;
-    soloStartedAt = performance.now() - soloElapsedMs.value;
-    const tick = () => {
-      if (!soloRunning.value) return;
-      soloElapsedMs.value = performance.now() - soloStartedAt;
-      soloRafId = requestAnimationFrame(tick);
-    };
-    soloRafId = requestAnimationFrame(tick);
-  };
-  const stopSoloTimer = () => {
-    soloRunning.value = false;
-    if (soloRafId !== null) {
-      cancelAnimationFrame(soloRafId);
-      soloRafId = null;
-    }
-  };
-
   /** Continuous (non-wrapping) virtual position of the chant — drives the ticker animation. */
   const chantVirtualPos = ref(0);
   /**
@@ -115,26 +68,6 @@ export function useGame() {
     if (e.kind === 'beatChanged') {
       activeBeatSeatIndex.value = e.seatIndex;
     }
-    // SOLO timer hooks. The clock is started/stopped by status changes (see handleStatus)
-    // so pressing Start kicks the run; here we just react to penalty + winner events.
-    if (mode.value === 'solo') {
-      if (e.kind === 'soloPenalty') {
-        soloPenaltyMs.value += e.penaltyMs;
-        beatAudio.ding('low');
-      }
-      if (e.kind === 'winner') {
-        stopSoloTimer();
-        const final = soloElapsedMs.value + soloPenaltyMs.value;
-        soloLastFinalMs.value = final;
-        if (soloBestTimeMs.value === null || final < soloBestTimeMs.value) {
-          soloBestTimeMs.value = final;
-          soloIsNewBest.value = true;
-          saveSoloBestTime(final);
-        } else {
-          soloIsNewBest.value = false;
-        }
-      }
-    }
     state.events.push(e);
     if (state.events.length > MAX_LOG) state.events.splice(0, state.events.length - MAX_LOG);
     triggerRef(game);
@@ -143,11 +76,6 @@ export function useGame() {
   const handleStatus = (s: SimStatus) => {
     state.status = s;
     state.version++;
-    // Solo: the timer is gated by status. Start kicks the clock; pause/end stop it.
-    if (mode.value === 'solo') {
-      if (s === 'running') startSoloTimer();
-      else stopSoloTimer();
-    }
   };
 
   const initGame = () => {
@@ -165,13 +93,6 @@ export function useGame() {
     activeBeatSeatIndex.value = -1;
     activeBeatTickIndex.value = -1;
     activeBeatTotalTicks.value = beatsPerPlayer.value;
-    // Reset solo-run state. `soloBestTimeMs` is intentionally preserved across rounds
-    // (it's the persisted record); only the in-progress run state resets.
-    stopSoloTimer();
-    soloElapsedMs.value = 0;
-    soloPenaltyMs.value = 0;
-    soloLastFinalMs.value = null;
-    soloIsNewBest.value = false;
 
     const g = new Game();
     const ctrl = new SimulationController(g);
@@ -215,14 +136,7 @@ export function useGame() {
     triggerRef(controller);
   };
 
-  const start = () => {
-    controller.value.start();
-    // Belt-and-suspenders: also start the solo timer directly. handleStatus also calls
-    // this on the 'running' transition, but startSoloTimer is idempotent (early-return
-    // if already running) so the double call is harmless and protects against any race
-    // where the listener hasn't been attached yet on a freshly-rebuilt controller.
-    if (mode.value === 'solo') startSoloTimer();
-  };
+  const start = () => controller.value.start();
   const pause = () => controller.value.pause();
   const resume = () => controller.value.resume();
   const setSpeed = (s: number) => {
@@ -236,33 +150,18 @@ export function useGame() {
   const setPlayerCount = (n: number) => {
     playerCount.value = Math.max(2, Math.min(6, n));
   };
-  // Remembered player count from the last non-solo mode, so leaving Solo restores it
-  // instead of stranding the table at 1 player.
-  let lastNonSoloPlayerCount = playerCount.value;
   const setPlayerHuman = (id: PlayerId, isHuman: boolean) => {
     controller.value.setPlayerHuman(id, isHuman);
     state.version++;
     triggerRef(game);
   };
   const submitHumanSlam = (...args: Parameters<SimulationController['submitHumanSlam']>) => {
-    // Solo: clicking a card before pressing Start should kick the run too — keeps the
-    // control panel's primary button in sync (Idle→Running) and starts the timer. The
-    // controller.start() path then no-ops once status is already 'running'.
-    if (mode.value === 'solo' && state.status === 'idle') {
-      start();
-    }
     controller.value.submitHumanSlam(...args);
   };
 
-  /** Switch between Simulation, Play (BEAT), and Solo modes. Resets the round. */
+  /** Switch between Simulation (free-for-all) and Play (BEAT) modes. Resets the round. */
   const setMode = (m: SimMode) => {
     if (mode.value === m) return;
-    if (m === 'solo') {
-      lastNonSoloPlayerCount = playerCount.value;
-      playerCount.value = 1;
-    } else if (mode.value === 'solo') {
-      playerCount.value = lastNonSoloPlayerCount;
-    }
     mode.value = m;
     initGame();
   };
@@ -301,12 +200,6 @@ export function useGame() {
     audioMuted: beatAudio.audioMuted,
     chantVirtualPos,
     lastPlayedVirtualPos,
-    soloElapsedMs,
-    soloPenaltyMs,
-    soloRunning,
-    soloBestTimeMs,
-    soloLastFinalMs,
-    soloIsNewBest,
     initGame,
     start,
     pause,

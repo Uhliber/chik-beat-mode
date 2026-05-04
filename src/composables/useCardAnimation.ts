@@ -25,13 +25,6 @@ function center(el: HTMLElement): { cx: number; cy: number } {
   return { cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
 }
 
-/**
- * z-index 150 keeps in-flight cards ABOVE table content (seats up to z-35, confetti, etc.)
- * but BELOW modal/sheet overlays (z-200+) so opening the Event Log or Controls sheet
- * mid-simulation never shows a card flying across the modal.
- */
-const FLIGHT_Z = 150;
-
 /** Build a portrait flight card stage in <body>. Returns { stage, inner }. */
 function buildStage(faceUrl: string, backUrl: string, startCx: number, startCy: number) {
   const stage = document.createElement('div');
@@ -41,7 +34,7 @@ function buildStage(faceUrl: string, backUrl: string, startCx: number, startCy: 
     top: ${startCy - FLIGHT_CARD_H / 2}px;
     width: ${FLIGHT_CARD_W}px;
     height: ${FLIGHT_CARD_H}px;
-    z-index: ${FLIGHT_Z};
+    z-index: 9999;
     pointer-events: none;
     perspective: 1000px;
     will-change: transform;
@@ -143,24 +136,4 @@ export function flyCardPenalty({ fromEl, toEl, faceUrl, backUrl, speed, onComple
   });
   tl.to(stage, { x: dx, y: dy, duration: dur, ease: 'power2.inOut' }, 0);
   tl.to(inner, { rotateY: 0, duration: dur * 0.8, ease: 'power1.inOut' }, 0);
-}
-
-/**
- * Solo-mode wrong-card feedback: tug the card a third of the way toward the target,
- * shake briefly, then pull back to its resting place. Animates the actual mounted card
- * element in place (no portal) since the card stays in the halo. Call cleanup() to
- * snap back if the card unmounts (e.g. game restart) mid-animation.
- */
-export function bounceBackInPlace(el: HTMLElement, towardEl: HTMLElement, speed: number): () => void {
-  const from = center(el);
-  const to = center(towardEl);
-  const dx = (to.cx - from.cx) * 0.3;
-  const dy = (to.cy - from.cy) * 0.3;
-  const dur = 0.55 / Math.max(0.1, speed);
-  const tl = gsap.timeline();
-  tl.to(el, { x: dx, y: dy, duration: dur * 0.32, ease: 'power2.out' }, 0);
-  tl.to(el, { x: dx + 6, duration: 0.05, ease: 'none' }, dur * 0.32);
-  tl.to(el, { x: dx - 6, duration: 0.06, yoyo: true, repeat: 3, ease: 'none' }, '>');
-  tl.to(el, { x: 0, y: 0, duration: dur * 0.45, ease: 'power2.inOut' }, '>');
-  return () => { tl.kill(); gsap.set(el, { x: 0, y: 0 }); };
 }

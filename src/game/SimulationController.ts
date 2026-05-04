@@ -3,7 +3,7 @@ import type { Card } from './Card';
 import { CHANT_ORDER, type BaseSlot, type ChantWord, type PlayerId } from './types';
 
 export type SimStatus = 'idle' | 'opening' | 'running' | 'paused' | 'ended';
-export type SimMode = 'simulation' | 'play' | 'solo';
+export type SimMode = 'simulation' | 'play';
 
 export interface SimOptions {
   speed: number;             // 0.25 .. 4
@@ -85,11 +85,8 @@ export class SimulationController {
 
   setMode(mode: SimMode): void {
     this.mode = mode;
-    // Forward to Game so its slam-resolution logic can branch on mode (Solo treats every
-    // slam as successful + emits soloPenalty on a chant mismatch).
-    this.game.mode = mode;
-    if (mode !== 'play') {
-      // Simulation and Solo both run without the beat metronome.
+    if (mode === 'simulation') {
+      // Clear any beat state — Simulation mode runs the original simultaneous logic.
       this.game.activeBeatPlayerId = null;
       this.activeBeatSeatIndex = -1;
     }
@@ -121,14 +118,6 @@ export class SimulationController {
 
   start(): void {
     if (this.status === 'ended') return;
-    if (this.mode === 'solo') {
-      // Solo is purely event-driven — every player slam is processed synchronously in
-      // submitHumanSlam. No ticks, no auto-open: the Halo-Halo Chik sits in the player's
-      // hand and they click it like any other card. Just flip status to 'running' so the
-      // view layer's timer starts.
-      this.setStatus('running');
-      return;
-    }
     if (!this.game.opened) {
       // Open with the Halo-Halo holder, then start ticking.
       this.setStatus('opening');
@@ -148,12 +137,10 @@ export class SimulationController {
   }
 
   resume(): void {
-    if (this.status !== 'paused') return;
-    this.setStatus('running');
-    // Solo is purely event-driven (player clicks). Scheduling a tick here would kick the
-    // simulation/play loop and start auto-playing cards on the player's behalf.
-    if (this.mode === 'solo') return;
-    this.scheduleNext();
+    if (this.status === 'paused') {
+      this.setStatus('running');
+      this.scheduleNext();
+    }
   }
 
   stop(): void {
@@ -175,12 +162,6 @@ export class SimulationController {
    * and (b) kickstart the metronome on the next clockwise seat.
    */
   submitHumanSlam(slam: PendingSlam): void {
-    if (this.mode === 'solo') {
-      // Solo is fully event-driven: process synchronously, no metronome to wake.
-      this.game.resolveSlams([slam]);
-      if (this.game.winnerId) this.setStatus('ended');
-      return;
-    }
     if (this.mode === 'play') {
       const wasOpened = this.game.opened;
       this.game.resolveSlams([slam]);
@@ -420,18 +401,10 @@ export class SimulationController {
     this.game.activeBeatPlayerId = p.id;
     this.game['emit']({ kind: 'beatChanged', seatIndex, playerId: p.id });
 
-    const beat = this.game.getRequiredBeat();
-    const matching = p.hasCardForBeat(beat);
-
-    // If this player has nothing playable for the current beat, snap their turn to a
-    // short window (max 2 ticks) so the metronome doesn't drag — there's nothing they
-    // can do anyway, so quickly hand the BEAT to the next clockwise player.
-    if (!matching) {
-      this.currentTurnTotalTicks = Math.min(2, this.currentTurnTotalTicks);
-    }
-
     // Decide AI plan once at the start of the turn so timing stays stable across ticks.
     if (p.isAI) {
+      const beat = this.game.getRequiredBeat();
+      const matching = p.hasCardForBeat(beat);
       const r = this.rng();
       // Failure roll: occasionally the AI just skips the whole turn.
       if (r < this.opts.failureRate * 0.4 || !matching) {
@@ -456,15 +429,6 @@ export class SimulationController {
       this.aiSlamTick = -1;
       this.aiSlamCardId = null;
     }
-  }
-
-  /** Returns true when no remaining player has a card matching the current chant beat. */
-  private isProgressImpossible(): boolean {
-    if (!this.game.opened) return false;
-    const beat = this.game.getRequiredBeat();
-    return !this.game.players.some(
-      (p) => p.cardCount > 0 && p.hasCardForBeat(beat) !== null,
-    );
   }
 
   /**
@@ -532,15 +496,6 @@ export class SimulationController {
         this.game['emit']({ kind: 'beatChanged', seatIndex: haloIdx, playerId: holder.id });
       }
       // Intentionally NO scheduleNext — submitHumanSlam will resume the metronome.
-      return;
-    }
-
-    // ----- Stuck check -----
-    // If NO remaining player has a card for the current chant beat, no slam can ever
-    // succeed — end the round now via the rulebook's tiebreak (fewest cards / fewest
-    // combined points / share). Avoids the metronome ticking forever on a dead game.
-    if (this.isProgressImpossible()) {
-      this.endByTiebreak();
       return;
     }
 

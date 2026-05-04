@@ -45,12 +45,6 @@ export class Game {
    * 'out-of-turn' miscall. Set by the controller in Play (BEAT) mode; null in Simulation mode.
    */
   activeBeatPlayerId: PlayerId | null = null;
-  /**
-   * Game mode — set by the controller. The slam resolver branches on this for SOLO so
-   * a wrong-word slam still removes the card and emits a `soloPenalty` event (timer hit)
-   * instead of going through the normal miscall (penalty cards, etc.).
-   */
-  mode: 'simulation' | 'play' | 'solo' = 'simulation';
 
   private listeners: Listener[] = [];
   private rng: () => number;
@@ -75,8 +69,8 @@ export class Game {
   // ---------------------------------------------------------------------------
 
   setup(playerCount: number): void {
-    if (playerCount < 1 || playerCount > 6) {
-      throw new Error('Player count must be between 1 and 6');
+    if (playerCount < 2 || playerCount > 6) {
+      throw new Error('Player count must be between 2 and 6');
     }
 
     // Reset state
@@ -99,28 +93,19 @@ export class Game {
     }
 
     // Randomize which word each player claims this round.
-    // SOLO (1 player): skip claim entirely so every card lands on Main via the existing
-    // unowned-base redirect — keeps the rules engine consistent without solo-specific routing.
     const shuffledWords = shuffle(CHANT_ORDER.slice(), this.rng);
-    const claimCount = playerCount === 1 ? 0 : playerCount;
-    for (let i = 0; i < claimCount; i++) {
+    for (let i = 0; i < playerCount; i++) {
       const word = shuffledWords[i];
       this.players[i].ownedBaseWord = word;
       this.bases.set(word, { slot: word, pile: [], ownerId: this.players[i].id });
     }
-    for (let i = claimCount; i < shuffledWords.length; i++) {
+    for (let i = playerCount; i < shuffledWords.length; i++) {
       const word = shuffledWords[i];
       this.bases.set(word, { slot: word, pile: [], ownerId: null });
     }
 
     // Build, shuffle, and deal the deck.
-    // SOLO: drop decoys (their "any base" effect is meaningless with one base) but keep
-    // the rest of the original distribution — the Chik-heavy deck is part of the game's
-    // identity. Finishability is preserved by the safety-net rule (see applySoloChantSafetyNet):
-    // when the player has no card matching the current beat, the chant silently auto-advances.
-    let deck = buildBaseDeck();
-    if (this.mode === 'solo') deck = deck.filter((c) => c.kind !== 'decoy');
-    deck = shuffle(deck, this.rng);
+    const deck = shuffle(buildBaseDeck(), this.rng);
     this.dealAll(deck);
 
     // Find Halo-Halo owner.
@@ -140,9 +125,6 @@ export class Game {
       this.players[idx % this.players.length].hand.push(card);
       idx++;
     }
-    // SOLO: keep the deal order shuffled. A sorted halo would let the player sweep cards
-    // in chant order with no real search — the whole challenge is finding the next card.
-    if (this.mode === 'solo') return;
     for (const p of this.players) p.sortHand();
   }
 
@@ -204,61 +186,6 @@ export class Game {
       if (base && !base.ownerId) {
         slam.targetBase = 'main';
       }
-    }
-
-    // SOLO MODE: matching slams go through (card → main, normal applySuccess path —
-    // handles Reverse, chant advance, Halo-Halo opening, winner). Wrong-word slams
-    // are REJECTED — the card stays in the halo and a soloPenalty (+2s) is emitted.
-    // Pre-open, only Halo-Halo Chik can be played; everything else is also rejected
-    // with a penalty so misclicks during the opening still bite.
-    if (this.mode === 'solo') {
-      const results: PlayResult[] = [];
-      for (const slam of slams) {
-        const player = this.players.find((p) => p.id === slam.playerId);
-        const card = player?.hand.find((c) => c.id === slam.cardId);
-        if (!player || !card) {
-          results.push({
-            type: 'miscall',
-            playerId: slam.playerId,
-            cardId: slam.cardId,
-            targetBase: slam.targetBase,
-            reason: 'card-not-in-hand',
-          });
-          continue;
-        }
-        // Pre-open gate: only Halo-Halo opens the game, regardless of beat.
-        const blockedByOpening = !this.opened && !card.isHaloHalo;
-        if (card.matchesBeat(beat) && !blockedByOpening) {
-          this.applySuccess({ ...slam, targetBase: 'main' }, card);
-          results.push({
-            type: 'success',
-            playerId: slam.playerId,
-            cardId: card.id,
-            targetBase: 'main',
-            reverseTriggered: card.kind === 'reverse',
-          });
-        } else {
-          // Wrong word (or wrong-card-during-opening) — card stays in the halo.
-          // GameTable animates a quick bounce-toward-main-then-return on this event.
-          this.emit({
-            kind: 'soloPenalty',
-            playerId: slam.playerId,
-            cardId: card.id,
-            cardWord: card.word,
-            expectedBeat: beat,
-            penaltyMs: 2000,
-          });
-          results.push({
-            type: 'miscall',
-            playerId: slam.playerId,
-            cardId: card.id,
-            targetBase: 'main',
-            reason: blockedByOpening ? 'card-not-in-hand' : 'wrong-word',
-          });
-        }
-      }
-      this.applySoloAutoFinishIfStuck();
-      return results;
     }
 
     // OPENING SPECIAL CASE (Play / BEAT mode): until the Halo-Halo Chik has been played,
@@ -550,55 +477,6 @@ export class Game {
     // Anyone with no base — append them (treat as "next unclaimed word") in original order.
     for (const pid of remaining) order.push(pid);
     return order;
-  }
-
-  /**
-   * Solo stuck-detection: when the chant lands on a beat the player has no card for
-   * (and the hand is non-empty), the deck is structurally jammed — the original 49-card
-   * deck has 14 Chik cards but only ~8 reachable Chik visits per cycle, so 6 Chik cards
-   * always strand in some games. Instead of skipping the chant invisibly, we just END
-   * the game: every remaining card auto-slams onto Main with a +1s penalty per card.
-   * The player's "score" reflects how cleanly they navigated.
-   */
-  private applySoloAutoFinishIfStuck(): void {
-    if (this.mode !== 'solo') return;
-    const player = this.players[0];
-    if (!player || player.cardCount === 0) return;
-    const beat = this.chant.current;
-    if (player.hand.some((c) => c.matchesBeat(beat))) return;
-
-    const remaining = player.hand.slice();
-    const totalPenaltyMs = remaining.length * 1000;
-    // Announce first so the view can prep staggered animations + a "stuck!" message.
-    this.emit({
-      kind: 'soloAutoFinish',
-      playerId: player.id,
-      cardCount: remaining.length,
-      totalPenaltyMs,
-    });
-    for (const card of remaining) {
-      player.removeCard(card.id);
-      this.bases.get('main')!.pile.push(card);
-      this.emit({
-        kind: 'slam',
-        playerId: player.id,
-        cardId: card.id,
-        targetBase: 'main',
-        shoutedWord: beat,
-        cardWord: card.word,
-        cardKind: card.kind,
-      });
-    }
-    // Single consolidated penalty (cardCount × +1s) so the timer bubble doesn't spam.
-    this.emit({
-      kind: 'soloPenalty',
-      playerId: player.id,
-      cardId: '',
-      cardWord: beat,
-      expectedBeat: beat,
-      penaltyMs: totalPenaltyMs,
-    });
-    this.declareWinner(player.id);
   }
 
   private declareWinner(playerId: PlayerId): void {
