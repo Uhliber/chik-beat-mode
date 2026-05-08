@@ -6,20 +6,14 @@ import GuideContent from './GuideContent.vue';
  * "How to Play" card.
  *
  *  - Desktop (default): in-place card in the aside, flips + grows on hover.
- *  - Mobile (`mobile` prop): a slim TAB that PEEKS in from the right edge of the screen,
- *    with a rotated "GUIDE" label running along it. Tap → opens a near-full-screen modal
- *    teleported to body. No inline icon, no hover (no hover on touch).
+ *  - Mobile (`mobile` prop): a full-size guide-back card PEEKING in from the right edge
+ *    of the screen — about 40% visible, 60% off-screen — with a "GUIDE" label tucked
+ *    above the tilted top edge. Tap → opens a near-full-screen modal teleported to body.
  */
 
 defineProps<{
   mobile?: boolean;
   mode?: 'simulation' | 'play' | 'solo';
-  /**
-   * `inline` (mobile only): drop the fixed-position bottom-right edge tab and render the
-   * Guide tile in normal flow so a parent (e.g. the Solo foot bar) can lay it out.
-   * Visual style and modal behaviour stay the same.
-   */
-  inline?: boolean;
 }>();
 
 const BACK = '/guides/guides-back.png';
@@ -97,26 +91,20 @@ const cardStyle = computed(() => {
     </div>
   </div>
 
-  <!-- MOBILE: a guides-back card peeking out from the BOTTOM-RIGHT edge, slanted.
-       A small "GUIDE" label sits on the visible portion, parallel to the slant.
-       Tap → opens the same full-screen guide modal.
-       `inline` variant drops the fixed-position offset so a parent (e.g. Solo foot bar)
-       can lay it out within its own flow — same slant + label, just absolute-in-parent. -->
+  <!-- MOBILE: a full-size guide-back card peeking out from the BOTTOM-RIGHT edge,
+       slanted. ~60% off-screen, ~40% visible. "GUIDE" label tucked above the tilted
+       top edge. Tap → opens the same full-screen guide modal. -->
   <button
     v-else
     type="button"
     aria-label="Open rules guide"
-    :class="inline ? 'absolute inset-0 z-10 select-none focus:outline-none cursor-pointer' : 'fixed z-30 select-none focus:outline-none cursor-pointer'"
-    :style="inline ? {
+    class="fixed z-30 select-none focus:outline-none cursor-pointer"
+    :style="{
+      bottom: '-50px',
+      right: '-50px',
+      width: '80px',
+      height: '128px',
       transform: 'rotate(-12deg)',
-      transformOrigin: 'bottom right',
-      touchAction: 'manipulation',
-    } : {
-      bottom: '80px',
-      right: '-60px',
-      width: '70px',
-      height: '100px',
-      transform: 'rotate(-22deg)',
       transformOrigin: 'bottom right',
       touchAction: 'manipulation',
     }"
@@ -137,9 +125,9 @@ const cardStyle = computed(() => {
     <span
       class="absolute font-display font-extrabold uppercase tracking-[0.18em] text-cream-soft"
       style="
-        top: -15px;
-        left: 5px;
-        font-size: 9px;
+        top: -18px;
+        left: 8px;
+        font-size: 12px;
         text-shadow: 0 1px 2px rgba(0,0,0,0.6);
       "
     >

@@ -19,7 +19,6 @@ const emit = defineEmits<{
   (e: 'update:player-count', n: number): void;
   (e: 'update:failure-rate', n: number): void;
   (e: 'update:speed', n: number): void;
-  (e: 'update:mode', m: SimMode): void;
   (e: 'update:audio-muted', muted: boolean): void;
   (e: 'update:beats-per-player', n: number): void;
   (e: 'restart'): void;
@@ -93,43 +92,6 @@ const collapsed = ref(false);
           <polyline points="3 5 6 8 9 5" />
         </svg>
       </button>
-      <!-- Mode toggle: 3-way Simulate / Play / Solo. -->
-      <div class="flex rounded-full overflow-hidden border-2 border-coral">
-        <button
-          type="button"
-          :class="[
-            'px-3 py-1.5 text-xs font-extrabold uppercase tracking-wider transition-colors',
-            mode === 'simulation' ? 'text-cream-soft' : 'text-coral-deep hover:bg-coral/10',
-          ]"
-          :style="{ background: mode === 'simulation' ? 'var(--color-coral)' : 'transparent' }"
-          @click="emit('update:mode', 'simulation')"
-        >
-          Simulate
-        </button>
-        <button
-          type="button"
-          :class="[
-            'px-3 py-1.5 text-xs font-extrabold uppercase tracking-wider transition-colors',
-            mode === 'play' ? 'text-cream-soft' : 'text-coral-deep hover:bg-coral/10',
-          ]"
-          :style="{ background: mode === 'play' ? 'var(--color-coral)' : 'transparent' }"
-          @click="emit('update:mode', 'play')"
-        >
-          Play
-        </button>
-        <button
-          type="button"
-          :class="[
-            'px-3 py-1.5 text-xs font-extrabold uppercase tracking-wider transition-colors',
-            mode === 'solo' ? 'text-cream-soft' : 'text-coral-deep hover:bg-coral/10',
-          ]"
-          :style="{ background: mode === 'solo' ? 'var(--color-coral)' : 'transparent' }"
-          @click="emit('update:mode', 'solo')"
-        >
-          Solo
-        </button>
-      </div>
-      
       <!-- Primary action -->
       <button
         type="button"

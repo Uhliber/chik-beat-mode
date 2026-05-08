@@ -1,4 +1,5 @@
-import { reactive, ref, shallowRef, triggerRef } from 'vue';
+import { onUnmounted, reactive, ref, shallowRef, triggerRef } from 'vue';
+import { App as CapApp } from '@capacitor/app';
 import { Preferences } from '@capacitor/preferences';
 import type { Card } from '@/game/Card';
 import { Game } from '@/game/Game';
@@ -120,6 +121,12 @@ export function useGame(opts: UseGameOptions = {}) {
   let unsubGame: (() => void) | null = null;
   let unsubStatus: (() => void) | null = null;
 
+  /** True iff the slam belongs to a human seat — used to gate fx so AI plays stay quiet. */
+  const isHumanEvent = (playerId: PlayerId): boolean => {
+    const p = game.value.players.find((x) => x.id === playerId);
+    return !!p && !p.isAI;
+  };
+
   const handleEvent = (e: GameEvent) => {
     state.version++;
     if (e.kind === 'slam') {
@@ -127,6 +134,13 @@ export function useGame(opts: UseGameOptions = {}) {
       // 'slam' is emitted BEFORE the chant moves, so chant.virtualPos here = the beat
       // that was just played. We capture it for the ticker's center cell.
       lastPlayedVirtualPos.value = game.value.chant.virtualPos;
+      // Reward the human for a correct slam — AI slams stay silent so a 4-player versus
+      // game doesn't sound like a slot machine.
+      if (isHumanEvent(e.playerId)) beatAudio.fx('success');
+    }
+    if (e.kind === 'miscall' && isHumanEvent(e.playerId)) {
+      // Miscall = human played a wrong word / wrong base / out-of-turn. Buzz them.
+      beatAudio.fx('fail');
     }
     if (e.kind === 'chantAdvanced' || e.kind === 'chantReversed') {
       // The chant has already moved on the Game side; mirror its virtualPos here so
@@ -141,7 +155,7 @@ export function useGame(opts: UseGameOptions = {}) {
     if (mode.value === 'solo') {
       if (e.kind === 'soloPenalty') {
         soloPenaltyMs.value += e.penaltyMs;
-        beatAudio.ding('low');
+        beatAudio.fx('fail');
       }
       if (e.kind === 'winner') {
         stopSoloTimer();
@@ -267,12 +281,20 @@ export function useGame(opts: UseGameOptions = {}) {
     triggerRef(game);
   };
   const submitHumanSlam = (...args: Parameters<SimulationController['submitHumanSlam']>) => {
-    // Solo: clicking a card before pressing Start should kick the run too — keeps the
-    // control panel's primary button in sync (Idle→Running) and starts the timer. The
-    // controller.start() path then no-ops once status is already 'running'.
-    if (mode.value === 'solo' && state.status === 'idle') {
-      start();
-    }
+    // Slam acceptance gate. Card plays are only meaningful while the simulation is
+    // actively running — if the game is paused, opening, or already ended the table
+    // should be inert, otherwise the player can rack up correct slams while the timer
+    // sits frozen (which is exactly the bug a paused-overlay tap is supposed to prevent).
+    // Solo's `idle` state is the one exception: the first card press auto-starts the
+    // run, matching the existing "tap a card to begin" UX.
+    const isSoloIdleStart = mode.value === 'solo' && state.status === 'idle';
+    if (state.status !== 'running' && !isSoloIdleStart) return;
+
+    // Tap feedback fires immediately on card press so the player gets a beat of audio +
+    // haptic before the rules engine resolves. The follow-up `slam` or `miscall` event
+    // then plays success / fail through handleEvent.
+    beatAudio.fx('tap');
+    if (isSoloIdleStart) start();
     controller.value.submitHumanSlam(...args);
   };
 
@@ -307,6 +329,31 @@ export function useGame(opts: UseGameOptions = {}) {
 
   // Start fresh.
   initGame();
+
+  // Auto-pause when the OS sends the app to the background — minimised, locked screen,
+  // multi-tasked away. Without this the simulation timers (and the solo clock) keep
+  // ticking while the user can't see the table, which is unfair in Solo and useless in
+  // Versus. The Capacitor App plugin uses Page Visibility under the hood on web, so the
+  // same listener covers tab-hidden in the browser.
+  let appStateRemove: (() => void) | null = null;
+  void CapApp.addListener('appStateChange', ({ isActive }) => {
+    if (!isActive && state.status === 'running') controller.value.pause();
+  }).then((handle) => {
+    appStateRemove = () => { void handle.remove(); };
+  });
+
+  // Tear-down on unmount: when PlayView navigates back to the menu mid-run, the
+  // SimulationController's setTimeout/setInterval would otherwise keep firing on a
+  // discarded Game (and keep dinging beat audio). Stop the controller, cancel the
+  // solo RAF, drop the app-state listener, and unsubscribe game listeners so nothing
+  // outlives this composable.
+  onUnmounted(() => {
+    controller.value.stop();
+    stopSoloTimer();
+    appStateRemove?.();
+    if (unsubGame) unsubGame();
+    if (unsubStatus) unsubStatus();
+  });
 
   return {
     game,

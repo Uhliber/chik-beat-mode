@@ -23,11 +23,11 @@ onMounted(() => {
         class="w-20 h-28 rounded-md ring-4 ring-cream-soft/80 shadow-2xl splash-card"
         style="background-image: url('/cards/default-back.png'); background-size: cover; background-position: center;"
       />
-      <div
-        class="font-display text-cream-soft tracking-tight leading-none uppercase splash-title"
-      >
-        Chik!
-      </div>
+      <img
+        src="/logo-white.svg"
+        alt="Chik!"
+        class="splash-title"
+      />
       <div class="font-subtitle text-cream-soft/80 text-sm">
         Halo Halo Games
       </div>
@@ -37,7 +37,8 @@ onMounted(() => {
 
 <style scoped>
 .splash-title {
-  font-size: clamp(3.5rem, 14vw, 6rem);
+  height: clamp(3.2rem, 13vw, 5.4rem);
+  width: auto;
   animation: splash-pop 700ms cubic-bezier(.2, .8, .2, 1) both;
 }
 .splash-card {

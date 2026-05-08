@@ -10,8 +10,10 @@ import WinnerOverlay from '@/components/WinnerOverlay.vue';
 import GuideCard from '@/components/GuideCard.vue';
 import ChantTicker from '@/components/ChantTicker.vue';
 import MobileBottomSheet from '@/components/MobileBottomSheet.vue';
+import PauseOverlay from '@/components/PauseOverlay.vue';
 import IconVolume from '@/components/icons/IconVolume.vue';
 import { useGame } from '@/composables/useGame';
+import { useBeatAudio } from '@/composables/useBeatAudio';
 import { useResponsive } from '@/composables/useResponsive';
 import type { Card } from '@/game/Card';
 import type { Player } from '@/game/Player';
@@ -57,7 +59,6 @@ const {
   setSpeed,
   setFailureRate,
   setPlayerCount,
-  setMode,
   setBeatsPerPlayer,
   setAudioMuted,
   setPlayerHuman,
@@ -66,14 +67,13 @@ const {
 } = useGame({ initialMode });
 
 const { isMobile } = useResponsive();
+const { fx } = useBeatAudio();
 
-// ControlPanel is a development/debug surface only. Hidden in production builds unless
-// the URL includes `?debug=1`. The MobileBottomSheet that wraps the compact ControlPanel
-// is gated by the same flag.
-const showControlPanel = computed(() => {
-  if (import.meta.env.DEV) return true;
-  return route.query.debug === '1';
-});
+// Mode is now route-driven — the only way to switch modes is to navigate back to the
+// menu. Solo gets a stripped-down HUD (mute + Start/Restart only); Versus / Simulation
+// keep the ControlPanel for tuning speed, players, failure rate, etc. but no longer
+// expose a mode toggle.
+const showControlPanel = computed(() => mode.value !== 'solo');
 
 const winnerId = computed(() => game.value.winnerId);
 
@@ -116,7 +116,7 @@ watch(playerCount, () => {
   if (state.status === 'idle') initGame();
 });
 
-const onRestart = () => { initGame(); };
+const onRestart = () => { fx('tap'); initGame(); };
 
 const onSlamFromHuman = ({ card, player, targetBase }: { card: Card; player: Player; targetBase: BaseSlot }) => {
   submitHumanSlam({
@@ -140,15 +140,6 @@ const sheetOpen = ref<'none' | 'log' | 'controls'>('none');
 function openSheet(which: 'log' | 'controls') { sheetOpen.value = which; }
 function closeSheet() { sheetOpen.value = 'none'; }
 
-// ---- Mobile Mode dropdown ----
-const modeMenuOpen = ref(false);
-const MODE_LABELS = { simulation: 'Simulate', play: 'Play', solo: 'Solo' } as const;
-const modeLabel = computed(() => MODE_LABELS[mode.value]);
-function pickMode(m: 'simulation' | 'play' | 'solo') {
-  setMode(m);
-  modeMenuOpen.value = false;
-}
-
 // Primary action label/handler — mirrors the header button.
 const primaryLabel = computed(() => {
   switch (state.status) {
@@ -160,6 +151,7 @@ const primaryLabel = computed(() => {
   }
 });
 function onPrimary() {
+  fx('tap');
   if (state.status === 'idle') start();
   else if (state.status === 'running') pause();
   else if (state.status === 'paused') resume();
@@ -167,7 +159,13 @@ function onPrimary() {
 }
 
 function onBackToMenu() {
+  fx('tap');
   router.push({ name: 'menu' });
+}
+
+function onPauseOverlayTap() {
+  fx('tap');
+  resume();
 }
 </script>
 
@@ -190,10 +188,12 @@ function onBackToMenu() {
           style="background-image: url('/cards/default-back.png'); background-size: cover; background-position: center;"
           @click="onBackToMenu"
         />
-        <div>
-          <div class="font-display text-cream-soft text-3xl sm:text-4xl tracking-tight leading-none uppercase">
-            Chik!
-          </div>
+        <div class="flex flex-col items-start gap-1">
+          <img
+            src="/logo-white.svg"
+            alt="Chik!"
+            class="h-9 sm:h-11 w-auto"
+          />
           <div class="font-subtitle text-cream-soft/85 text-xs sm:text-sm font-medium">
             Visual Simulation · v0.1
           </div>
@@ -211,7 +211,6 @@ function onBackToMenu() {
         @update:player-count="setPlayerCount"
         @update:failure-rate="setFailureRate"
         @update:speed="setSpeed"
-        @update:mode="setMode"
         @update:audio-muted="setAudioMuted"
         @update:beats-per-player="setBeatsPerPlayer"
         @start="start"
@@ -219,6 +218,42 @@ function onBackToMenu() {
         @resume="resume"
         @restart="onRestart"
       />
+
+      <!-- Solo desktop minimal cluster — no ControlPanel, just the essentials the user
+           asked for: mute toggle + Start/Restart primary + a Restart icon mid-run. -->
+      <div v-else class="flex items-center gap-2">
+        <button
+          type="button"
+          :title="audioMuted ? 'Unmute' : 'Mute'"
+          :aria-label="audioMuted ? 'Unmute' : 'Mute'"
+          class="w-9 h-9 rounded-full bg-cream-soft/95 ring-1 ring-black/10 flex items-center justify-center text-coral-deep shadow-md"
+          @click="setAudioMuted(!audioMuted)"
+        >
+          <IconVolume :muted="audioMuted" :size="18" />
+        </button>
+        <button
+          v-if="state.status !== 'idle'"
+          type="button"
+          aria-label="Restart"
+          title="Restart"
+          class="w-9 h-9 rounded-full bg-cream-soft/95 ring-1 ring-black/10 flex items-center justify-center text-coral-deep shadow-md"
+          @click="onRestart"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10" />
+            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          class="px-4 py-2 rounded-full font-extrabold uppercase tracking-wider text-cream-soft text-sm shadow-md"
+          :style="{ background: 'var(--color-coral-deep)' }"
+          :disabled="state.status === 'opening'"
+          @click="onPrimary"
+        >
+          {{ primaryLabel }}
+        </button>
+      </div>
     </header>
 
     <!-- ===================== MOBILE HEADER ===================== -->
@@ -226,56 +261,15 @@ function onBackToMenu() {
       v-else
       class="absolute top-0 left-0 right-0 z-40 flex items-center gap-2 px-3 py-2.5"
     >
-      <!-- Title (text-only) — also acts as back-to-menu tap target on mobile. -->
+      <!-- Logo doubles as back-to-menu tap target on mobile. -->
       <button
         type="button"
-        class="font-display text-cream-soft text-2xl tracking-tight leading-none uppercase shrink-0 bg-transparent"
+        aria-label="Menu"
+        class="shrink-0 bg-transparent flex items-center"
         @click="onBackToMenu"
       >
-        Chik!
+        <img src="/logo-white.svg" alt="Chik!" class="h-7 w-auto" />
       </button>
-
-      <!-- Mode dropdown — only meaningful when ControlPanel is shown (debug/dev). In
-           production the route's ?mode= query is the source of truth, so the dropdown
-           is hidden alongside the rest of the debug surface. -->
-      <div v-if="showControlPanel" class="relative shrink-0" @click.stop>
-        <button
-          type="button"
-          class="flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-cream-soft/95 ring-1 ring-black/10 text-[11px] font-extrabold uppercase tracking-widest text-coral-deep"
-          @click="modeMenuOpen = !modeMenuOpen"
-        >
-          {{ modeLabel }}
-          <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="3 5 6 8 9 5" />
-          </svg>
-        </button>
-        <Transition
-          enter-from-class="opacity-0 scale-95 -translate-y-1"
-          enter-active-class="transition duration-150"
-          leave-active-class="transition duration-100"
-          leave-to-class="opacity-0 scale-95"
-        >
-          <div
-            v-if="modeMenuOpen"
-            class="absolute left-0 top-full mt-1 min-w-32 rounded-xl bg-cream-soft shadow-2xl ring-1 ring-black/10 overflow-hidden origin-top-left"
-          >
-            <button
-              v-for="m in (['simulation', 'play', 'solo'] as const)"
-              :key="m"
-              type="button"
-              :class="[
-                'w-full px-3 py-2 text-left text-xs font-extrabold uppercase tracking-widest transition-colors',
-                mode === m
-                  ? 'bg-coral text-cream-soft'
-                  : 'text-coral-deep hover:bg-coral/10',
-              ]"
-              @click="pickMode(m)"
-            >
-              {{ MODE_LABELS[m] }}
-            </button>
-          </div>
-        </Transition>
-      </div>
 
       <!-- Primary action — Start / Pause / Resume / Restart -->
       <button
@@ -306,9 +300,10 @@ function onBackToMenu() {
       <!-- Spacer pushes the icon buttons to the right edge. -->
       <div class="flex-1" />
 
-      <!-- Right-side icon buttons: Log + Controls. The Controls icon is only meaningful
-           when the ControlPanel is shown; hide it otherwise. -->
-      <div class="flex items-center gap-1 shrink-0">
+      <!-- Right-side icon buttons: Log + Controls. Both are tied to the ControlPanel
+           surface — Solo strips them out (the user wanted just mute + Start/Restart),
+           so they only render when the ControlPanel is shown. -->
+      <div v-if="showControlPanel" class="flex items-center gap-1 shrink-0">
         <button
           type="button"
           aria-label="Event log"
@@ -322,7 +317,6 @@ function onBackToMenu() {
           </svg>
         </button>
         <button
-          v-if="showControlPanel"
           type="button"
           aria-label="Controls"
           class="w-9 h-9 rounded-full bg-cream-soft/95 ring-1 ring-black/10 flex items-center justify-center text-coral-deep"
@@ -340,10 +334,12 @@ function onBackToMenu() {
       </div>
     </header>
 
-    <!-- Floating ChantTicker, just below the mobile header. -->
+    <!-- Floating ChantTicker, just below the mobile header. z-[20] keeps it below the
+         pause overlay (z-[25]) — the ticker is information-only, no reason to peek out
+         while the run is paused. -->
     <div
       v-if="isMobile && mode !== 'solo'"
-      class="absolute left-1/2 -translate-x-1/2 z-30 pointer-events-none"
+      class="absolute left-1/2 -translate-x-1/2 z-[20] pointer-events-none"
       style="top: 56px;"
     >
       <ChantTicker
@@ -352,51 +348,32 @@ function onBackToMenu() {
       />
     </div>
 
-    <!-- Mobile-only Guide tab + Mute toggle. -->
-    <GuideCard v-if="isMobile && mode !== 'solo'" mobile :mode="mode" />
+    <!-- Mobile-only Guide tab + Mute toggle. Same layout regardless of mode — mute pinned
+         bottom-left (44px tap target), Guide peeking from the bottom-right edge at full
+         image-button size (sized inside GuideCard). -->
+    <GuideCard v-if="isMobile" mobile :mode="mode" />
     <button
-      v-if="isMobile && mode !== 'solo'"
+      v-if="isMobile"
       type="button"
       :aria-label="audioMuted ? 'Unmute' : 'Mute'"
-      class="fixed bottom-3 left-3 z-30 w-10 h-10 rounded-full bg-cream-soft/95 ring-1 ring-black/10 flex items-center justify-center text-coral-deep shadow-lg"
+      class="fixed bottom-3 left-3 z-30 w-11 h-11 rounded-full bg-cream-soft/95 ring-1 ring-black/10 flex items-center justify-center text-coral-deep shadow-lg"
       @click="setAudioMuted(!audioMuted)"
     >
-      <IconVolume :muted="audioMuted" :size="20" />
+      <IconVolume :muted="audioMuted" :size="22" />
     </button>
 
-    <!-- Solo mobile FOOT BAR -->
-    <div
-      v-if="isMobile && mode === 'solo'"
-      class="fixed left-0 right-0 bottom-0 z-30 flex items-center justify-between px-3 pb-3 pt-2"
-      :style="{ height: '64px' }"
-    >
-      <button
-        type="button"
-        :aria-label="audioMuted ? 'Unmute' : 'Mute'"
-        class="w-11 h-11 rounded-full bg-cream-soft/95 ring-1 ring-black/10 flex items-center justify-center text-coral-deep shadow-lg"
-        @click="setAudioMuted(!audioMuted)"
-      >
-        <IconVolume :muted="audioMuted" :size="22" />
-      </button>
-      <div class="relative" style="width: 70px; height: 56px;">
-        <GuideCard mobile inline :mode="mode" />
-      </div>
-    </div>
-
-    <!-- Click-anywhere-outside closes the mode dropdown. -->
-    <div
-      v-if="isMobile && modeMenuOpen"
-      class="fixed inset-0 z-20"
-      @click="modeMenuOpen = false"
-    />
-
-    <!-- ============== DESKTOP UPPER-LEFT (guide + ticker) ============== -->
+    <!-- ============== DESKTOP UPPER-LEFT (guide + ticker) ==============
+         The aside itself has no z-index so it doesn't create a stacking context — that
+         lets the two children sit at independent z-indexes (guide above pause, ticker
+         below) while still laying out as a flex column. -->
     <aside
       v-if="!isMobile"
-      class="absolute top-20 sm:top-23 left-3 sm:left-4 z-30 flex flex-col gap-5"
+      class="absolute top-20 sm:top-23 left-3 sm:left-4 flex flex-col gap-5"
     >
-      <GuideCard :mode="mode" />
-      <div v-if="mode !== 'solo'" class="pointer-events-none">
+      <div class="relative z-30">
+        <GuideCard :mode="mode" />
+      </div>
+      <div v-if="mode !== 'solo'" class="relative z-[20] pointer-events-none">
         <ChantTicker
           :last-played-pos="lastPlayedVirtualPos"
           :next-pos="chantVirtualPos"
@@ -407,7 +384,7 @@ function onBackToMenu() {
     <!-- =============== SOLO TIMER HUD =============== -->
     <div
       v-if="mode === 'solo'"
-      class="absolute left-1/2 -translate-x-1/2 z-30 flex flex-col items-center gap-2 pointer-events-none"
+      class="absolute left-1/2 -translate-x-1/2 z-[20] flex flex-col items-center gap-2 pointer-events-none"
       :style="{ top: isMobile ? '120px' : '20px' }"
     >
       <div
@@ -434,8 +411,11 @@ function onBackToMenu() {
       </div>
     </div>
 
-    <!-- ===================== TABLE ===================== -->
-    <main class="absolute inset-0" :style="{ paddingTop: isMobile ? '116px' : '0' }">
+    <!-- ===================== TABLE =====================
+         `isolate` creates a new stacking context for the whole table — GameTable's
+         internal absolute-positioned cards / piles / hands all stack within this box,
+         so they can't escape above the pause overlay (sibling at z-[25]) when paused. -->
+    <main class="absolute inset-0 isolate" :style="{ paddingTop: isMobile ? '116px' : '0' }">
       <GameTable
         :game="game"
         :events="state.events"
@@ -449,6 +429,16 @@ function onBackToMenu() {
         @toggle-human="onToggleHuman"
       />
     </main>
+
+    <!-- =================== PAUSE OVERLAY ===================
+         Renders only while paused. The shield captures clicks across the table area to
+         block accidental slams while the timer is frozen, and tapping anywhere on it
+         resumes the run. Headers and the mute button sit at higher z-index, so back-to-
+         menu and mute remain reachable from the paused state. -->
+    <PauseOverlay
+      v-if="state.status === 'paused'"
+      @resume="onPauseOverlayTap"
+    />
 
     <!-- =================== DESKTOP EVENT LOG =================== -->
     <aside v-if="!isMobile" class="absolute bottom-3 right-3 w-70 max-w-[80vw] z-20">
@@ -483,7 +473,6 @@ function onBackToMenu() {
         @update:player-count="setPlayerCount"
         @update:failure-rate="setFailureRate"
         @update:speed="setSpeed"
-        @update:mode="setMode"
         @update:audio-muted="setAudioMuted"
         @update:beats-per-player="setBeatsPerPlayer"
         @start="start"
