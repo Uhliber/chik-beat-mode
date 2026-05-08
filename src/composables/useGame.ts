@@ -1,4 +1,5 @@
 import { reactive, ref, shallowRef, triggerRef } from 'vue';
+import { Preferences } from '@capacitor/preferences';
 import type { Card } from '@/game/Card';
 import { Game } from '@/game/Game';
 import { SimulationController, type SimStatus, type SimMode } from '@/game/SimulationController';
@@ -7,17 +8,27 @@ import { useBeatAudio } from './useBeatAudio';
 
 const SOLO_BEST_KEY = 'chik-solo-best-time-ms';
 
-function loadSoloBestTime(): number | null {
-  if (typeof window === 'undefined') return null;
-  const raw = window.localStorage.getItem(SOLO_BEST_KEY);
-  if (!raw) return null;
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : null;
+async function loadSoloBestTime(): Promise<number | null> {
+  try {
+    const { value } = await Preferences.get({ key: SOLO_BEST_KEY });
+    if (!value) return null;
+    const n = Number(value);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
 }
 
 function saveSoloBestTime(ms: number): void {
-  if (typeof window === 'undefined') return;
-  window.localStorage.setItem(SOLO_BEST_KEY, String(Math.round(ms)));
+  // Fire-and-forget — Preferences.set is async but the persisted value is non-critical
+  // for the current frame. Errors are swallowed so a Preferences failure can never crash
+  // the win-detection codepath.
+  void Preferences.set({ key: SOLO_BEST_KEY, value: String(Math.round(ms)) }).catch(() => undefined);
+}
+
+export interface UseGameOptions {
+  /** Mode the game starts in. Defaults to 'simulation'. */
+  initialMode?: SimMode;
 }
 
 export interface GameViewState {
@@ -30,7 +41,9 @@ export interface GameViewState {
 
 const MAX_LOG = 50;
 
-export function useGame() {
+export function useGame(opts: UseGameOptions = {}) {
+  const initialMode: SimMode = opts.initialMode ?? 'simulation';
+
   const game = shallowRef<Game>(new Game());
   const controller = shallowRef<SimulationController>(new SimulationController(game.value));
 
@@ -41,11 +54,13 @@ export function useGame() {
     recentSlam: null,
   });
 
-  const playerCount = ref(4);
+  // Solo runs at 1 seat; everything else defaults to 4. Mirrors setMode's solo-vs-not
+  // playerCount swap so PlayView mounts with the right table size on first render.
+  const playerCount = ref(initialMode === 'solo' ? 1 : 4);
   const failureRate = ref(0.15);
   const speed = ref(1);
   /** Simulation (free-for-all) vs. Play (BEAT mode, human auto-seated as P1). */
-  const mode = ref<SimMode>('simulation');
+  const mode = ref<SimMode>(initialMode);
   /** Active beat seat in Play mode (-1 outside Play / pre-open). */
   const activeBeatSeatIndex = ref<number>(-1);
   /** Tick index within the active player's turn (0..beatsPerPlayer-1; -1 outside Play). */
@@ -63,9 +78,15 @@ export function useGame() {
   const soloElapsedMs = ref(0);
   const soloPenaltyMs = ref(0);
   const soloRunning = ref(false);
-  const soloBestTimeMs = ref<number | null>(loadSoloBestTime());
+  const soloBestTimeMs = ref<number | null>(null);
   const soloLastFinalMs = ref<number | null>(null);
   const soloIsNewBest = ref(false);
+  // Hydrate the persisted best time from Capacitor Preferences. Async — the UI shows
+  // "—" until this resolves, which is fine since the only writer (winner handler) only
+  // runs after the player has been on the table long enough to read the value.
+  void loadSoloBestTime().then((ms) => {
+    if (ms !== null) soloBestTimeMs.value = ms;
+  });
   let soloRafId: number | null = null;
   let soloStartedAt = 0;
   const startSoloTimer = () => {
@@ -237,8 +258,9 @@ export function useGame() {
     playerCount.value = Math.max(2, Math.min(6, n));
   };
   // Remembered player count from the last non-solo mode, so leaving Solo restores it
-  // instead of stranding the table at 1 player.
-  let lastNonSoloPlayerCount = playerCount.value;
+  // instead of stranding the table at 1 player. If the composable starts in Solo we
+  // can't read it from playerCount (which is 1), so fall back to the default of 4.
+  let lastNonSoloPlayerCount = initialMode === 'solo' ? 4 : playerCount.value;
   const setPlayerHuman = (id: PlayerId, isHuman: boolean) => {
     controller.value.setPlayerHuman(id, isHuman);
     state.version++;
