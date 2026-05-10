@@ -1,4 +1,6 @@
-import { reactive, ref, shallowRef, triggerRef } from 'vue';
+import { onUnmounted, reactive, ref, shallowRef, triggerRef } from 'vue';
+import { App as CapApp } from '@capacitor/app';
+import { Preferences } from '@capacitor/preferences';
 import type { Card } from '@/game/Card';
 import { Game } from '@/game/Game';
 import { SimulationController, type SimStatus, type SimMode } from '@/game/SimulationController';
@@ -7,17 +9,27 @@ import { useBeatAudio } from './useBeatAudio';
 
 const SOLO_BEST_KEY = 'chik-solo-best-time-ms';
 
-function loadSoloBestTime(): number | null {
-  if (typeof window === 'undefined') return null;
-  const raw = window.localStorage.getItem(SOLO_BEST_KEY);
-  if (!raw) return null;
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : null;
+async function loadSoloBestTime(): Promise<number | null> {
+  try {
+    const { value } = await Preferences.get({ key: SOLO_BEST_KEY });
+    if (!value) return null;
+    const n = Number(value);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
 }
 
 function saveSoloBestTime(ms: number): void {
-  if (typeof window === 'undefined') return;
-  window.localStorage.setItem(SOLO_BEST_KEY, String(Math.round(ms)));
+  // Fire-and-forget — Preferences.set is async but the persisted value is non-critical
+  // for the current frame. Errors are swallowed so a Preferences failure can never crash
+  // the win-detection codepath.
+  void Preferences.set({ key: SOLO_BEST_KEY, value: String(Math.round(ms)) }).catch(() => undefined);
+}
+
+export interface UseGameOptions {
+  /** Mode the game starts in. Defaults to 'simulation'. */
+  initialMode?: SimMode;
 }
 
 export interface GameViewState {
@@ -30,7 +42,9 @@ export interface GameViewState {
 
 const MAX_LOG = 50;
 
-export function useGame() {
+export function useGame(opts: UseGameOptions = {}) {
+  const initialMode: SimMode = opts.initialMode ?? 'simulation';
+
   const game = shallowRef<Game>(new Game());
   const controller = shallowRef<SimulationController>(new SimulationController(game.value));
 
@@ -41,11 +55,13 @@ export function useGame() {
     recentSlam: null,
   });
 
-  const playerCount = ref(4);
+  // Solo runs at 1 seat; everything else defaults to 4. Mirrors setMode's solo-vs-not
+  // playerCount swap so PlayView mounts with the right table size on first render.
+  const playerCount = ref(initialMode === 'solo' ? 1 : 4);
   const failureRate = ref(0.15);
   const speed = ref(1);
   /** Simulation (free-for-all) vs. Play (BEAT mode, human auto-seated as P1). */
-  const mode = ref<SimMode>('simulation');
+  const mode = ref<SimMode>(initialMode);
   /** Active beat seat in Play mode (-1 outside Play / pre-open). */
   const activeBeatSeatIndex = ref<number>(-1);
   /** Tick index within the active player's turn (0..beatsPerPlayer-1; -1 outside Play). */
@@ -63,9 +79,15 @@ export function useGame() {
   const soloElapsedMs = ref(0);
   const soloPenaltyMs = ref(0);
   const soloRunning = ref(false);
-  const soloBestTimeMs = ref<number | null>(loadSoloBestTime());
+  const soloBestTimeMs = ref<number | null>(null);
   const soloLastFinalMs = ref<number | null>(null);
   const soloIsNewBest = ref(false);
+  // Hydrate the persisted best time from Capacitor Preferences. Async — the UI shows
+  // "—" until this resolves, which is fine since the only writer (winner handler) only
+  // runs after the player has been on the table long enough to read the value.
+  void loadSoloBestTime().then((ms) => {
+    if (ms !== null) soloBestTimeMs.value = ms;
+  });
   let soloRafId: number | null = null;
   let soloStartedAt = 0;
   const startSoloTimer = () => {
@@ -99,6 +121,12 @@ export function useGame() {
   let unsubGame: (() => void) | null = null;
   let unsubStatus: (() => void) | null = null;
 
+  /** True iff the slam belongs to a human seat — used to gate fx so AI plays stay quiet. */
+  const isHumanEvent = (playerId: PlayerId): boolean => {
+    const p = game.value.players.find((x) => x.id === playerId);
+    return !!p && !p.isAI;
+  };
+
   const handleEvent = (e: GameEvent) => {
     state.version++;
     if (e.kind === 'slam') {
@@ -106,6 +134,13 @@ export function useGame() {
       // 'slam' is emitted BEFORE the chant moves, so chant.virtualPos here = the beat
       // that was just played. We capture it for the ticker's center cell.
       lastPlayedVirtualPos.value = game.value.chant.virtualPos;
+      // Reward the human for a correct slam — AI slams stay silent so a 4-player versus
+      // game doesn't sound like a slot machine.
+      if (isHumanEvent(e.playerId)) beatAudio.fx('success');
+    }
+    if (e.kind === 'miscall' && isHumanEvent(e.playerId)) {
+      // Miscall = human played a wrong word / wrong base / out-of-turn. Buzz them.
+      beatAudio.fx('fail');
     }
     if (e.kind === 'chantAdvanced' || e.kind === 'chantReversed') {
       // The chant has already moved on the Game side; mirror its virtualPos here so
@@ -120,7 +155,7 @@ export function useGame() {
     if (mode.value === 'solo') {
       if (e.kind === 'soloPenalty') {
         soloPenaltyMs.value += e.penaltyMs;
-        beatAudio.ding('low');
+        beatAudio.fx('fail');
       }
       if (e.kind === 'winner') {
         stopSoloTimer();
@@ -237,20 +272,29 @@ export function useGame() {
     playerCount.value = Math.max(2, Math.min(6, n));
   };
   // Remembered player count from the last non-solo mode, so leaving Solo restores it
-  // instead of stranding the table at 1 player.
-  let lastNonSoloPlayerCount = playerCount.value;
+  // instead of stranding the table at 1 player. If the composable starts in Solo we
+  // can't read it from playerCount (which is 1), so fall back to the default of 4.
+  let lastNonSoloPlayerCount = initialMode === 'solo' ? 4 : playerCount.value;
   const setPlayerHuman = (id: PlayerId, isHuman: boolean) => {
     controller.value.setPlayerHuman(id, isHuman);
     state.version++;
     triggerRef(game);
   };
   const submitHumanSlam = (...args: Parameters<SimulationController['submitHumanSlam']>) => {
-    // Solo: clicking a card before pressing Start should kick the run too — keeps the
-    // control panel's primary button in sync (Idle→Running) and starts the timer. The
-    // controller.start() path then no-ops once status is already 'running'.
-    if (mode.value === 'solo' && state.status === 'idle') {
-      start();
-    }
+    // Slam acceptance gate. Card plays are only meaningful while the simulation is
+    // actively running — if the game is paused, opening, or already ended the table
+    // should be inert, otherwise the player can rack up correct slams while the timer
+    // sits frozen (which is exactly the bug a paused-overlay tap is supposed to prevent).
+    // Solo's `idle` state is the one exception: the first card press auto-starts the
+    // run, matching the existing "tap a card to begin" UX.
+    const isSoloIdleStart = mode.value === 'solo' && state.status === 'idle';
+    if (state.status !== 'running' && !isSoloIdleStart) return;
+
+    // Tap feedback fires immediately on card press so the player gets a beat of audio +
+    // haptic before the rules engine resolves. The follow-up `slam` or `miscall` event
+    // then plays success / fail through handleEvent.
+    beatAudio.fx('tap');
+    if (isSoloIdleStart) start();
     controller.value.submitHumanSlam(...args);
   };
 
@@ -285,6 +329,31 @@ export function useGame() {
 
   // Start fresh.
   initGame();
+
+  // Auto-pause when the OS sends the app to the background — minimised, locked screen,
+  // multi-tasked away. Without this the simulation timers (and the solo clock) keep
+  // ticking while the user can't see the table, which is unfair in Solo and useless in
+  // Versus. The Capacitor App plugin uses Page Visibility under the hood on web, so the
+  // same listener covers tab-hidden in the browser.
+  let appStateRemove: (() => void) | null = null;
+  void CapApp.addListener('appStateChange', ({ isActive }) => {
+    if (!isActive && state.status === 'running') controller.value.pause();
+  }).then((handle) => {
+    appStateRemove = () => { void handle.remove(); };
+  });
+
+  // Tear-down on unmount: when PlayView navigates back to the menu mid-run, the
+  // SimulationController's setTimeout/setInterval would otherwise keep firing on a
+  // discarded Game (and keep dinging beat audio). Stop the controller, cancel the
+  // solo RAF, drop the app-state listener, and unsubscribe game listeners so nothing
+  // outlives this composable.
+  onUnmounted(() => {
+    controller.value.stop();
+    stopSoloTimer();
+    appStateRemove?.();
+    if (unsubGame) unsubGame();
+    if (unsubStatus) unsubStatus();
+  });
 
   return {
     game,
