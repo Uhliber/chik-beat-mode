@@ -24,28 +24,36 @@ function onRowClick() {
     :is="asButton ? 'button' : 'div'"
     :type="asButton ? 'button' : undefined"
     class="settings-row"
-    :class="{ 'is-button': asButton, 'is-disabled': disabled }"
+    :class="{ 'is-button': asButton, 'is-disabled': disabled, 'has-description': !!description }"
     :disabled="asButton ? disabled : undefined"
     @click="asButton && !disabled && onRowClick()"
   >
-    <span class="row-icon" v-if="$slots.icon">
-      <slot name="icon" />
-    </span>
-    <span class="row-label">
-      <span class="label-text"><slot name="label" /></span>
-      <span v-if="description" class="label-description">{{ description }}</span>
-    </span>
-    <span class="row-control">
-      <slot />
-    </span>
+    <div class="row-main">
+      <span class="row-icon" v-if="$slots.icon">
+        <slot name="icon" />
+      </span>
+      <span class="row-label">
+        <slot name="label" />
+      </span>
+      <span class="row-control">
+        <slot />
+      </span>
+    </div>
+    <div v-if="description" class="row-description">{{ description }}</div>
   </component>
 </template>
 
 <style scoped>
+/**
+ * The row is a vertical block (main line + optional full-width description). The main
+ * line is flex so icon + label + control sit on one row; the description sits beneath
+ * it, indented past the icon so it lines up under the label. Putting the description
+ * INSIDE the label column (as the previous version did) made it wrap into a narrow
+ * gutter whenever the control was wide — like the 4-button "AI skill" segmented.
+ */
 .settings-row {
   display: flex;
-  align-items: center;
-  gap: 12px;
+  flex-direction: column;
   width: 100%;
   min-height: 52px;
   padding: 10px 16px;
@@ -70,6 +78,13 @@ function onRowClick() {
   opacity: 0.45;
   cursor: not-allowed;
 }
+.row-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 32px;
+}
 .row-icon {
   flex-shrink: 0;
   width: 28px;
@@ -80,27 +95,17 @@ function onRowClick() {
   color: var(--color-coral-deep);
 }
 .row-label {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
-}
-.label-text {
   font-weight: 600;
   color: rgb(28, 25, 23);
   line-height: 1.25;
-}
-.label-description {
-  font-size: 12px;
-  color: rgb(120, 113, 108);
-  margin-top: 2px;
 }
 .row-control {
   /**
    * `margin-left: auto` consumes any remaining inline space in the row and converts it
    * into a left margin on this element — the canonical flex pattern for "always at the
-   * end of the row, regardless of label width". `.row-label`'s `flex: 1` alone wasn't
-   * shrinking-and-growing the way we needed when the label's intrinsic width was small.
+   * end of the row, regardless of label width".
    */
   flex-shrink: 0;
   margin-left: auto;
@@ -108,5 +113,13 @@ function onRowClick() {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+.row-description {
+  /* Indent past the icon column so the description aligns under the label. */
+  padding-left: calc(28px + 12px);
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: rgb(120, 113, 108);
 }
 </style>
