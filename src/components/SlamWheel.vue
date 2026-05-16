@@ -1,21 +1,21 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import type { BaseSlot } from '@/game/types';
 
 export interface WheelTarget {
-  slot: BaseSlot;
+  /** Stable id — for Solo this is 'left' | 'right'; for Versus it's the target seat index as string. */
+  id: string;
   label: string;
-  /** Image to render in the chip — top card art if the pile is non-empty, otherwise the base art. */
+  /** Image to render in the chip — top card art if there's a stack, otherwise base / seat fallback. */
   chipArt: string;
-  /** Whether the chip is showing a card (vs. the base art). */
+  /** Whether the chip is showing a real card (vs. a placeholder). */
   hasTopCard: boolean;
-  /** Center coords of this base on screen (px). */
+  /** Center coords of this target on screen (px). */
   screenX: number;
   screenY: number;
 }
 
 const props = defineProps<{
-  /** Card art (front) to preview overlaid on each base chip. */
+  /** Card art (front) to render as the ghost following the cursor. */
   cardArt: string;
   /** Where the aim started (px). */
   startX: number;
@@ -24,28 +24,31 @@ const props = defineProps<{
   cursorX: number;
   cursorY: number;
   targets: WheelTarget[];
-  /** Slot of the currently highlighted target ('' = no chip → click→main or cancel). */
-  highlightedSlot: BaseSlot | '';
-  /** Drag distance below this px → no chip highlight. */
+  /** id of the currently highlighted target ('' = cursor in centre / no target). */
+  highlightedId: string | '';
+  /** Drag distance below this px → cursor is in the cancel zone. */
   threshold: number;
   /** True once the cursor has moved past the click tolerance — i.e. user is dragging. */
   hasDragged: boolean;
 }>();
 
-const RADIUS = 120;
+const RADIUS = 130;
 const CHIP_W = 64;
 const CHIP_H = Math.round(CHIP_W * 1.4);
 
 const dragDistance = computed(() =>
   Math.hypot(props.cursorX - props.startX, props.cursorY - props.startY),
 );
-const isDefaulting = computed(() => dragDistance.value < props.threshold);
+const inCancelZone = computed(() => dragDistance.value < props.threshold);
 
 const targetLayouts = computed(() =>
   props.targets.map((t) => {
+    // If the target's real screen position is RIGHT AT the press point (e.g. dragging onto
+    // your own seat in Versus), fall back to a neutral angle so the chip isn't underneath
+    // the cursor.
     const dx = t.screenX - props.startX;
     const dy = t.screenY - props.startY;
-    const angle = Math.atan2(dy, dx);
+    const angle = Math.hypot(dx, dy) < 4 ? 0 : Math.atan2(dy, dx);
     const wx = props.startX + Math.cos(angle) * RADIUS;
     const wy = props.startY + Math.sin(angle) * RADIUS;
     return { ...t, wx, wy };
@@ -55,9 +58,7 @@ const targetLayouts = computed(() =>
 
 <template>
   <div class="fixed inset-0 pointer-events-none z-[1000]">
-    <!-- Aim ring around the press point. Behaviour depends on whether the user has dragged:
-         - No drag yet (just a click): release commits to Main. Ring is neutral.
-         - Dragging, cursor still inside the ring: release CANCELS. Ring tints red. -->
+    <!-- Aim ring around the press point. -->
     <div
       class="absolute -translate-x-1/2 -translate-y-1/2 rounded-full"
       :style="{
@@ -66,30 +67,30 @@ const targetLayouts = computed(() =>
         width: threshold * 2 + 'px',
         height: threshold * 2 + 'px',
         border: '2px dashed rgba(255,255,255,0.85)',
-        background: hasDragged && isDefaulting
+        background: hasDragged && inCancelZone
           ? 'rgba(220,80,60,0.28)'
           : (!hasDragged ? 'rgba(255,255,255,0.12)' : 'transparent'),
-        opacity: isDefaulting || !hasDragged ? 1 : 0.55,
+        opacity: inCancelZone || !hasDragged ? 1 : 0.55,
         transition: 'background 120ms, opacity 120ms',
       }"
     >
       <div
-        v-if="hasDragged && isDefaulting"
+        v-if="hasDragged && inCancelZone"
         class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-[10px] font-extrabold uppercase tracking-widest text-cream-soft whitespace-nowrap select-none"
       >
         Release to cancel
       </div>
       <div
         v-else-if="!hasDragged"
-        class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-[10px] font-extrabold uppercase tracking-widest text-cream-soft whitespace-nowrap select-none"
+        class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-[10px] font-extrabold uppercase tracking-widest text-cream-soft/85 whitespace-nowrap select-none"
       >
-        Tap = Main
+        Drag to aim
       </div>
     </div>
 
-    <!-- Drag indicator line -->
+    <!-- Drag indicator line from start to cursor (skipped while still in cancel zone). -->
     <svg
-      v-if="!isDefaulting"
+      v-if="!inCancelZone"
       class="absolute inset-0 w-full h-full"
       style="overflow: visible"
     >
@@ -104,18 +105,18 @@ const targetLayouts = computed(() =>
       />
     </svg>
 
-    <!-- Target chips, one per base, placed on a circle at each base's real direction -->
+    <!-- Target chips placed on a circle at each target's real direction. -->
     <div
       v-for="t in targetLayouts"
-      :key="t.slot"
+      :key="t.id"
       class="absolute -translate-x-1/2 -translate-y-1/2 transition-transform duration-150 ease-out"
-      :class="{
-        'scale-125': highlightedSlot === t.slot,
-      }"
+      :class="{ 'scale-125': highlightedId === t.id }"
       :style="{
         left: t.wx + 'px',
         top: t.wy + 'px',
-        filter: highlightedSlot === t.slot ? 'drop-shadow(0 0 14px rgba(255,235,170,0.95))' : 'drop-shadow(0 4px 8px rgba(0,0,0,0.35))',
+        filter: highlightedId === t.id
+          ? 'drop-shadow(0 0 14px rgba(255,235,170,0.95))'
+          : 'drop-shadow(0 4px 8px rgba(0,0,0,0.35))',
       }"
     >
       <div
@@ -123,14 +124,22 @@ const targetLayouts = computed(() =>
         :style="{
           width: CHIP_W + 'px',
           height: CHIP_H + 'px',
-          backgroundImage: `url(${t.chipArt})`,
+          backgroundImage: t.chipArt ? `url(${t.chipArt})` : undefined,
+          backgroundColor: t.chipArt ? undefined : 'rgba(60,40,30,0.7)',
           backgroundSize: 'cover',
           backgroundPosition: 'center',
-          boxShadow: highlightedSlot === t.slot
+          boxShadow: highlightedId === t.id
             ? '0 0 0 3px rgba(255,235,170,0.95), 0 0 22px 6px rgba(255,235,170,0.55)'
             : '0 0 0 2px rgba(255,255,255,0.7), 0 6px 14px rgba(0,0,0,0.35)',
         }"
-      />
+      >
+        <div
+          v-if="!t.chipArt"
+          class="absolute inset-0 flex items-center justify-center text-cream-soft font-extrabold uppercase tracking-widest text-xs"
+        >
+          {{ t.label }}
+        </div>
+      </div>
       <div
         class="mt-1 text-center text-[10px] font-extrabold uppercase tracking-wider text-cream-soft drop-shadow"
       >
@@ -138,7 +147,7 @@ const targetLayouts = computed(() =>
       </div>
     </div>
 
-    <!-- Card clone following the cursor -->
+    <!-- Card clone following the cursor. -->
     <div
       class="absolute -translate-x-1/2 -translate-y-1/2 rounded-lg overflow-hidden"
       :style="{
