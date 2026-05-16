@@ -41,12 +41,14 @@ const emit = defineEmits<{
 const promptStack = computed<Card[]>(() => props.player.promptStack);
 
 /**
- * Active seat gets a ~30% larger prompt-stack card so the current player's prompt is
- * unmistakable. Inactive seats stay at the base size to keep the table balanced.
+ * The HUMAN player's own prompt pile renders ~30% larger than the opponents' piles so
+ * they can always read their current prompt at a glance — independent of whose turn it
+ * is right now. The "active seat" highlight (pill colour + wisp) handles the "whose
+ * turn" question; this size bump answers "what am I being told to do".
  */
 const basePromptCardWidth = computed(() => (props.compact ? 40 : 56));
 const promptCardWidth = computed(() =>
-  props.isActive ? Math.round(basePromptCardWidth.value * 1.3) : basePromptCardWidth.value,
+  props.isHumanSeat ? Math.round(basePromptCardWidth.value * 1.3) : basePromptCardWidth.value,
 );
 
 const onCardAimStart = (payload: { card: Card; el: HTMLElement; clientX: number; clientY: number }) => {
@@ -115,12 +117,13 @@ watch(
     </div>
 
     <!-- Prompt stack: cards face-up sitting in front of this player. The top one is the
-         active prompt; older cards stack underneath but are inert. The whole pile bumps
-         ~30% larger when this is the active seat so the current prompt is easy to read. -->
+         active prompt; older cards stack underneath but are inert. The human's own pile
+         is permanently ~30% larger than the opponents' piles so they can always read
+         their current prompt at a glance — independent of whose turn it is. -->
     <div
       v-if="promptStack.length > 0"
       class="mt-1 prompt-pile-wrapper"
-      :class="{ 'is-active': isActive }"
+      :class="{ 'is-human': isHumanSeat }"
     >
       <BasePile
         :cards="promptStack"
@@ -174,7 +177,7 @@ watch(
   transition: transform 220ms cubic-bezier(.2, .7, .2, 1);
   transform-origin: top center;
 }
-.prompt-pile-wrapper.is-active {
+.prompt-pile-wrapper.is-human {
   filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.22));
 }
 </style>
