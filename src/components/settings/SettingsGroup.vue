@@ -35,14 +35,25 @@ defineProps<{ title?: string }>();
   overflow: hidden;
 }
 /**
- * Thin internal dividers between rows. Inset on the left so the divider sits under the
- * label rather than the icon — matches iOS Settings.
+ * Thin internal dividers between rows. The previous implementation put the divider as
+ * `display: block; margin-left: 56px;` inside each row via `::after` — which made the
+ * pseudo-element a FLEX ITEM in the row's flex layout (because each row is `display:
+ * flex`). That phantom 56px-margin flex item at the end of the row was pushing the
+ * actual `.row-control` 56px short of the right edge. The fix: absolutely-positioned
+ * pseudo-element so it lives in its own layer and contributes nothing to the row's
+ * inline flow.
  */
+.group-card :slotted(:not(:last-child)) {
+  position: relative;
+}
 .group-card :slotted(:not(:last-child))::after {
   content: '';
-  display: block;
+  position: absolute;
+  left: 56px;
+  right: 0;
+  bottom: 0;
   height: 1px;
   background: rgba(0, 0, 0, 0.08);
-  margin-left: 56px;
+  pointer-events: none;
 }
 </style>
