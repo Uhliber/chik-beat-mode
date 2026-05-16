@@ -116,11 +116,18 @@ onBeforeUnmount(() => {
 }
 
 /**
- * Outer cream bloom. Plain alpha compositing (no mix-blend-mode) — the previous
- * `screen` blend was subtly changing how the element's edge composited against the
- * coral background, which read as a vertical seam when the glow box clipped to the
- * viewport edge. Plain alpha = a true zero-alpha edge is invisible regardless of
- * underlying colour. Theme cream-soft (#fcf6e6) replaces the yellow palette.
+ * Outer cream bloom. CRITICAL detail: `radial-gradient(circle closest-side, ...)`.
+ *
+ * Default `radial-gradient(circle, ...)` sizes to FARTHEST-CORNER, so the "0 alpha at
+ * 100%" stop sits at the diagonal corner of the box (~127px for a 180px box). At the
+ * closest-side box edges (90px from centre on the 4 sides) the gradient is still at
+ * non-zero alpha — and the element's bounding box hard-cuts to nothing at that edge.
+ * That alpha-N to alpha-0 step renders as a faint rectangular seam around the glow.
+ *
+ * `closest-side` realigns 100% (= 0 alpha) to coincide with the closest box edge. The
+ * box corners (beyond the circle's radius) extend the last stop, which is fully
+ * transparent. So every pixel of the bounding box that COULD render at the edge is
+ * already at 0 alpha — no seam at any position, no matter what's behind it.
  */
 .wisp-glow {
   position: absolute;
@@ -129,12 +136,12 @@ onBeforeUnmount(() => {
   width: 180px;
   height: 180px;
   transform: translate(-50%, -50%);
-  background: radial-gradient(circle,
+  background: radial-gradient(circle closest-side,
     rgba(252, 246, 230, 0.55) 0%,
-    rgba(252, 246, 230, 0.30) 22%,
-    rgba(252, 246, 230, 0.12) 44%,
-    rgba(252, 246, 230, 0.03) 68%,
-    rgba(252, 246, 230, 0) 90%);
+    rgba(252, 246, 230, 0.32) 25%,
+    rgba(252, 246, 230, 0.14) 50%,
+    rgba(252, 246, 230, 0.04) 78%,
+    rgba(252, 246, 230, 0) 100%);
   animation: wisp-glow-pulse 1.8s ease-in-out infinite;
 }
 
@@ -145,10 +152,10 @@ onBeforeUnmount(() => {
   width: 16px;
   height: 16px;
   transform: translate(-50%, -50%);
-  background: radial-gradient(circle,
+  background: radial-gradient(circle closest-side,
     rgba(252, 246, 230, 0.98) 0%,
     rgba(252, 246, 230, 0.65) 45%,
-    rgba(252, 246, 230, 0.2) 75%,
+    rgba(252, 246, 230, 0.2) 80%,
     rgba(252, 246, 230, 0) 100%);
   animation: wisp-core-pulse 1.6s ease-in-out infinite;
 }
