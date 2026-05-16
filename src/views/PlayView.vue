@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import type { GameEvent } from '@/game/types';
+import type { GameEvent, BaseSide } from '@/game/types';
 import type { SimMode } from '@/game/SimulationController';
 import ControlPanel from '@/components/ControlPanel.vue';
 import GameTable from '@/components/GameTable.vue';
@@ -15,20 +15,15 @@ import IconVolume from '@/components/icons/IconVolume.vue';
 import { useGame } from '@/composables/useGame';
 import { useBeatAudio } from '@/composables/useBeatAudio';
 import { useResponsive } from '@/composables/useResponsive';
-import type { Card } from '@/game/Card';
-import type { Player } from '@/game/Player';
-import type { BaseSlot } from '@/game/types';
 
 const route = useRoute();
 const router = useRouter();
 
-// Mode is selected by the menu via the `?mode=` query param. Default to 'play' (Versus)
-// so an unparameterised /play visit doesn't strand the user on Simulation. The
-// ControlPanel (debug/dev) can still flip modes after mount.
 function readModeFromRoute(): SimMode {
   const raw = Array.isArray(route.query.mode) ? route.query.mode[0] : route.query.mode;
-  if (raw === 'solo' || raw === 'play' || raw === 'simulation') return raw;
-  return 'play';
+  // Back-compat alias from earlier code: 'play' / 'simulation' both meant versus play.
+  if (raw === 'solo') return 'solo';
+  return 'versus';
 }
 
 const initialMode = readModeFromRoute();
@@ -37,13 +32,9 @@ const {
   game,
   state,
   playerCount,
-  failureRate,
   speed,
   mode,
-  beatsPerPlayer,
-  activeBeatSeatIndex,
-  activeBeatTickIndex,
-  activeBeatTotalTicks,
+  activeSeatIndex,
   audioMuted,
   chantVirtualPos,
   lastPlayedVirtualPos,
@@ -57,27 +48,18 @@ const {
   pause,
   resume,
   setSpeed,
-  setFailureRate,
   setPlayerCount,
-  setBeatsPerPlayer,
   setAudioMuted,
-  setPlayerHuman,
-  canSeatBeHuman,
-  submitHumanSlam,
+  submitSoloAction,
+  submitVersusAction,
 } = useGame({ initialMode });
 
 const { isMobile } = useResponsive();
 const { fx } = useBeatAudio();
 
-// Mode is now route-driven — the only way to switch modes is to navigate back to the
-// menu. Solo gets a stripped-down HUD (mute + Start/Restart only); Versus / Simulation
-// keep the ControlPanel for tuning speed, players, failure rate, etc. but no longer
-// expose a mode toggle.
 const showControlPanel = computed(() => mode.value !== 'solo');
-
 const winnerId = computed(() => game.value.winnerId);
 
-/** Format ms as m:ss.cc (centiseconds, two digits). */
 function formatSoloTime(ms: number): string {
   const totalCs = Math.floor(ms / 10);
   const m = Math.floor(totalCs / 6000);
@@ -92,9 +74,7 @@ const soloBestDisplay = computed(() =>
   soloBestTimeMs.value === null ? '—' : formatSoloTime(soloBestTimeMs.value),
 );
 
-// Floating "+Ns" bubbles — one per soloPenalty event. They animate upward and fade out
-// via CSS, then auto-prune from this list after 1.4s. The auto-finish case emits a single
-// consolidated penalty so the bubble label can read e.g. "+12s" without 12 stacked pops.
+// Floating "+Ns" bubbles — one per soloPenalty event.
 const penaltyBubbles = ref<{ id: number; label: string }[]>([]);
 let penaltyBubbleId = 0;
 watch(
@@ -111,36 +91,37 @@ watch(
   },
 );
 
-// If player count changes while idle, rebuild the game.
 watch(playerCount, () => {
   if (state.status === 'idle') initGame();
 });
 
 const onRestart = () => { fx('tap'); initGame(); };
 
-const onSlamFromHuman = ({ card, player, targetBase }: { card: Card; player: Player; targetBase: BaseSlot }) => {
-  submitHumanSlam({
-    playerId: player.id,
-    cardId: card.id,
-    targetBase,
-    shoutedWord: game.value.getRequiredBeat(),
-  });
+const onSoloSlam = (payload: { cardId: string; baseSide: BaseSide }) => {
+  submitSoloAction({ type: 'slam', cardId: payload.cardId, baseSide: payload.baseSide });
 };
 
-const onToggleHuman = (playerId: string) => {
-  const p = game.value.players.find((x) => x.id === playerId);
-  if (!p) return;
-  // In Play (BEAT) mode, only seat 0 (P1) is allowed to be human. Ignore other toggles.
-  if (!canSeatBeHuman(playerId)) return;
-  setPlayerHuman(playerId, p.isAI); // toggle: was AI -> become human
+const onVersusPlay = (payload: { cardId: string; targetSeatIndex: number }) => {
+  const human = game.value.players.find((p) => !p.isAI);
+  if (!human) return;
+  submitVersusAction(human.id, { type: 'play', cardId: payload.cardId, targetSeatIndex: payload.targetSeatIndex });
 };
 
-// ---- Mobile-only state: bottom-sheet visibility ----
+const onDrawDeckClick = () => {
+  if (mode.value === 'solo') {
+    submitSoloAction({ type: 'draw' });
+  } else {
+    const human = game.value.players.find((p) => !p.isAI);
+    if (!human) return;
+    submitVersusAction(human.id, { type: 'draw' });
+  }
+};
+
+// Mobile bottom sheets.
 const sheetOpen = ref<'none' | 'log' | 'controls'>('none');
 function openSheet(which: 'log' | 'controls') { sheetOpen.value = which; }
 function closeSheet() { sheetOpen.value = 'none'; }
 
-// Primary action label/handler — mirrors the header button.
 const primaryLabel = computed(() => {
   switch (state.status) {
     case 'opening': return '…';
@@ -174,7 +155,6 @@ function onPauseOverlayTap() {
     class="relative w-screen overflow-hidden"
     style="height: 100dvh;"
   >
-
     <!-- ===================== DESKTOP HEADER ===================== -->
     <header
       v-if="!isMobile"
@@ -195,32 +175,26 @@ function onPauseOverlayTap() {
             class="h-9 sm:h-11 w-auto"
           />
           <div class="font-subtitle text-cream-soft/85 text-xs sm:text-sm font-medium">
-            Visual Simulation · v0.1
+            Visual Simulation · v1.0
           </div>
         </div>
       </div>
       <ControlPanel
         v-if="showControlPanel"
         :player-count="playerCount"
-        :failure-rate="failureRate"
         :speed="speed"
         :status="state.status"
         :mode="mode"
         :audio-muted="audioMuted"
-        :beats-per-player="beatsPerPlayer"
         @update:player-count="setPlayerCount"
-        @update:failure-rate="setFailureRate"
         @update:speed="setSpeed"
         @update:audio-muted="setAudioMuted"
-        @update:beats-per-player="setBeatsPerPlayer"
         @start="start"
         @pause="pause"
         @resume="resume"
         @restart="onRestart"
       />
 
-      <!-- Solo desktop minimal cluster — no ControlPanel, just the essentials the user
-           asked for: mute toggle + Start/Restart primary + a Restart icon mid-run. -->
       <div v-else class="flex items-center gap-2">
         <button
           type="button"
@@ -261,7 +235,6 @@ function onPauseOverlayTap() {
       v-else
       class="absolute top-0 left-0 right-0 z-40 flex items-center gap-2 px-3 py-2.5"
     >
-      <!-- Logo doubles as back-to-menu tap target on mobile. -->
       <button
         type="button"
         aria-label="Menu"
@@ -271,7 +244,6 @@ function onPauseOverlayTap() {
         <img src="/logo-white.svg" alt="Chik!" class="h-7 w-auto" />
       </button>
 
-      <!-- Primary action — Start / Pause / Resume / Restart -->
       <button
         type="button"
         class="px-3 py-1.5 rounded-full font-extrabold uppercase tracking-widest text-[11px] text-cream-soft shrink-0"
@@ -282,7 +254,6 @@ function onPauseOverlayTap() {
         {{ primaryLabel }}
       </button>
 
-      <!-- Restart icon (mobile header) — only visible mid-run. -->
       <button
         v-if="state.status !== 'idle'"
         type="button"
@@ -297,12 +268,8 @@ function onPauseOverlayTap() {
         </svg>
       </button>
 
-      <!-- Spacer pushes the icon buttons to the right edge. -->
       <div class="flex-1" />
 
-      <!-- Right-side icon buttons: Log + Controls. Both are tied to the ControlPanel
-           surface — Solo strips them out (the user wanted just mute + Start/Restart),
-           so they only render when the ControlPanel is shown. -->
       <div v-if="showControlPanel" class="flex items-center gap-1 shrink-0">
         <button
           type="button"
@@ -334,9 +301,6 @@ function onPauseOverlayTap() {
       </div>
     </header>
 
-    <!-- Floating ChantTicker, just below the mobile header. z-[20] keeps it below the
-         pause overlay (z-[25]) — the ticker is information-only, no reason to peek out
-         while the run is paused. -->
     <div
       v-if="isMobile && mode !== 'solo'"
       class="absolute left-1/2 -translate-x-1/2 z-[20] pointer-events-none"
@@ -348,9 +312,6 @@ function onPauseOverlayTap() {
       />
     </div>
 
-    <!-- Mobile-only Guide tab + Mute toggle. Same layout regardless of mode — mute pinned
-         bottom-left (44px tap target), Guide peeking from the bottom-right edge at full
-         image-button size (sized inside GuideCard). -->
     <GuideCard v-if="isMobile" mobile :mode="mode" />
     <button
       v-if="isMobile"
@@ -362,10 +323,6 @@ function onPauseOverlayTap() {
       <IconVolume :muted="audioMuted" :size="22" />
     </button>
 
-    <!-- ============== DESKTOP UPPER-LEFT (guide + ticker) ==============
-         The aside itself has no z-index so it doesn't create a stacking context — that
-         lets the two children sit at independent z-indexes (guide above pause, ticker
-         below) while still laying out as a flex column. -->
     <aside
       v-if="!isMobile"
       class="absolute top-20 sm:top-23 left-3 sm:left-4 flex flex-col gap-5"
@@ -381,7 +338,7 @@ function onPauseOverlayTap() {
       </div>
     </aside>
 
-    <!-- =============== SOLO TIMER HUD =============== -->
+    <!-- Solo timer HUD -->
     <div
       v-if="mode === 'solo'"
       class="absolute left-1/2 -translate-x-1/2 z-[20] flex flex-col items-center gap-2 pointer-events-none"
@@ -411,10 +368,6 @@ function onPauseOverlayTap() {
       </div>
     </div>
 
-    <!-- ===================== TABLE =====================
-         `isolate` creates a new stacking context for the whole table — GameTable's
-         internal absolute-positioned cards / piles / hands all stack within this box,
-         so they can't escape above the pause overlay (sibling at z-[25]) when paused. -->
     <main class="absolute inset-0 isolate" :style="{ paddingTop: isMobile ? '116px' : '0' }">
       <GameTable
         :game="game"
@@ -422,30 +375,22 @@ function onPauseOverlayTap() {
         :speed="speed"
         :version="state.version"
         :mode="mode"
-        :active-beat-seat-index="activeBeatSeatIndex"
-        :active-beat-tick-index="activeBeatTickIndex"
-        :active-beat-total-ticks="activeBeatTotalTicks"
-        @slam-from-human="onSlamFromHuman"
-        @toggle-human="onToggleHuman"
+        :active-seat-index="activeSeatIndex"
+        @solo-slam="onSoloSlam"
+        @versus-play="onVersusPlay"
+        @draw-deck-click="onDrawDeckClick"
       />
     </main>
 
-    <!-- =================== PAUSE OVERLAY ===================
-         Renders only while paused. The shield captures clicks across the table area to
-         block accidental slams while the timer is frozen, and tapping anywhere on it
-         resumes the run. Headers and the mute button sit at higher z-index, so back-to-
-         menu and mute remain reachable from the paused state. -->
     <PauseOverlay
       v-if="state.status === 'paused'"
       @resume="onPauseOverlayTap"
     />
 
-    <!-- =================== DESKTOP EVENT LOG =================== -->
     <aside v-if="!isMobile" class="absolute bottom-3 right-3 w-70 max-w-[80vw] z-20">
       <EventLog :events="state.events" />
     </aside>
 
-    <!-- =================== MOBILE BOTTOM SHEETS =================== -->
     <MobileBottomSheet
       v-if="isMobile"
       :open="sheetOpen === 'log'"
@@ -464,17 +409,13 @@ function onPauseOverlayTap() {
       <ControlPanel
         compact
         :player-count="playerCount"
-        :failure-rate="failureRate"
         :speed="speed"
         :status="state.status"
         :mode="mode"
         :audio-muted="audioMuted"
-        :beats-per-player="beatsPerPlayer"
         @update:player-count="setPlayerCount"
-        @update:failure-rate="setFailureRate"
         @update:speed="setSpeed"
         @update:audio-muted="setAudioMuted"
-        @update:beats-per-player="setBeatsPerPlayer"
         @start="start"
         @pause="pause"
         @resume="resume"
@@ -482,7 +423,6 @@ function onPauseOverlayTap() {
       />
     </MobileBottomSheet>
 
-    <!-- Winner -->
     <WinnerOverlay
       :winner-id="winnerId"
       :title="mode === 'solo' ? 'Cleared!' : undefined"

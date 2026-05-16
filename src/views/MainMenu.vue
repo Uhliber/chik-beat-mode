@@ -11,7 +11,7 @@ function startSolo() {
 }
 function startVersus() {
   fx('tap');
-  router.push({ name: 'play', query: { mode: 'play' } });
+  router.push({ name: 'play', query: { mode: 'versus' } });
 }
 function openSettings() {
   fx('tap');
