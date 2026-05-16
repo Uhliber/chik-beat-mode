@@ -1,8 +1,8 @@
-@import 'tailwindcss';
-
-/* Body default: Montserrat (Google Fonts) — clean and reliably readable.
-   Cubao is reserved for big display headings, Quiapo for subtitles / Filipino flavor. */
+/* External Google Fonts must @import BEFORE everything else (including the Tailwind
+   import, which expands into many rules at its position). CSS rule: @import statements
+   must precede all other statements — postcss warns otherwise. */
 @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap');
+@import 'tailwindcss';
 
 /* Local typefaces — Cubao for display headings, Quiapo for subtitles. */
 @font-face {

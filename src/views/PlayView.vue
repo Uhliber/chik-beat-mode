@@ -452,7 +452,7 @@ function onPauseOverlayTap() {
          stays available too; this one is the prominent "begin" affordance. -->
     <div
       v-if="mode === 'versus' && !winnerId && (state.status === 'idle' || state.status === 'ended')"
-      class="absolute inset-0 z-30 flex items-center justify-center pointer-events-none"
+      class="absolute inset-0 z-30 flex items-center justify-center pointer-events-none font-subtitle"
     >
       <button
         type="button"

@@ -27,17 +27,16 @@
 .table-top {
   width: min(82%, 760px);
   height: min(78%, 540px);
-  /** Warm woodish tone — slightly darker and a touch warmer than the body coral so the
-   *  surface reads as a separate plane without going muddy. Vertical gradient adds a
-   *  subtle far-edge shadow. */
+  /** Cream tabletop pulled from the theme tokens — `--color-table` for the main fill,
+   *  `--color-table-edge` for the darker bottom edge, giving a soft far-edge falloff
+   *  under the perspective tilt. */
   background:
-    linear-gradient(180deg, rgba(180, 70, 55, 0.55) 0%, rgba(140, 55, 40, 0.75) 100%);
+    linear-gradient(180deg, var(--color-table) 0%, var(--color-table-edge) 100%);
   border-radius: 64px;
   transform: rotateX(34deg);
   transform-origin: center;
   box-shadow:
-    0 32px 60px rgba(60, 20, 12, 0.4),
-    inset 0 -8px 18px rgba(0, 0, 0, 0.22),
-    inset 0 2px 4px rgba(255, 240, 220, 0.08);
+    0 14px 28px rgba(60, 20, 12, 0.16),
+    inset 0 -3px 8px rgba(0, 0, 0, 0.06);
 }
 </style>
