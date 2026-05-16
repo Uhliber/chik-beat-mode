@@ -302,12 +302,12 @@ export class Game {
     }
 
     if (action.type === 'play') {
-      return this.versusPlay(seatIdx, action.cardId, action.targetSeatIndex, action.snapDirection);
+      return this.versusPlay(seatIdx, action.cardId, action.targetSeatIndex);
     }
     return this.versusDraw(seatIdx);
   }
 
-  private versusPlay(seatIdx: number, cardId: string, targetSeatIndex: number, snapDirection?: 'left' | 'right'): VersusActionResult {
+  private versusPlay(seatIdx: number, cardId: string, targetSeatIndex: number): VersusActionResult {
     const player = this.players[seatIdx];
     const card = player.hand.find((c) => c.id === cardId);
     if (!card) return { type: 'rejected', reason: 'card-not-in-hand' };
@@ -317,52 +317,62 @@ export class Game {
       return { type: 'rejected', reason: 'wrong-beat' };
     }
 
-    // Prompt-dictated legality.
-    const reject = this.validateTarget(seatIdx, card, targetSeatIndex, snapDirection);
+    // Prompt-dictated legality. For Snap/Fetch/converted-Stop the player picked their
+    // direction by WHERE they dropped the card — targetSeatIndex is the choice.
+    const reject = this.validateTarget(seatIdx, card, targetSeatIndex);
     if (reject) return { type: 'rejected', reason: reject };
 
     return this.executeVersusPlay(seatIdx, card, targetSeatIndex);
   }
 
-  /** Validate the target seat is legal given the player's current prompt. */
-  private validateTarget(seatIdx: number, card: Card, targetSeatIndex: number, snapDirection?: 'left' | 'right'): VersusRejectReason | null {
+  /**
+   * Validate the target seat is legal given the player's current prompt.
+   *
+   * Direction rules:
+   *  - Left / Right prompt -> only that neighbor.
+   *  - Stop -> nothing legal (recipient must draw); once the pile drains, the Stop
+   *    converts and the holder may play to EITHER neighbor.
+   *  - Snap or Fetch as a prompt -> the holder PICKS left or right by where they drop
+   *    the card. Both neighbors are legal targets; the chosen direction is implicit
+   *    in targetSeatIndex.
+   *  - Free or no prompt (Halo-Halo opener) -> any non-self seat is legal.
+   */
+  private validateTarget(seatIdx: number, card: Card, targetSeatIndex: number): VersusRejectReason | null {
     if (targetSeatIndex === seatIdx) return 'self-target';
     if (targetSeatIndex < 0 || targetSeatIndex >= this.players.length) return 'illegal-target';
 
     const player = this.players[seatIdx];
     const promptCard = player.topPrompt;
-    const effective = this.effectivePromptDirection(promptCard, snapDirection);
+    const effective = this.effectivePromptDirection(promptCard);
 
-    // Stop blocks all plays — recipient must draw. (Snap-drawn-while-stopped is handled in
-    // versusDraw, which takes a different code path entirely.)
     if (effective === 'stop') return 'stopped';
 
     if (effective === 'left') {
       if (targetSeatIndex !== this.neighborSeat(seatIdx, 'left')) return 'illegal-target';
     } else if (effective === 'right') {
       if (targetSeatIndex !== this.neighborSeat(seatIdx, 'right')) return 'illegal-target';
+    } else if (effective === 'either-neighbor') {
+      const isLeftNeighbor = targetSeatIndex === this.neighborSeat(seatIdx, 'left');
+      const isRightNeighbor = targetSeatIndex === this.neighborSeat(seatIdx, 'right');
+      if (!isLeftNeighbor && !isRightNeighbor) return 'illegal-target';
     }
-    // 'free' or null (no prompt — Halo-Halo holder's opening play) → any non-self seat is legal.
+    // 'free' or null -> any non-self seat is legal.
     return null;
   }
 
   /**
-   * Resolve which direction-prompt is actually active right now.
-   * - Snap as prompt: caller chooses (left|right). If not provided, default to right (UI should always supply).
-   * - Fetch as prompt: caller chooses too — same as Snap from a direction standpoint.
-   * - Stop: returns 'stop' unless the draw pile has been emptied (then converts to Left/Right via snapDirection).
-   * - Other prompts: themselves.
-   * - No prompt (Halo-Halo opener): null (free targeting).
+   * What kind of targeting is in effect for the player whose top prompt is `promptCard`.
+   *  - 'left' / 'right' -> exactly that neighbor (directional prompt)
+   *  - 'either-neighbor' -> Snap / Fetch prompt, or a Stop after the draw pile emptied;
+   *    the holder picks by where they drop the card
+   *  - 'stop' -> blocked, must draw
+   *  - 'free' -> any non-self seat
+   *  - null  -> no prompt yet (only the Halo-Halo opener; same as 'free')
    */
-  private effectivePromptDirection(promptCard: Card | null, snapDirection?: 'left' | 'right'): CardPrompt | null {
+  private effectivePromptDirection(promptCard: Card | null): 'left' | 'right' | 'free' | 'stop' | 'either-neighbor' | null {
     if (!promptCard) return null;
-    if (promptCard.prompt === 'snap' || promptCard.prompt === 'fetch') {
-      return snapDirection ?? 'right';
-    }
-    if (promptCard.prompt === 'stop') {
-      if (this.stopConverted) return snapDirection ?? 'right';
-      return 'stop';
-    }
+    if (promptCard.prompt === 'snap' || promptCard.prompt === 'fetch') return 'either-neighbor';
+    if (promptCard.prompt === 'stop') return this.stopConverted ? 'either-neighbor' : 'stop';
     return promptCard.prompt;
   }
 
@@ -562,7 +572,7 @@ export class Game {
   }
 
   /** Versus convenience: which seats can the human at `seatIdx` legally target right now? */
-  legalTargetSeats(seatIdx: number, card: Card, snapDirection?: 'left' | 'right'): number[] {
+  legalTargetSeats(seatIdx: number, card: Card): number[] {
     if (seatIdx < 0 || seatIdx >= this.players.length) return [];
     // Pre-open Halo-Halo opening: any non-self seat is legal.
     if (!this.opened) {
@@ -575,7 +585,7 @@ export class Game {
     const all: number[] = [];
     for (let i = 0; i < this.players.length; i++) {
       if (i === seatIdx) continue;
-      const reject = this.validateTarget(seatIdx, card, i, snapDirection);
+      const reject = this.validateTarget(seatIdx, card, i);
       if (!reject) all.push(i);
     }
     return all;

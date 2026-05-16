@@ -174,6 +174,36 @@ describe('Game (Versus) — seat direction matches player perspective', () => {
     expect(legal).toEqual([1]);
   });
 
+  it('Snap prompt on seat 0 (4 players) allows BOTH neighbours as legal targets', () => {
+    const g = setupFourPlayerOpened();
+    const opener = g.players[0];
+    const halo = opener.hand.find((c) => c.isHaloHalo)!;
+    g.submitVersusAction(opener.id, { type: 'play', cardId: halo.id, targetSeatIndex: 1 });
+    g.activeSeatIndex = 0;
+    g.players[0].promptStack.push({ id: 'snap-chik-stub', word: 'chik', prompt: 'snap', isHaloHalo: false } as never);
+    const fromPool = g.drawPile.findIndex((c) => c.word === 'wally');
+    if (fromPool >= 0) g.players[0].hand.push(g.drawPile.splice(fromPool, 1)[0]);
+    const wally = g.players[0].hand.find((c) => c.word === 'wally')!;
+
+    const legal = g.legalTargetSeats(0, wally).sort();
+    expect(legal).toEqual([1, 3]); // left neighbour (seat 1) and right neighbour (seat 3)
+  });
+
+  it('Fetch prompt on seat 0 (4 players) allows BOTH neighbours as legal targets', () => {
+    const g = setupFourPlayerOpened();
+    const opener = g.players[0];
+    const halo = opener.hand.find((c) => c.isHaloHalo)!;
+    g.submitVersusAction(opener.id, { type: 'play', cardId: halo.id, targetSeatIndex: 1 });
+    g.activeSeatIndex = 0;
+    g.players[0].promptStack.push({ id: 'fetch-chik-stub', word: 'chik', prompt: 'fetch', isHaloHalo: false } as never);
+    const fromPool = g.drawPile.findIndex((c) => c.word === 'wally');
+    if (fromPool >= 0) g.players[0].hand.push(g.drawPile.splice(fromPool, 1)[0]);
+    const wally = g.players[0].hand.find((c) => c.word === 'wally')!;
+
+    const legal = g.legalTargetSeats(0, wally).sort();
+    expect(legal).toEqual([1, 3]);
+  });
+
   it('with a 6-player game, Right from seat 0 wraps to seat 5 (not seat 1)', () => {
     const g = new Game(seededRng(13));
     g.setupVersus(6);

@@ -57,7 +57,7 @@ export type SoloActionResult =
 // ============================================================================
 
 export type VersusAction =
-  | { type: 'play'; cardId: string; targetSeatIndex: number; snapDirection?: 'left' | 'right' }
+  | { type: 'play'; cardId: string; targetSeatIndex: number }
   | { type: 'draw' };
 
 export type VersusRejectReason =
