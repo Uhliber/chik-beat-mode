@@ -5,6 +5,7 @@ import BasesArea from './BasesArea.vue';
 import SlamWheel, { type WheelTarget } from './SlamWheel.vue';
 import TurnWisp from './TurnWisp.vue';
 import TableSurface from './TableSurface.vue';
+import SnapDrawnOverlay from './SnapDrawnOverlay.vue';
 import { useSeatLayout } from '@/composables/useSeatLayout';
 import { useResponsive } from '@/composables/useResponsive';
 import { flyCardSlam, flyCardDraw } from '@/composables/useCardAnimation';
@@ -29,11 +30,19 @@ const props = defineProps<{
   pendingFlights: FlightSpec[];
   /** When true (Versus only), render the moving turn-indicator wisp. */
   wispEnabled?: boolean;
+  /** Pending snap-drawn state (Versus only). When set, an inline overlay anchored to
+   *  the deck shows the drawn snap card + target chips. */
+  pendingSnapCard?: Card | null;
+  pendingSnapHolderSeat?: number;
+  pendingSnapLegalTargets?: number[];
+  pendingSnapInteractive?: boolean;
+  pendingSnapAiPick?: number | null;
 }>();
 
 const emit = defineEmits<{
   (e: 'solo-slam', payload: { cardId: string; baseSide: BaseSide }): void;
   (e: 'versus-play', payload: { cardId: string; targetSeatIndex: number }): void;
+  (e: 'snap-target', seatIndex: number): void;
   (e: 'draw-deck-click'): void;
 }>();
 
@@ -399,6 +408,20 @@ function dispatchFlight(spec: FlightSpec): void {
       :highlighted-id="highlightedId"
       :threshold="AIM_THRESHOLD_PX"
       :has-dragged="aim.hasDragged"
+    />
+
+    <!-- Snap-drawn overlay (Versus only). Inline, anchored to the deck — replaces the
+         previous modal chooser. Shown for both human and AI pending snaps; the chips
+         are interactive only for the human's pending snap. -->
+    <SnapDrawnOverlay
+      v-if="mode === 'versus' && pendingSnapCard"
+      :card="pendingSnapCard"
+      :players="game.players"
+      :holder-seat-index="pendingSnapHolderSeat ?? -1"
+      :legal-targets="pendingSnapLegalTargets ?? []"
+      :interactive="pendingSnapInteractive ?? false"
+      :ai-picked-target="pendingSnapAiPick ?? null"
+      @click-target="(seat) => emit('snap-target', seat)"
     />
   </div>
 </template>

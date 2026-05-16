@@ -322,8 +322,8 @@ export class Game {
       return this.executeVersusPlay(seatIdx, card, action.targetSeatIndex);
     }
 
-    if (action.type === 'snap-direction') {
-      return this.versusSnapDirection(playerId, action.direction);
+    if (action.type === 'snap-play') {
+      return this.versusSnapPlay(playerId, action.targetSeatIndex);
     }
     if (action.type === 'play') {
       return this.versusPlay(seatIdx, action.cardId, action.targetSeatIndex);
@@ -545,9 +545,10 @@ export class Game {
     }
 
     // Snap-when-drawn: if drawnCard is a Snap matching the current beat, PARK in a
-    // pending state and let the holder pick a direction (Left/Right/Keep). For the
-    // human this surfaces as a small UI chooser; the AI controller auto-resolves it.
-    // No turn rotation here — versusSnapDirection() drives that once the choice lands.
+    // pending state and let the holder pick a target. For the human this surfaces as
+    // an inline overlay anchored to the deck; the AI controller auto-resolves it after
+    // a short delay so the player can see the AI's choice. No turn rotation here —
+    // versusSnapPlay() drives that once the choice lands.
     if (drawnCard && drawnCard.prompt === 'snap' && drawnCard.matchesBeat(this.chant.current)) {
       this.pendingSnapDraw = { playerId: player.id, cardId: drawnCard.id };
       this.emit({ kind: 'versusSnapDrawnAvailable', playerId: player.id, cardId: drawnCard.id });
@@ -580,49 +581,55 @@ export class Game {
   }
 
   /**
-   * Commit a pending snap-direction choice. Called after versusDraw lands a Snap that
-   * matches the current beat — the engine parks via `pendingSnapDraw` and waits for
-   * this. `direction = 'keep'` means the holder declined to snap-play; the card stays
-   * in their hand and the turn continues clockwise (or bounces the chain if applicable).
+   * Commit a pending snap-play. Called after versusDraw lands a Snap that matches the
+   * current beat — the engine parks via `pendingSnapDraw` and waits for this. The
+   * drawer MUST play the snap (no "keep" — that option was deliberately removed); the
+   * only choice is target seat.
+   *
+   * Validation:
+   *  - Standard mode: target must be the left or right neighbour.
+   *  - Strict-prompts mode: any non-self seat is legal.
    */
-  private versusSnapDirection(playerId: PlayerId, direction: 'left' | 'right' | 'keep'): VersusActionResult {
+  private versusSnapPlay(playerId: PlayerId, targetSeatIndex: number): VersusActionResult {
     if (!this.pendingSnapDraw || this.pendingSnapDraw.playerId !== playerId) {
       return { type: 'rejected', reason: 'no-pending-snap' };
     }
     const { cardId } = this.pendingSnapDraw;
-    this.pendingSnapDraw = null;
     const seatIdx = this.players.findIndex((p) => p.id === playerId);
     if (seatIdx === -1) return { type: 'rejected', reason: 'not-your-turn' };
-    const player = this.players[seatIdx];
-
-    if (direction === 'keep') {
-      // Snap stays in hand. Resume the normal post-draw turn flow: chain bounce if a
-      // chain source is still in play, otherwise clockwise rotation from this seat.
-      this.emit({ kind: 'versusSnapDrawnKept', playerId, cardId });
-      if (this.chainSourceSeatIndex !== null && this.chainSourceSeatIndex !== seatIdx) {
-        const sourceSeat = this.chainSourceSeatIndex;
-        this.emit({ kind: 'versusChainStarted', sourceSeatIndex: sourceSeat, targetSeatIndex: seatIdx });
-        this.setActiveSeat(sourceSeat, /* viaChain */ true);
-        return { type: 'drew', cardId, from: 'pile', snapPlayedImmediately: false };
-      }
-      this.emit({ kind: 'versusChainEnded', reason: 'source-drew' });
-      this.chainSourceSeatIndex = null;
-      const next = this.nextClockwiseWithCards(seatIdx);
-      if (next === -1) {
-        this.declareWinner(player.id);
-        return { type: 'winner', playerId: player.id };
-      }
-      this.setActiveSeat(next, false);
-      return { type: 'drew', cardId, from: 'pile', snapPlayedImmediately: false };
+    if (targetSeatIndex === seatIdx) return { type: 'rejected', reason: 'self-target' };
+    if (targetSeatIndex < 0 || targetSeatIndex >= this.players.length) {
+      return { type: 'rejected', reason: 'illegal-target' };
     }
-
-    // direction is 'left' | 'right' — play the Snap from hand onto the chosen neighbour.
+    if (!this.strictPromptsEnabled) {
+      const left = this.neighborSeat(seatIdx, 'left');
+      const right = this.neighborSeat(seatIdx, 'right');
+      if (targetSeatIndex !== left && targetSeatIndex !== right) {
+        return { type: 'rejected', reason: 'illegal-target' };
+      }
+    }
+    const player = this.players[seatIdx];
     const card = player.hand.find((c) => c.id === cardId);
     if (!card) return { type: 'rejected', reason: 'card-not-in-hand' };
-    const targetSeat = this.neighborSeat(seatIdx, direction);
+
+    this.pendingSnapDraw = null;
     this.emit({ kind: 'versusSnapDrawnPlayed', playerId, cardId });
-    const result = this.executeVersusPlay(seatIdx, card, targetSeat);
+    const result = this.executeVersusPlay(seatIdx, card, targetSeatIndex);
     return result.type === 'winner' ? result : { type: 'drew', cardId, from: 'pile', snapPlayedImmediately: true };
+  }
+
+  /** Seats that can legally receive the currently-pending snap. Strict mode allows any
+   *  non-self seat; standard mode allows only the left/right neighbours. */
+  pendingSnapLegalTargets(): number[] {
+    if (!this.pendingSnapDraw) return [];
+    const seatIdx = this.players.findIndex((p) => p.id === this.pendingSnapDraw!.playerId);
+    if (seatIdx === -1) return [];
+    if (this.strictPromptsEnabled) {
+      const out: number[] = [];
+      for (let i = 0; i < this.players.length; i++) if (i !== seatIdx) out.push(i);
+      return out;
+    }
+    return [this.neighborSeat(seatIdx, 'left'), this.neighborSeat(seatIdx, 'right')];
   }
 
   /** Find the seat that played the Fetch card currently in front of `seatIdx`. */

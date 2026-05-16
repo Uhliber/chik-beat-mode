@@ -11,7 +11,7 @@ import ChantTicker from '@/components/ChantTicker.vue';
 import MobileBottomSheet from '@/components/MobileBottomSheet.vue';
 import SidePanel from '@/components/SidePanel.vue';
 import SettingsPanel from '@/components/SettingsPanel.vue';
-import SnapDirectionPrompt from '@/components/SnapDirectionPrompt.vue';
+import SnapDrawnOverlay from '@/components/SnapDrawnOverlay.vue';
 import PauseOverlay from '@/components/PauseOverlay.vue';
 import IconVolume from '@/components/icons/IconVolume.vue';
 import { useGame } from '@/composables/useGame';
@@ -32,6 +32,7 @@ const initialMode = readModeFromRoute();
 
 const {
   game,
+  controller,
   state,
   playerCount,
   speed,
@@ -53,7 +54,7 @@ const {
   aiSkill,
   setAiSkill,
   pendingSnapDraw,
-  submitSnapDirection,
+  submitSnapPlay,
   initGame,
   start,
   pause,
@@ -65,26 +66,42 @@ const {
   submitVersusAction,
 } = useGame({ initialMode });
 
-// Reactive Card lookup for the snap-direction chooser — we hand the actual Card object
-// to the prompt so it can render the art the human just drew.
+// Reactive snap-card + drawer + legal targets for the SnapDrawnOverlay. Both human
+// and AI's pending snaps surface the overlay — for the AI the chips are read-only and
+// the engine's `pendingSnapPickedTarget` indicates which one the AI is about to commit.
 const pendingSnapCard = computed(() => {
   const p = pendingSnapDraw.value;
   if (!p) return null;
   const player = game.value.players.find((pl) => pl.id === p.playerId);
   return player?.hand.find((c) => c.id === p.cardId) ?? null;
 });
-// Only surface the chooser when the pending snap belongs to the HUMAN seat. AI's
-// pending snaps are auto-resolved by the SimulationController.
-const showSnapChooser = computed(() => {
+const pendingSnapHolderSeat = computed(() => {
   const p = pendingSnapDraw.value;
-  if (!p) return false;
-  const player = game.value.players.find((pl) => pl.id === p.playerId);
-  return !!player && !player.isAI;
+  if (!p) return -1;
+  return game.value.players.findIndex((pl) => pl.id === p.playerId);
 });
-function onSnapChoose(direction: 'left' | 'right' | 'keep') {
+const pendingSnapIsHuman = computed(() => {
+  const idx = pendingSnapHolderSeat.value;
+  if (idx < 0) return false;
+  return !game.value.players[idx].isAI;
+});
+/** Legal target seat indices for the pending snap. Recomputed reactively via state.version
+ *  (which bumps on every game event) so the overlay refreshes when strict mode flips. */
+const pendingSnapLegalTargets = computed<number[]>(() => {
+  void state.version;
+  return pendingSnapDraw.value ? game.value.pendingSnapLegalTargets() : [];
+});
+/** For an AI's pending snap, the controller exposes which seat the AI is about to pick.
+ *  The overlay glows that chip so the player sees the AI's decision land. */
+const pendingSnapAiPick = computed<number | null>(() => {
+  void state.version;
+  if (pendingSnapIsHuman.value) return null;
+  return controller.value?.pendingSnapPickedTarget ?? null;
+});
+function onSnapChooseTarget(targetSeatIndex: number) {
   const p = pendingSnapDraw.value;
   if (!p) return;
-  submitSnapDirection(p.playerId, direction);
+  submitSnapPlay(p.playerId, targetSeatIndex);
 }
 
 const { isMobile } = useResponsive();
@@ -436,9 +453,15 @@ function onPauseOverlayTap() {
         :active-seat-index="activeSeatIndex"
         :pending-flights="pendingFlights"
         :wisp-enabled="wispEnabled"
+        :pending-snap-card="pendingSnapCard"
+        :pending-snap-holder-seat="pendingSnapHolderSeat"
+        :pending-snap-legal-targets="pendingSnapLegalTargets"
+        :pending-snap-interactive="pendingSnapIsHuman"
+        :pending-snap-ai-pick="pendingSnapAiPick"
         @solo-slam="onSoloSlam"
         @versus-play="onVersusPlay"
         @draw-deck-click="onDrawDeckClick"
+        @snap-target="onSnapChooseTarget"
       />
     </main>
 
@@ -537,14 +560,8 @@ function onPauseOverlayTap() {
       @restart="onRestart"
     />
 
-    <!-- Surfaced when the human draws a Snap matching the current beat — they pick
-         Left / Right / Keep. AI's pending snap auto-resolves; this only fires for the
-         human. -->
-    <SnapDirectionPrompt
-      :card="pendingSnapCard"
-      :open="showSnapChooser"
-      @choose="onSnapChoose"
-    />
+    <!-- Snap-drawn surfaces inline on the deck via SnapDrawnOverlay (mounted INSIDE
+         GameTable above) — replaces the previous modal chooser. -->
   </div>
 </template>
 
@@ -605,13 +622,12 @@ function onPauseOverlayTap() {
   background: var(--color-coral-deep);
   color: var(--color-cream-soft);
   border: 0;
-  padding: 16px 40px;
+  padding: 12px 40px;
   border-radius: 9999px;
-  font-family: 'Modak', system-ui, sans-serif;
-  font-weight: 400;
+  font-family: Quiapo;
+  font-weight: 700;
   font-size: 2rem;
   letter-spacing: 0.06em;
-  text-transform: uppercase;
   cursor: pointer;
   box-shadow:
     0 18px 36px rgba(0, 0, 0, 0.45),

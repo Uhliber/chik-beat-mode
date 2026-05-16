@@ -23,7 +23,6 @@ function describe(e: GameEvent): string {
     case 'versusDraw':      return e.cardId ? `${e.playerId} drew from ${e.from}` : `${e.playerId} pass (empty pile)`;
     case 'versusSnapDrawnAvailable': return `${e.playerId} drew a Snap matching the beat`;
     case 'versusSnapDrawnPlayed': return `${e.playerId} snap-played a drawn card`;
-    case 'versusSnapDrawnKept': return `${e.playerId} kept the drawn Snap`;
     case 'versusStrictPenalty': return `${e.playerId} penalty (${e.reason})`;
     case 'versusTurnChanged': return `Turn → ${e.playerId}${e.viaChain ? ' (chain)' : ''}`;
     case 'versusChainStarted': return `Chain: seat ${e.sourceSeatIndex} bounces back`;

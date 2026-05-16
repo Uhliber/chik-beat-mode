@@ -59,7 +59,7 @@ export type SoloActionResult =
 export type VersusAction =
   | { type: 'play'; cardId: string; targetSeatIndex: number }
   | { type: 'draw' }
-  | { type: 'snap-direction'; direction: 'left' | 'right' | 'keep' };
+  | { type: 'snap-play'; targetSeatIndex: number };
 
 export type VersusRejectReason =
   | 'not-your-turn'
@@ -95,7 +95,6 @@ export type GameEvent =
   | { kind: 'versusDraw'; playerId: PlayerId; cardId: string | null; from: 'pile' | 'hand'; fromPlayerId?: PlayerId }
   | { kind: 'versusSnapDrawnAvailable'; playerId: PlayerId; cardId: string }
   | { kind: 'versusSnapDrawnPlayed'; playerId: PlayerId; cardId: string }
-  | { kind: 'versusSnapDrawnKept'; playerId: PlayerId; cardId: string }
   | { kind: 'versusStrictPenalty'; playerId: PlayerId; cardId: string; reason: 'wrong-beat' | 'illegal-target' | 'stopped'; penaltyCardId: string | null }
   | { kind: 'versusTurnChanged'; playerId: PlayerId; seatIndex: number; viaChain: boolean }
   | { kind: 'versusChainStarted'; sourceSeatIndex: number; targetSeatIndex: number }

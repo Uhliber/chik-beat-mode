@@ -61,6 +61,29 @@ export class SimulationController {
   private mode: SimMode = 'versus';
   /** AI skill level. 3 (Hard) is the default — feels competent without being unfair. */
   private aiSkill: AiSkillLevel = 3;
+  /** Timer for the deliberate delay before an AI commits a pending snap, so the UI
+   *  can show the snap card popping up + the chosen target highlighting. */
+  private pendingSnapResolveTimer: number | null = null;
+  /** When an AI has picked its snap target but not yet committed, the UI reads this
+   *  to highlight the chosen chip during the resolve delay. -1 / null otherwise. */
+  pendingSnapPickedTarget: number | null = null;
+
+  /**
+   * Pick which seat an AI player should snap-play onto. Strict mode allows any non-self
+   * target — use skill to pick strategically (leader = fewest cards). Standard mode is
+   * left-or-right; high skill picks the neighbour with the fewest cards.
+   */
+  private chooseSnapTarget(seatIdx: number): number {
+    const legal = this.game.pendingSnapLegalTargets();
+    if (legal.length === 0) return seatIdx; // fallback (shouldn't happen)
+    if (this.aiSkill >= 3) {
+      // Pick the seat with the fewest cards in hand.
+      return legal.reduce((best, t) => {
+        return this.game.players[t].cardCount < this.game.players[best].cardCount ? t : best;
+      }, legal[0]);
+    }
+    return legal[Math.floor(this.rng() * legal.length)];
+  }
 
   constructor(game: Game, rng: () => number = Math.random) {
     this.game = game;
@@ -119,6 +142,11 @@ export class SimulationController {
       clearTimeout(this.timer);
       this.timer = null;
     }
+    if (this.pendingSnapResolveTimer !== null) {
+      clearTimeout(this.pendingSnapResolveTimer);
+      this.pendingSnapResolveTimer = null;
+      this.pendingSnapPickedTarget = null;
+    }
     this.setStatus('ended');
   }
 
@@ -161,18 +189,24 @@ export class SimulationController {
   private tick(): void {
     if (this.status !== 'running' || this.game.winnerId) return;
 
-    // Pending snap-draw choice: if the holder is AI, auto-pick a direction so the loop
-    // doesn't stall. The human's pending snap is surfaced by useGame and resolved by a
-    // UI chooser. (We can't tell from `activeSeatIndex` alone — the engine doesn't
-    // rotate the seat while parked, so the holder is also the active player.)
+    // Pending snap-draw: surface the SnapDrawnOverlay (visible to the human regardless
+    // of who's drawing) and resolve. Humans submit via the UI; AI picks strategically
+    // after a deliberate delay so the player can SEE the AI's snap before it lands.
     const pending = this.game.pendingSnapDraw;
     if (pending) {
       const holder = this.game.players.find((p) => p.id === pending.playerId);
       if (holder && holder.isAI) {
-        const direction = this.rng() < 0.5 ? 'left' : 'right';
-        this.game.submitVersusAction(holder.id, { type: 'snap-direction', direction });
-        if (this.game.winnerId) { this.setStatus('ended'); return; }
-        this.scheduleNext();
+        if (this.pendingSnapResolveTimer !== null) return; // already scheduled
+        const seat = this.game.players.findIndex((p) => p.id === holder.id);
+        const targetSeatIndex = this.chooseSnapTarget(seat);
+        this.pendingSnapPickedTarget = targetSeatIndex;
+        this.pendingSnapResolveTimer = window.setTimeout(() => {
+          this.pendingSnapResolveTimer = null;
+          this.pendingSnapPickedTarget = null;
+          this.game.submitVersusAction(holder.id, { type: 'snap-play', targetSeatIndex });
+          if (this.game.winnerId) { this.setStatus('ended'); return; }
+          this.scheduleNext();
+        }, 900);
         return;
       }
       // Human's pending — park and wait for the UI to submit.

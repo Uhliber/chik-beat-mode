@@ -341,7 +341,6 @@ export function useGame(opts: UseGameOptions = {}) {
         pendingSnapDraw.value = { playerId: e.playerId, cardId: e.cardId };
         break;
       case 'versusSnapDrawnPlayed':
-      case 'versusSnapDrawnKept':
         pendingSnapDraw.value = null;
         break;
       case 'versusStrictPenalty':
@@ -465,12 +464,14 @@ export function useGame(opts: UseGameOptions = {}) {
     controller.value.submitVersusHumanAction(playerId, action);
   };
 
-  /** Human's snap-drawn direction choice. Light wrapper so PlayView doesn't need to
-   *  reach for VersusAction shapes. Pass 'keep' to decline the snap-play. */
-  const submitSnapDirection = (playerId: PlayerId, direction: 'left' | 'right' | 'keep') => {
+  /** Human's snap-drawn target choice. Pass the seat index the snap should land on.
+   *  Standard mode accepts only the left/right neighbours; strict mode accepts any
+   *  non-self seat. The "Keep" option was deliberately removed — the holder must play
+   *  a matching drawn Snap (matches the rulebook's emphasis on the Snap superpower). */
+  const submitSnapPlay = (playerId: PlayerId, targetSeatIndex: number) => {
     if (state.status !== 'running') return;
     beatAudio.fx('tap');
-    controller.value.submitVersusHumanAction(playerId, { type: 'snap-direction', direction });
+    controller.value.submitVersusHumanAction(playerId, { type: 'snap-play', targetSeatIndex });
   };
 
   const setMode = (m: SimMode) => {
@@ -542,7 +543,7 @@ export function useGame(opts: UseGameOptions = {}) {
     aiSkill,
     setAiSkill,
     pendingSnapDraw,
-    submitSnapDirection,
+    submitSnapPlay,
     submitSoloAction,
     submitVersusAction,
   };
