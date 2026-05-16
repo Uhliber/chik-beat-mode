@@ -179,15 +179,27 @@ export function useGame(opts: UseGameOptions = {}) {
 
   function queueFlightForDraw(e: Extract<GameEvent, { kind: 'versusDraw' | 'soloDraw' }>): void {
     if (!e.cardId) return; // empty-pile "pass" — nothing to fly
-    if (e.kind === 'versusDraw' && e.from === 'hand') return; // Fetch — deferred visual
+
     const recipientId = e.kind === 'versusDraw' ? e.playerId : 'p1';
     const recipient = game.value.players.find((p) => p.id === recipientId);
     if (!recipient) return;
-    const fromRect = snapshotRect('[data-base-id="deck"]');
+
+    // Source: Fetch draws come FROM the Fetch owner's seat; everything else from the deck.
+    let fromRect: DOMRect | null;
+    if (e.kind === 'versusDraw' && e.from === 'hand' && e.fromPlayerId) {
+      const ownerSeat = game.value.players.find((p) => p.id === e.fromPlayerId)?.seatIndex;
+      if (ownerSeat == null) return;
+      fromRect = snapshotRect(`[data-seat-index="${ownerSeat}"]`);
+    } else {
+      fromRect = snapshotRect('[data-base-id="deck"]');
+    }
     const toRect = snapshotRect(`[data-seat-index="${recipient.seatIndex}"]`);
     if (!fromRect || !toRect) return;
+
+    // The engine adds the drawn card to player.hand BEFORE emitting versusDraw, so this
+    // lookup succeeds for both pile and Fetch draws. Use it to pull the assetPath and to
+    // gate the mid-flight face-reveal: only the human-drawer sees what they drew.
     const card = recipient.hand.find((c) => c.id === e.cardId);
-    // We pre-flash the face for the human's own draws (only when there's a faceUrl to show).
     const revealFace = !recipient.isAI && !!card;
     pendingFlights.value.push({
       id: nextFlightId++,

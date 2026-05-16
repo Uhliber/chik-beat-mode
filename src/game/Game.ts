@@ -436,15 +436,21 @@ export class Game {
     let drawnCard: Card | null = null;
     let source: 'pile' | 'hand' = 'pile';
 
+    // Add the drawn card to the recipient's hand BEFORE emitting the versusDraw event.
+    // The animation layer (useGame.queueFlightForDraw) looks up the card in player.hand
+    // to grab its assetPath and decide whether the recipient is human (-> reveal face
+    // mid-flight). For Snap-when-drawn the card will be popped right back out by
+    // executeVersusPlay below; the brief in-hand moment is harmless to the engine and
+    // critical for the listener.
+    let ownerWonByDrain = false;
     if (isFetch && fetchOwner && fetchOwner.cardCount > 0) {
-      // Drain a blind card from owner's hand.
       const idx = Math.floor(this.rng() * fetchOwner.hand.length);
       drawnCard = fetchOwner.hand.splice(idx, 1)[0];
       source = 'hand';
+      ownerWonByDrain = fetchOwner.cardCount === 0;
+      player.addCard(drawnCard);
       this.emit({ kind: 'versusDraw', playerId: player.id, cardId: drawnCard.id, from: 'hand', fromPlayerId: fetchOwner.id });
-      // Owner win-by-drain.
-      if (fetchOwner.cardCount === 0) {
-        player.addCard(drawnCard);
+      if (ownerWonByDrain) {
         this.declareWinner(fetchOwner.id);
         return { type: 'winner', playerId: fetchOwner.id };
       }
@@ -452,6 +458,7 @@ export class Game {
       // Pile draw.
       if (this.drawPile.length > 0) {
         drawnCard = this.drawPile.pop()!;
+        player.addCard(drawnCard);
         this.emit({ kind: 'versusDraw', playerId: player.id, cardId: drawnCard.id, from: 'pile' });
         // If that drained the pile, convert Stops (one-shot).
         if (this.drawPile.length === 0 && !this.stopConverted) {
@@ -470,25 +477,18 @@ export class Game {
 
     // Snap-when-drawn override: if drawnCard is a Snap matching the current beat, play it
     // immediately. Overrides Stop, doesn't end the turn normally — instead resolves as a
-    // play with the player choosing Left/Right.
+    // play with the player choosing Left/Right. The card is already in hand from above,
+    // so we just emit + executeVersusPlay (which pops it back out).
     let snapPlayedImmediately = false;
     if (drawnCard && drawnCard.prompt === 'snap' && drawnCard.matchesBeat(this.chant.current)) {
-      // Player must opt to play it. We auto-play to the right neighbor by default; the UI
-      // can override via a follow-up action in the future (TODO: surface a choice).
       const dir: 'left' | 'right' = 'right';
       const targetSeat = this.neighborSeat(seatIdx, dir);
-      // Don't yet add the Snap to hand — go straight to play.
       this.emit({ kind: 'versusSnapDrawnPlayed', playerId: player.id, cardId: drawnCard.id });
-      // Note: this play call sets chainSource and rotates active seat.
-      this.players[seatIdx].hand.push(drawnCard); // briefly in hand so executeVersusPlay can remove it
       const result = this.executeVersusPlay(seatIdx, drawnCard, targetSeat);
       snapPlayedImmediately = true;
       return result.type === 'winner'
         ? result
         : { type: 'drew', cardId: drawnCard.id, from: source, snapPlayedImmediately };
-    } else if (drawnCard) {
-      // Normal: drawn card enters hand.
-      player.addCard(drawnCard);
     }
 
     // Chain rule: if chainSource is set AND this draw was NOT Fetch-forced, bounce back to source.
