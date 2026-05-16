@@ -35,10 +35,15 @@ let resizeObserver: ResizeObserver | null = null;
 let activeAnim: gsap.core.Animation | null = null;
 
 /**
- * Centre of the seat pill in coordinates LOCAL TO THE WISP'S OFFSET PARENT (GameTable's
- * root). The wisp is `position: absolute` so its GSAP x/y transforms are relative to
- * that parent — we translate the seat's viewport rect into the parent's coordinate
- * space by subtracting the parent's own rect origin.
+ * Anchor point for the wisp in coordinates LOCAL TO THE WISP'S OFFSET PARENT (the
+ * GameTable's root). The wisp is `position: absolute`, so GSAP x/y transforms apply
+ * relative to that parent — we translate the seat's viewport rect into the parent's
+ * coordinate space by subtracting the parent's rect origin.
+ *
+ * We pull the anchor UP from the pill's centre by ~60% of the pill's own height. With
+ * a 28px dot that lands roughly two thirds of the dot above the pill (the "peek") and
+ * one third behind it (the "anchor"). The dot is still painted behind the pill via
+ * source order, so the overlap reads as a glow tucked behind the player's name.
  */
 function seatCentre(seatIdx: number): { x: number; y: number } | null {
   if (seatIdx < 0 || !wispEl.value) return null;
@@ -47,9 +52,10 @@ function seatCentre(seatIdx: number): { x: number; y: number } | null {
   if (!seatEl || !parent) return null;
   const seatRect = seatEl.getBoundingClientRect();
   const parentRect = parent.getBoundingClientRect();
+  const pillCy = seatRect.top + seatRect.height / 2;
   return {
     x: seatRect.left + seatRect.width / 2 - parentRect.left,
-    y: seatRect.top + seatRect.height / 2 - parentRect.top,
+    y: pillCy - 0.6 * seatRect.height - parentRect.top,
   };
 }
 
