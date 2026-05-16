@@ -334,3 +334,47 @@ describe('Game (Versus) — drawn-Snap parks for direction', () => {
     }
   });
 });
+
+describe('Game (Playground) — sandbox setup', () => {
+  it('deals the requested hand size with one Chik per player and one Halo-Halo overall', () => {
+    const g = new Game(seededRng(91));
+    g.setupPlayground({
+      playerCount: 4,
+      handSize: 10,
+      composition: { right: 14, left: 14, free: 7, stop: 7, snap: 7, fetch: 7 },
+    });
+    expect(g.players.length).toBe(4);
+    for (const p of g.players) {
+      expect(p.cardCount).toBe(10);
+      // The guaranteed-Chik deal: each player ends up with at least one Chik card.
+      expect(p.hand.some((c) => c.word === 'chik')).toBe(true);
+    }
+    // Exactly one Halo-Halo across all hands.
+    const halos = g.players.flatMap((p) => p.hand).filter((c) => c.isHaloHalo);
+    expect(halos.length).toBe(1);
+    expect(g.mode).toBe('playground');
+  });
+
+  it('rejects when Free count is below 7 (no Halo-Halo + Chik-pool deal possible)', () => {
+    const g = new Game(seededRng(92));
+    expect(() =>
+      g.setupPlayground({
+        playerCount: 3,
+        handSize: 7,
+        composition: { right: 14, left: 14, free: 0, stop: 7, snap: 7, fetch: 7 },
+      }),
+    ).toThrow();
+  });
+
+  it('rejects when total deck is too small for the requested hand size', () => {
+    const g = new Game(seededRng(93));
+    // 6 players × 14 cards = 84 dealt + 8 pile = 92 minimum; 56 falls way short.
+    expect(() =>
+      g.setupPlayground({
+        playerCount: 6,
+        handSize: 14,
+        composition: { right: 14, left: 14, free: 7, stop: 7, snap: 7, fetch: 7 },
+      }),
+    ).toThrow();
+  });
+});

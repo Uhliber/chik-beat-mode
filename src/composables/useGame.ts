@@ -4,7 +4,7 @@ import { Preferences } from '@capacitor/preferences';
 import type { Card } from '@/game/Card';
 import { Game } from '@/game/Game';
 import { SimulationController, type SimStatus, type SimMode, type AiSkillLevel } from '@/game/SimulationController';
-import type { BaseSide, ChantWord, GameEvent, PlayerId, SoloAction, VersusAction } from '@/game/types';
+import type { BaseSide, CardPrompt, ChantWord, GameEvent, PlayerId, PlaygroundComposition, SoloAction, VersusAction } from '@/game/types';
 import { useBeatAudio } from './useBeatAudio';
 
 /**
@@ -32,6 +32,13 @@ const SOLO_BEST_KEY = 'chik-solo-best-time-ms';
 const WISP_ENABLED_KEY = 'chik-wisp-enabled';
 const STRICT_PROMPTS_KEY = 'chik-strict-prompts';
 const AI_SKILL_KEY = 'chik-ai-skill';
+const PLAYGROUND_COMPOSITION_KEY = 'chik-playground-composition';
+const PLAYGROUND_HAND_SIZE_KEY = 'chik-playground-hand-size';
+
+const DEFAULT_PLAYGROUND_COMPOSITION: PlaygroundComposition = {
+  right: 14, left: 14, free: 7, stop: 7, snap: 7, fetch: 7,
+};
+const DEFAULT_PLAYGROUND_HAND_SIZE = 7;
 
 async function loadSoloBestTime(): Promise<number | null> {
   try {
@@ -89,6 +96,36 @@ async function loadAiSkill(): Promise<AiSkillLevel> {
 
 function saveAiSkill(level: AiSkillLevel): void {
   void Preferences.set({ key: AI_SKILL_KEY, value: String(level) }).catch(() => undefined);
+}
+
+async function loadPlaygroundComposition(): Promise<PlaygroundComposition> {
+  try {
+    const { value } = await Preferences.get({ key: PLAYGROUND_COMPOSITION_KEY });
+    if (!value) return { ...DEFAULT_PLAYGROUND_COMPOSITION };
+    const parsed = JSON.parse(value) as Partial<PlaygroundComposition>;
+    return { ...DEFAULT_PLAYGROUND_COMPOSITION, ...parsed };
+  } catch {
+    return { ...DEFAULT_PLAYGROUND_COMPOSITION };
+  }
+}
+
+function savePlaygroundComposition(comp: PlaygroundComposition): void {
+  void Preferences.set({ key: PLAYGROUND_COMPOSITION_KEY, value: JSON.stringify(comp) }).catch(() => undefined);
+}
+
+async function loadPlaygroundHandSize(): Promise<number> {
+  try {
+    const { value } = await Preferences.get({ key: PLAYGROUND_HAND_SIZE_KEY });
+    const n = Number(value);
+    if (Number.isFinite(n) && n >= 3 && n <= 14) return Math.round(n);
+    return DEFAULT_PLAYGROUND_HAND_SIZE;
+  } catch {
+    return DEFAULT_PLAYGROUND_HAND_SIZE;
+  }
+}
+
+function savePlaygroundHandSize(n: number): void {
+  void Preferences.set({ key: PLAYGROUND_HAND_SIZE_KEY, value: String(n) }).catch(() => undefined);
 }
 
 export interface UseGameOptions {
@@ -162,6 +199,29 @@ export function useGame(opts: UseGameOptions = {}) {
     aiSkill.value = level;
     saveAiSkill(level);
     if (controller.value) controller.value.setAiSkill(level);
+  };
+
+  // Playground deck composition + hand size (only relevant in 'playground' mode).
+  // Persisted via Capacitor Preferences, default = canonical 56-card / 7-hand setup.
+  const playgroundComposition = ref<PlaygroundComposition>({ ...DEFAULT_PLAYGROUND_COMPOSITION });
+  const playgroundHandSize = ref<number>(DEFAULT_PLAYGROUND_HAND_SIZE);
+  void loadPlaygroundComposition().then((c) => { playgroundComposition.value = c; });
+  void loadPlaygroundHandSize().then((n) => { playgroundHandSize.value = n; });
+  /** Updating either of these while idle re-runs initGame so the new deck is reflected
+   *  on the table without an explicit Restart (matches the existing playerCount pattern). */
+  const setPlaygroundComposition = (comp: PlaygroundComposition) => {
+    playgroundComposition.value = { ...comp };
+    savePlaygroundComposition(comp);
+    if (mode.value === 'playground' && state.status === 'idle') initGame();
+  };
+  const setPlaygroundPromptCount = (prompt: CardPrompt, count: number) => {
+    setPlaygroundComposition({ ...playgroundComposition.value, [prompt]: count });
+  };
+  const setPlaygroundHandSize = (n: number) => {
+    const clamped = Math.max(3, Math.min(14, Math.round(n)));
+    playgroundHandSize.value = clamped;
+    savePlaygroundHandSize(clamped);
+    if (mode.value === 'playground' && state.status === 'idle') initGame();
   };
 
   /**
@@ -407,6 +467,28 @@ export function useGame(opts: UseGameOptions = {}) {
 
     if (mode.value === 'solo') {
       g.setupSolo();
+    } else if (mode.value === 'playground') {
+      // Playground uses the same human/AI seat assignment as Versus — only the deck
+      // and hand size differ at setup time. setupPlayground throws on invalid combos
+      // (e.g. Free < 7 or deck too small for players × handSize); we surface that as
+      // an idle game with no players, which the UI handles via the central Start CTA
+      // (user opens Settings, adjusts composition, restart).
+      try {
+        g.setupPlayground({
+          playerCount: playerCount.value,
+          handSize: playgroundHandSize.value,
+          composition: playgroundComposition.value,
+        });
+        for (let i = 0; i < g.players.length; i++) {
+          ctrl.setPlayerHuman(g.players[i].id, i === 0);
+        }
+        activeSeatIndex.value = g.activeSeatIndex;
+      } catch (err) {
+        // Composition is misconfigured for the current player/hand combo. The game stays
+        // in resetState (no players, no deck); the UI shows the central Start CTA but
+        // hitting Start will fail until composition is fixed via Settings.
+        console.warn('[playground] setup rejected:', (err as Error).message);
+      }
     } else {
       g.setupVersus(playerCount.value);
       // Seat 0 is the human in Versus; everyone else AI.
@@ -542,6 +624,11 @@ export function useGame(opts: UseGameOptions = {}) {
     setStrictPrompts,
     aiSkill,
     setAiSkill,
+    playgroundComposition,
+    setPlaygroundComposition,
+    setPlaygroundPromptCount,
+    playgroundHandSize,
+    setPlaygroundHandSize,
     pendingSnapDraw,
     submitSnapPlay,
     submitSoloAction,

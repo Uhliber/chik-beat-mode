@@ -3,7 +3,10 @@ import type { Card } from './Card';
 import type { CardPrompt, PlayerId, VersusAction } from './types';
 
 export type SimStatus = 'idle' | 'opening' | 'running' | 'paused' | 'ended';
-export type SimMode = 'solo' | 'versus';
+/** Playground plays identically to Versus from the controller's POV — only the deck
+ *  composition and hand size differ at setup time. AI scheduling, snap-pending
+ *  resolution, mistake rolls, and turn rotation all behave the same. */
+export type SimMode = 'solo' | 'versus' | 'playground';
 
 /**
  * AI skill rungs (Versus). Each level is a (mistakeRate, strategyDepth) pair.

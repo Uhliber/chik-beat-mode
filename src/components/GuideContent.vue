@@ -3,7 +3,7 @@
  * Rendered "How to Play" body — used inside the desktop flip-card and the mobile modal.
  * Container queries scale text by card width via .guide-front in GuideCard.vue.
  */
-defineProps<{ mode?: 'solo' | 'versus' }>();
+defineProps<{ mode?: 'solo' | 'versus' | 'playground' }>();
 </script>
 
 <template>

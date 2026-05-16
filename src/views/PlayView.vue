@@ -23,8 +23,8 @@ const router = useRouter();
 
 function readModeFromRoute(): SimMode {
   const raw = Array.isArray(route.query.mode) ? route.query.mode[0] : route.query.mode;
-  // Back-compat alias from earlier code: 'play' / 'simulation' both meant versus play.
   if (raw === 'solo') return 'solo';
+  if (raw === 'playground') return 'playground';
   return 'versus';
 }
 
@@ -53,6 +53,10 @@ const {
   setStrictPrompts,
   aiSkill,
   setAiSkill,
+  playgroundComposition,
+  setPlaygroundPromptCount,
+  playgroundHandSize,
+  setPlaygroundHandSize,
   pendingSnapDraw,
   submitSnapPlay,
   initGame,
@@ -514,12 +518,16 @@ function onPauseOverlayTap() {
         :ai-skill="aiSkill"
         :player-count="playerCount"
         :speed="speed"
+        :playground-composition="playgroundComposition"
+        :playground-hand-size="playgroundHandSize"
         @update:audio-muted="setAudioMuted"
         @update:wisp-enabled="setWispEnabled"
         @update:strict-prompts="setStrictPrompts"
         @update:ai-skill="setAiSkill"
         @update:player-count="setPlayerCount"
         @update:speed="setSpeed"
+        @update:playground-prompt-count="(p) => setPlaygroundPromptCount(p.prompt, p.count)"
+        @update:playground-hand-size="setPlaygroundHandSize"
         @restart="onSettingsRestart"
         @back-to-menu="onSettingsBackToMenu"
       />
@@ -540,12 +548,16 @@ function onPauseOverlayTap() {
         :ai-skill="aiSkill"
         :player-count="playerCount"
         :speed="speed"
+        :playground-composition="playgroundComposition"
+        :playground-hand-size="playgroundHandSize"
         @update:audio-muted="setAudioMuted"
         @update:wisp-enabled="setWispEnabled"
         @update:strict-prompts="setStrictPrompts"
         @update:ai-skill="setAiSkill"
         @update:player-count="setPlayerCount"
         @update:speed="setSpeed"
+        @update:playground-prompt-count="(p) => setPlaygroundPromptCount(p.prompt, p.count)"
+        @update:playground-hand-size="setPlaygroundHandSize"
         @restart="onSettingsRestart"
         @back-to-menu="onSettingsBackToMenu"
       />

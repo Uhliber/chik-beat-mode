@@ -9,7 +9,8 @@ import CardView from './CardView.vue';
 const props = defineProps<{
   game: Game;
   /** 'solo' shows two physical bases + the draw pile. 'versus' shows only the draw pile. */
-  mode: 'solo' | 'versus';
+  /** 'playground' is treated identically to 'versus' here (centred deck, no Solo bases). */
+  mode: 'solo' | 'versus' | 'playground';
   /** Which side is currently being aimed at (Solo only). */
   highlightedSide?: BaseSide | null;
   /** Card IDs mid-flight (hidden in the pile until they land). */

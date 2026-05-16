@@ -31,7 +31,22 @@ export const CARD_PROMPTS: readonly CardPrompt[] = ['right', 'left', 'free', 'st
 /** Solo physical-base side. Versus has no center bases — prompts attach to seats instead. */
 export type BaseSide = 'left' | 'right';
 
-export type GameMode = 'solo' | 'versus';
+export type GameMode = 'solo' | 'versus' | 'playground';
+
+/**
+ * Playground deck composition — total count of each prompt in the custom-built deck.
+ * Within each prompt, words are distributed with Chik weighted 2× (matches the canonical
+ * v1.0 ratio). So a multiplier-of-7 makes the math clean: at N×7, the prompt contributes
+ * 2N Chik cards plus N of each other word.
+ */
+export type PlaygroundComposition = Record<CardPrompt, number>;
+
+export interface PlaygroundSetup {
+  playerCount: number;
+  /** 3..14 cards per player at deal time. */
+  handSize: number;
+  composition: PlaygroundComposition;
+}
 
 export type PlayerId = string;
 

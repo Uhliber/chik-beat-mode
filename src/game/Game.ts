@@ -1,7 +1,7 @@
 import { Card } from './Card';
 import { Player } from './Player';
 import { Chant } from './Chant';
-import { buildSoloDeck, buildVersusDeck, shuffle } from './Deck';
+import { buildSoloDeck, buildVersusDeck, buildPlaygroundDeck, shuffle } from './Deck';
 import type {
   BaseSide,
   CardPrompt,
@@ -9,6 +9,7 @@ import type {
   GameEvent,
   GameMode,
   PlayerId,
+  PlaygroundSetup,
   SoloAction,
   SoloActionResult,
   SoloPenaltyReason,
@@ -180,6 +181,83 @@ export class Game {
     this.activeSeatIndex = haloSeat >= 0 ? haloSeat : 0;
 
     this.emit({ kind: 'setup', mode: 'versus', playerCount });
+    this.emit({ kind: 'dealt' });
+  }
+
+  /**
+   * Playground setup — Versus with sandbox knobs:
+   *  - custom deck composition (per-prompt totals, Chik-2× word ratio preserved)
+   *  - variable starting hand size (3..14, vs Versus's fixed 7)
+   *
+   * Validates inputs and that the resulting deck has enough cards. Otherwise the
+   * structure mirrors setupVersus exactly: set aside Halo-Halo + (N-1) Chiks for the
+   * guaranteed-Chik deal, draw (handSize-1) random remainder cards, then 1 from the
+   * Chik pool. Rules engine (chain, prompts, Stop/Snap/Fetch, etc.) is identical to
+   * Versus from here on — only this setup function and the deck composition differ.
+   */
+  setupPlayground(opts: PlaygroundSetup): void {
+    const { playerCount, handSize, composition } = opts;
+    if (playerCount < 3 || playerCount > 6) {
+      throw new Error('Playground player count must be 3-6');
+    }
+    if (handSize < 3 || handSize > 14) {
+      throw new Error('Playground hand size must be 3-14');
+    }
+    if ((composition.free ?? 0) < 7) {
+      throw new Error('Playground composition: Free must be at least 7 (carries Halo-Halo + room for the chik-pool deal)');
+    }
+    const fullDeck = buildPlaygroundDeck(composition);
+    const minDeck = playerCount * handSize + 8;
+    if (fullDeck.length < minDeck) {
+      throw new Error(`Playground deck too small: have ${fullDeck.length}, need ${minDeck} for ${playerCount} × ${handSize} + 8 buffer`);
+    }
+
+    this.resetState();
+    this.mode = 'playground';
+
+    for (let i = 0; i < playerCount; i++) {
+      this.players.push(new Player(`p${i + 1}`, i));
+    }
+
+    const halo = fullDeck.find((c) => c.isHaloHalo)!;
+    const chikPool = fullDeck.filter((c) => c.word === 'chik' && !c.isHaloHalo);
+    if (chikPool.length < playerCount - 1) {
+      throw new Error(`Playground composition: not enough Chik cards (need ${playerCount - 1} non-Halo Chiks for the opener deal, have ${chikPool.length})`);
+    }
+    const shuffledChikPool = shuffle(chikPool, this.rng);
+    const setAsideChiks = shuffledChikPool.slice(0, playerCount - 1);
+    const setAsideIds = new Set(setAsideChiks.map((c) => c.id));
+    setAsideIds.add(halo.id);
+
+    const remainder = fullDeck.filter((c) => !setAsideIds.has(c.id));
+    const shuffledRemainder = shuffle(remainder, this.rng);
+
+    // Deal (handSize - 1) cards from the remainder to each player.
+    for (let r = 0; r < handSize - 1; r++) {
+      for (const p of this.players) {
+        const card = shuffledRemainder.pop();
+        if (card) p.hand.push(card);
+      }
+    }
+
+    // Then 1 chik from the set-aside pool to each player.
+    const openers = shuffle([halo, ...setAsideChiks], this.rng);
+    for (let i = 0; i < playerCount; i++) {
+      const card = openers.pop();
+      if (card) this.players[i].hand.push(card);
+    }
+
+    for (const p of this.players) p.sortHand();
+    this.drawPile = shuffledRemainder;
+
+    this.haloHaloOwnerId = this.players.find((p) =>
+      p.hand.some((c) => c.isHaloHalo),
+    )?.id ?? null;
+
+    const haloSeat = this.players.findIndex((p) => p.id === this.haloHaloOwnerId);
+    this.activeSeatIndex = haloSeat >= 0 ? haloSeat : 0;
+
+    this.emit({ kind: 'setup', mode: 'playground', playerCount });
     this.emit({ kind: 'dealt' });
   }
 

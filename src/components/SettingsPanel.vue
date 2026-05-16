@@ -5,14 +5,16 @@
  * Props mirror useGame's settable surface so the parent owns state and persistence;
  * this component is pure layout + emits.
  */
+import { computed } from 'vue';
 import SettingsGroup from './settings/SettingsGroup.vue';
 import SettingsRow from './settings/SettingsRow.vue';
 import SettingsToggle from './settings/SettingsToggle.vue';
 import SettingsSegmented from './settings/SettingsSegmented.vue';
 import IconVolume from './icons/IconVolume.vue';
 import type { SimMode, AiSkillLevel } from '@/game/SimulationController';
+import type { CardPrompt, PlaygroundComposition } from '@/game/types';
 
-defineProps<{
+const props = defineProps<{
   mode: SimMode;
   audioMuted: boolean;
   wispEnabled: boolean;
@@ -20,6 +22,10 @@ defineProps<{
   aiSkill: AiSkillLevel;
   playerCount: number;
   speed: number;
+  /** Playground deck composition (only relevant in mode === 'playground'). */
+  playgroundComposition?: PlaygroundComposition;
+  /** Playground starting hand size (only relevant in mode === 'playground'). */
+  playgroundHandSize?: number;
   /** Hide the Game group rows when no round is in flight (e.g. from /settings). */
   hideGameSection?: boolean;
   /** Hide Restart / Back-to-menu (e.g. from /settings already on the menu). */
@@ -34,6 +40,8 @@ const emit = defineEmits<{
   (e: 'update:ai-skill', v: AiSkillLevel): void;
   (e: 'update:player-count', n: number): void;
   (e: 'update:speed', n: number): void;
+  (e: 'update:playground-prompt-count', payload: { prompt: CardPrompt; count: number }): void;
+  (e: 'update:playground-hand-size', n: number): void;
   (e: 'restart'): void;
   (e: 'back-to-menu'): void;
 }>();
@@ -52,6 +60,32 @@ const aiSkillOptions = [
   { label: 'Hard',   value: 3 },
   { label: 'Master', value: 4 },
 ];
+
+// Versus + Playground share the same Game group (players, speed, strict, AI skill).
+const showVersusSettings = computed(() => props.mode === 'versus' || props.mode === 'playground');
+
+// Playground deck composition: each prompt picks from 0..6 × 7. Free has a 7 floor.
+const promptCountOptions = [0, 7, 14, 21, 28, 35, 42].map((n) => ({ label: String(n), value: n }));
+const promptCountOptionsFree = promptCountOptions.filter((o) => o.value >= 7);
+const handSizeOptions = [3, 5, 7, 10, 14].map((n) => ({ label: String(n), value: n }));
+
+const PROMPT_ROWS: { prompt: CardPrompt; label: string }[] = [
+  { prompt: 'right', label: 'Right' },
+  { prompt: 'left',  label: 'Left' },
+  { prompt: 'free',  label: 'Free' },
+  { prompt: 'stop',  label: 'Stop' },
+  { prompt: 'snap',  label: 'Snap' },
+  { prompt: 'fetch', label: 'Fetch' },
+];
+
+const deckTotal = computed(() => {
+  const c = props.playgroundComposition;
+  if (!c) return 0;
+  return (c.right ?? 0) + (c.left ?? 0) + (c.free ?? 0) + (c.stop ?? 0) + (c.snap ?? 0) + (c.fetch ?? 0);
+});
+const dealtTotal = computed(() => (props.playgroundHandSize ?? 0) * props.playerCount);
+const minDeckNeeded = computed(() => dealtTotal.value + 8);
+const deckSufficient = computed(() => deckTotal.value >= minDeckNeeded.value);
 </script>
 
 <template>
@@ -68,7 +102,7 @@ const aiSkillOptions = [
       </SettingsRow>
     </SettingsGroup>
 
-    <SettingsGroup v-if="mode === 'versus' && !hideGameSection" title="Game">
+    <SettingsGroup v-if="showVersusSettings && !hideGameSection" title="Game">
       <SettingsRow>
         <template #icon>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -130,7 +164,47 @@ const aiSkillOptions = [
       </SettingsRow>
     </SettingsGroup>
 
-    <SettingsGroup v-if="mode === 'versus'" title="Display">
+    <SettingsGroup v-if="mode === 'playground' && playgroundComposition && !hideGameSection" title="Playground deck">
+      <SettingsRow description="Cards each player starts with (3 to 14).">
+        <template #icon>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="13" height="18" rx="2" />
+            <path d="M8 9h6M8 13h4" />
+          </svg>
+        </template>
+        <template #label>Hand size</template>
+        <SettingsSegmented
+          :model-value="playgroundHandSize ?? 7"
+          :options="handSizeOptions"
+          @update:model-value="(v) => emit('update:playground-hand-size', Number(v))"
+        />
+      </SettingsRow>
+
+      <SettingsRow
+        v-for="row in PROMPT_ROWS"
+        :key="row.prompt"
+        :description="row.prompt === 'free' ? 'Carries the Halo-Halo opener — minimum 7.' : undefined"
+      >
+        <template #label>{{ row.label }}</template>
+        <SettingsSegmented
+          :model-value="playgroundComposition[row.prompt] ?? 0"
+          :options="row.prompt === 'free' ? promptCountOptionsFree : promptCountOptions"
+          @update:model-value="(v) => emit('update:playground-prompt-count', { prompt: row.prompt, count: Number(v) })"
+        />
+      </SettingsRow>
+
+      <SettingsRow>
+        <template #label>Deck total</template>
+        <span
+          class="deck-summary"
+          :class="{ 'is-short': !deckSufficient }"
+        >
+          {{ deckTotal }} · need ≥ {{ minDeckNeeded }}
+        </span>
+      </SettingsRow>
+    </SettingsGroup>
+
+    <SettingsGroup v-if="showVersusSettings" title="Display">
       <SettingsRow description="Glowing wisp that follows whose turn it is.">
         <template #icon>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -194,5 +268,14 @@ const aiSkillOptions = [
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
   font-size: 13px;
   color: rgb(120, 113, 108);
+}
+.deck-summary {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 13px;
+  color: rgb(120, 113, 108);
+}
+.deck-summary.is-short {
+  color: var(--color-coral-deep);
+  font-weight: 700;
 }
 </style>

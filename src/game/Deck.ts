@@ -1,5 +1,5 @@
 import { Card } from './Card';
-import { CHANT_ORDER, type CardPrompt, type ChantWord } from './types';
+import { CHANT_ORDER, type CardPrompt, type ChantWord, type PlaygroundComposition } from './types';
 
 /**
  * Solo deck — 56 cards using only Left/Right/Free prompts.
@@ -87,6 +87,62 @@ export function buildVersusDeck(): Card[] {
   if (cards.length !== 56) {
     throw new Error(`Versus deck build error: expected 56, got ${cards.length}`);
   }
+  return cards;
+}
+
+/**
+ * Playground deck builder. Caller supplies total counts per prompt — within each
+ * prompt the cards are distributed with Chik weighted 2× (matches the canonical
+ * v1.0 ratio). For clean integer math, total per prompt SHOULD be a multiple of 7
+ * (so the split is 2N Chik + N of each other word). Non-multiples are best-effort:
+ * floor-allocate the Chik portion, then fill the rest evenly across the other words.
+ *
+ * Free is the prompt that carries the Halo-Halo Chik. If free count is 0 we throw —
+ * the engine needs at least one Halo-Halo to open the game.
+ */
+export function buildPlaygroundDeck(composition: PlaygroundComposition): Card[] {
+  if ((composition.free ?? 0) < 1) {
+    throw new Error('Playground deck: Free prompt count must be at least 1 (carries the Halo-Halo).');
+  }
+  const cards: Card[] = [];
+  const prompts: CardPrompt[] = ['right', 'left', 'free', 'stop', 'snap', 'fetch'];
+  const otherWords: ChantWord[] = ['wally', 'hindo', 'pop', 'tambo', 'riki'];
+
+  for (const prompt of prompts) {
+    const total = composition[prompt] ?? 0;
+    if (total <= 0) continue;
+    // Split: 2N Chik + N each of 5 other words = 7N when total = 7N. For arbitrary
+    // total, distribute as evenly as possible, rounding the Chik portion to ceil(2/7).
+    const chikCount = Math.max(0, Math.round((total * 2) / 7));
+    let remaining = total - chikCount;
+    // Spread `remaining` across 5 other words. Earlier words get one extra if it doesn't divide evenly.
+    const perOther = Math.floor(remaining / otherWords.length);
+    let extra = remaining - perOther * otherWords.length;
+
+    // Chik cards — Free's first one is the Halo-Halo opener.
+    if (prompt === 'free') {
+      cards.push(new Card({ id: 'halohalo-chik', prompt: 'free', word: 'chik', isHaloHalo: true }));
+      for (let i = 0; i < chikCount - 1; i++) {
+        cards.push(new Card({ id: `free-chik-${i}`, prompt: 'free', word: 'chik' }));
+      }
+    } else {
+      for (let i = 0; i < chikCount; i++) {
+        cards.push(new Card({ id: `${prompt}-chik-${i}`, prompt, word: 'chik' }));
+      }
+    }
+
+    // Other words.
+    for (const w of otherWords) {
+      const count = perOther + (extra > 0 ? 1 : 0);
+      if (extra > 0) extra--;
+      for (let i = 0; i < count; i++) {
+        cards.push(new Card({ id: `${prompt}-${w}-${i}`, prompt, word: w }));
+      }
+      remaining -= count;
+      if (remaining < 0) break;
+    }
+  }
+
   return cards;
 }
 
