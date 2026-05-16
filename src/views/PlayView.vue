@@ -3,13 +3,14 @@ import { computed, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import type { GameEvent, BaseSide } from '@/game/types';
 import type { SimMode } from '@/game/SimulationController';
-import ControlPanel from '@/components/ControlPanel.vue';
 import GameTable from '@/components/GameTable.vue';
 import EventLog from '@/components/EventLog.vue';
 import WinnerOverlay from '@/components/WinnerOverlay.vue';
 import GuideCard from '@/components/GuideCard.vue';
 import ChantTicker from '@/components/ChantTicker.vue';
 import MobileBottomSheet from '@/components/MobileBottomSheet.vue';
+import SidePanel from '@/components/SidePanel.vue';
+import SettingsPanel from '@/components/SettingsPanel.vue';
 import PauseOverlay from '@/components/PauseOverlay.vue';
 import IconVolume from '@/components/icons/IconVolume.vue';
 import { useGame } from '@/composables/useGame';
@@ -45,6 +46,7 @@ const {
   soloIsNewBest,
   pendingFlights,
   wispEnabled,
+  setWispEnabled,
   initGame,
   start,
   pause,
@@ -59,7 +61,6 @@ const {
 const { isMobile } = useResponsive();
 const { fx } = useBeatAudio();
 
-const showControlPanel = computed(() => mode.value !== 'solo');
 const winnerId = computed(() => game.value.winnerId);
 
 function formatSoloTime(ms: number): string {
@@ -119,10 +120,26 @@ const onDrawDeckClick = () => {
   }
 };
 
-// Mobile bottom sheets.
+// Mobile bottom sheets + desktop side panel both flow through these openSheet/closeSheet
+// helpers — the 'controls' sheet is the new SettingsPanel (replaces the old ControlPanel).
 const sheetOpen = ref<'none' | 'log' | 'controls'>('none');
 function openSheet(which: 'log' | 'controls') { sheetOpen.value = which; }
 function closeSheet() { sheetOpen.value = 'none'; }
+
+// Desktop right-side panel reuses the same 'controls' state so we can have one source of
+// truth for "is settings open" without juggling two refs.
+const settingsOpen = computed({
+  get: () => sheetOpen.value === 'controls',
+  set: (v) => { sheetOpen.value = v ? 'controls' : 'none'; },
+});
+function onSettingsBackToMenu() {
+  closeSheet();
+  router.push({ name: 'menu' });
+}
+function onSettingsRestart() {
+  closeSheet();
+  onRestart();
+}
 
 const primaryLabel = computed(() => {
   switch (state.status) {
@@ -181,23 +198,10 @@ function onPauseOverlayTap() {
           </div>
         </div>
       </div>
-      <ControlPanel
-        v-if="showControlPanel"
-        :player-count="playerCount"
-        :speed="speed"
-        :status="state.status"
-        :mode="mode"
-        :audio-muted="audioMuted"
-        @update:player-count="setPlayerCount"
-        @update:speed="setSpeed"
-        @update:audio-muted="setAudioMuted"
-        @start="start"
-        @pause="pause"
-        @resume="resume"
-        @restart="onRestart"
-      />
-
-      <div v-else class="flex items-center gap-2">
+      <!-- Right-side header actions: mute / restart / primary / settings-cog.
+           Replaces the old inline ControlPanel pill — players + speed now live in
+           the dedicated SettingsPanel reachable via the cog. -->
+      <div class="flex items-center gap-2">
         <button
           type="button"
           :title="audioMuted ? 'Unmute' : 'Mute'"
@@ -228,6 +232,18 @@ function onPauseOverlayTap() {
           @click="onPrimary"
         >
           {{ primaryLabel }}
+        </button>
+        <button
+          type="button"
+          aria-label="Settings"
+          title="Settings"
+          class="w-9 h-9 rounded-full bg-cream-soft/95 ring-1 ring-black/10 flex items-center justify-center text-coral-deep shadow-md"
+          @click="openSheet('controls')"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </svg>
         </button>
       </div>
     </header>
@@ -272,8 +288,9 @@ function onPauseOverlayTap() {
 
       <div class="flex-1" />
 
-      <div v-if="showControlPanel" class="flex items-center gap-1 shrink-0">
+      <div class="flex items-center gap-1 shrink-0">
         <button
+          v-if="mode === 'versus'"
           type="button"
           aria-label="Event log"
           class="w-9 h-9 rounded-full bg-cream-soft/95 ring-1 ring-black/10 flex items-center justify-center text-coral-deep"
@@ -287,9 +304,19 @@ function onPauseOverlayTap() {
         </button>
         <button
           type="button"
-          aria-label="Controls"
+          aria-label="Settings"
           class="w-9 h-9 rounded-full bg-cream-soft/95 ring-1 ring-black/10 flex items-center justify-center text-coral-deep"
           @click="openSheet('controls')"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </svg>
+        </button>
+        <button
+          v-if="false"
+          type="button"
+          class="w-9 h-9 rounded-full bg-cream-soft/95 ring-1 ring-black/10 flex items-center justify-center text-coral-deep"
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
             <line x1="4" y1="7" x2="14" y2="7" />
@@ -404,28 +431,49 @@ function onPauseOverlayTap() {
       <EventLog :events="state.events" />
     </MobileBottomSheet>
 
+    <!-- Mobile: settings live in a bottom sheet, opened by the cog button in the header. -->
     <MobileBottomSheet
-      v-if="isMobile && showControlPanel"
+      v-if="isMobile"
       :open="sheetOpen === 'controls'"
-      title="Controls"
+      title="Settings"
       @close="closeSheet"
     >
-      <ControlPanel
-        compact
-        :player-count="playerCount"
-        :speed="speed"
-        :status="state.status"
+      <SettingsPanel
         :mode="mode"
         :audio-muted="audioMuted"
+        :wisp-enabled="wispEnabled"
+        :player-count="playerCount"
+        :speed="speed"
+        @update:audio-muted="setAudioMuted"
+        @update:wisp-enabled="setWispEnabled"
         @update:player-count="setPlayerCount"
         @update:speed="setSpeed"
-        @update:audio-muted="setAudioMuted"
-        @start="start"
-        @pause="pause"
-        @resume="resume"
-        @restart="onRestart"
+        @restart="onSettingsRestart"
+        @back-to-menu="onSettingsBackToMenu"
       />
     </MobileBottomSheet>
+
+    <!-- Desktop: same settings body, slides in from the right side. -->
+    <SidePanel
+      v-if="!isMobile"
+      :open="settingsOpen"
+      title="Settings"
+      @close="closeSheet"
+    >
+      <SettingsPanel
+        :mode="mode"
+        :audio-muted="audioMuted"
+        :wisp-enabled="wispEnabled"
+        :player-count="playerCount"
+        :speed="speed"
+        @update:audio-muted="setAudioMuted"
+        @update:wisp-enabled="setWispEnabled"
+        @update:player-count="setPlayerCount"
+        @update:speed="setSpeed"
+        @restart="onSettingsRestart"
+        @back-to-menu="onSettingsBackToMenu"
+      />
+    </SidePanel>
 
     <WinnerOverlay
       :winner-id="winnerId"
