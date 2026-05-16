@@ -32,6 +32,8 @@ const props = defineProps<{
   shouted?: ChantWord | null;
   /** Monotonic counter that re-triggers the bubble even if the word didn't change. */
   shoutKey?: number;
+  /** Card IDs that just landed in this player's hand — CardFan plays a slide-in for each. */
+  freshCardIds?: Set<string>;
 }>();
 
 const emit = defineEmits<{
@@ -89,6 +91,8 @@ watch(
         :arc="6"
         :interactive="false"
         :max-visible="5"
+        :hidden-ids="hiddenIds"
+        :fresh-ids="freshCardIds"
       />
     </div>
 
@@ -145,6 +149,8 @@ watch(
           :arc="10"
           :interactive="false"
           :max-visible="7"
+          :hidden-ids="hiddenIds"
+          :fresh-ids="freshCardIds"
         />
       </div>
     </template>
@@ -160,6 +166,8 @@ watch(
           :arc="20"
           :interactive="true"
           :max-width="humanHandMaxWidth"
+          :hidden-ids="hiddenIds"
+          :fresh-ids="freshCardIds"
           @card-aim-start="onCardAimStart"
         />
       </div>

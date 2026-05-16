@@ -44,6 +44,17 @@ const props = defineProps<{
    * heartbeat animation — used to draw the eye to Halo-Halo before the game opens.
    */
   cardPulse?: (cardId: string) => boolean;
+  /**
+   * Card IDs currently in-flight (e.g. mid-draw animation). Filtered out of the fan so
+   * the slot doesn't appear until the GSAP flight lands — at which point the parent
+   * removes the id and (optionally) adds it to `freshIds` to trigger the slide-in.
+   */
+  hiddenIds?: Set<string>;
+  /**
+   * Card IDs that just landed in the hand. The card gets a brief CSS keyframe animation
+   * (translate + scale + opacity) so the player can see WHERE the new card slotted in.
+   */
+  freshIds?: Set<string>;
 }>();
 
 const emit = defineEmits<{
@@ -54,10 +65,14 @@ const cardW = computed(() => props.cardWidth ?? 70);
 const baseFanAngle = computed(() => props.fanAngle ?? 38);
 const arc = computed(() => props.arc ?? 18);
 
-/** Cards we actually render (last N if maxVisible is set). */
+/** Cards we actually render: filter in-flight ids first, then optionally clamp to last N. */
 const visibleCards = computed(() => {
-  if (!props.maxVisible || props.cards.length <= props.maxVisible) return props.cards;
-  return props.cards.slice(-props.maxVisible);
+  const hidden = props.hiddenIds;
+  const base = hidden && hidden.size > 0
+    ? props.cards.filter((c) => !hidden.has(c.id))
+    : props.cards;
+  if (!props.maxVisible || base.length <= props.maxVisible) return base;
+  return base.slice(-props.maxVisible);
 });
 
 /** Cards hidden behind the "+N" indicator. */
@@ -163,7 +178,10 @@ const circleBoxSize = computed(() => (circleRadius.value + cardW.value * 1.6) * 
         v-if="interactive && (!cardInteractive || cardInteractive(layout.card.id))"
         type="button"
         class="circle-card-btn block focus:outline-none cursor-grab active:cursor-grabbing"
-        :class="{ 'halo-pulse': cardPulse && cardPulse(layout.card.id) }"
+        :class="{
+          'halo-pulse': cardPulse && cardPulse(layout.card.id),
+          'is-fresh': freshIds && freshIds.has(layout.card.id),
+        }"
         :style="{ touchAction: 'none' }"
         @pointerdown.prevent="onPointerDown(layout.card, $event)"
       >
@@ -172,7 +190,10 @@ const circleBoxSize = computed(() => (circleRadius.value + cardW.value * 1.6) * 
       <div
         v-else
         class="block pointer-events-none"
-        :class="{ 'halo-pulse': cardPulse && cardPulse(layout.card.id) }"
+        :class="{
+          'halo-pulse': cardPulse && cardPulse(layout.card.id),
+          'is-fresh': freshIds && freshIds.has(layout.card.id),
+        }"
       >
         <CardView :card="layout.card" :face-up="faceUp" :width="cardW" />
       </div>
@@ -200,12 +221,17 @@ const circleBoxSize = computed(() => (circleRadius.value + cardW.value * 1.6) * 
         v-if="interactive"
         type="button"
         class="block hover:-translate-y-2 transition-transform duration-200 cursor-grab active:cursor-grabbing focus:outline-none"
+        :class="{ 'is-fresh': freshIds && freshIds.has(layout.card.id) }"
         :style="{ touchAction: 'none' }"
         @pointerdown.prevent="onPointerDown(layout.card, $event)"
       >
         <CardView :card="layout.card" :face-up="faceUp" :width="cardW" />
       </button>
-      <div v-else class="block pointer-events-none">
+      <div
+        v-else
+        class="block pointer-events-none"
+        :class="{ 'is-fresh': freshIds && freshIds.has(layout.card.id) }"
+      >
         <CardView :card="layout.card" :face-up="faceUp" :width="cardW" />
       </div>
     </div>
@@ -226,6 +252,22 @@ const circleBoxSize = computed(() => (circleRadius.value + cardW.value * 1.6) * 
 </template>
 
 <style scoped>
+/**
+ * "Fresh card" entry animation. Applied to the INNER button/div wrapper (not the outer
+ * fan-slot div which already owns the layout transform), so the keyframe's translate +
+ * scale compose locally with the parent's layout transform instead of replacing it.
+ * Fires for ~380ms after a newly-drawn card lands in the hand — gives the player a
+ * clear visual of where in their fan the new card slotted in.
+ */
+.is-fresh {
+  animation: card-fresh-slide-in 380ms cubic-bezier(.2, .7, .2, 1) both;
+}
+@keyframes card-fresh-slide-in {
+  0%   { transform: translateY(-14px) scale(0.92); opacity: 0; filter: brightness(1.08); }
+  60%  { transform: translateY(0)     scale(1);    opacity: 1; filter: brightness(1.06); }
+  100% { transform: translateY(0)     scale(1);    opacity: 1; filter: brightness(1); }
+}
+
 /* Circle-mode hover: pull the card INWARD (toward the centre of the halo) using a
    local +Y translate. Because the wrapper has already been rotated so the card's top
    edge faces outward, +Y in local space always points back toward the centre — works

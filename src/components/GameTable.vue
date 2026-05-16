@@ -238,6 +238,12 @@ watch(() => props.game, cleanupAim);
 const draining = ref<Set<number>>(new Set());
 /** Per-seat shout state — fires the speech bubble above the source player on each play. */
 const shouts = ref<Record<number, { word: ChantWord; key: number }>>({});
+/**
+ * Card IDs that just LANDED in someone's hand (draw flight complete). CardFan applies
+ * a brief CSS slide-in animation for each id in this set. We clear ids ~520ms after
+ * insert — the keyframe runs 380ms, with a buffer so the class is gone before another
+ * frame paints. */
+const freshCardIds = ref<Set<string>>(new Set());
 
 watch(
   () => props.pendingFlights.length,
@@ -262,7 +268,19 @@ function dispatchFlight(spec: FlightSpec): void {
     const next = new Set(inFlightIds.value);
     next.delete(spec.cardId);
     inFlightIds.value = next;
-    if (spec.kind !== 'draw') lastPlayedCardId.value = spec.cardId;
+    if (spec.kind !== 'draw') {
+      lastPlayedCardId.value = spec.cardId;
+    } else {
+      // Card just landed in its owner's hand. Mark it "fresh" so CardFan plays the
+      // slide-in keyframe; drop the mark after the keyframe is done so a future redraw
+      // (e.g. on resize) doesn't re-trigger the animation.
+      freshCardIds.value = new Set(freshCardIds.value).add(spec.cardId);
+      setTimeout(() => {
+        const after = new Set(freshCardIds.value);
+        after.delete(spec.cardId);
+        freshCardIds.value = after;
+      }, 520);
+    }
   };
 
   if (spec.kind === 'draw') {
@@ -332,6 +350,7 @@ function dispatchFlight(spec: FlightSpec): void {
           :last-played-card-id="lastPlayedCardId"
           :shouted="shouts[p.seatIndex]?.word ?? null"
           :shout-key="shouts[p.seatIndex]?.key ?? 0"
+          :fresh-card-ids="freshCardIds"
           :compact="isMobile"
         />
       </div>
@@ -350,6 +369,7 @@ function dispatchFlight(spec: FlightSpec): void {
         :last-played-card-id="lastPlayedCardId"
         :shouted="shouts[humanSeat.seatIndex]?.word ?? null"
         :shout-key="shouts[humanSeat.seatIndex]?.key ?? 0"
+        :fresh-card-ids="freshCardIds"
         @card-aim-start="onAimStart"
       />
     </div>
