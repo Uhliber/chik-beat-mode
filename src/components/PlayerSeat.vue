@@ -40,6 +40,15 @@ const emit = defineEmits<{
 
 const promptStack = computed<Card[]>(() => props.player.promptStack);
 
+/**
+ * Active seat gets a ~30% larger prompt-stack card so the current player's prompt is
+ * unmistakable. Inactive seats stay at the base size to keep the table balanced.
+ */
+const basePromptCardWidth = computed(() => (props.compact ? 40 : 56));
+const promptCardWidth = computed(() =>
+  props.isActive ? Math.round(basePromptCardWidth.value * 1.3) : basePromptCardWidth.value,
+);
+
 const onCardAimStart = (payload: { card: Card; el: HTMLElement; clientX: number; clientY: number }) => {
   emit('card-aim-start', { ...payload, player: props.player });
 };
@@ -106,11 +115,16 @@ watch(
     </div>
 
     <!-- Prompt stack: cards face-up sitting in front of this player. The top one is the
-         active prompt; older cards stack underneath but are inert. -->
-    <div v-if="promptStack.length > 0" class="mt-1">
+         active prompt; older cards stack underneath but are inert. The whole pile bumps
+         ~30% larger when this is the active seat so the current prompt is easy to read. -->
+    <div
+      v-if="promptStack.length > 0"
+      class="mt-1 prompt-pile-wrapper"
+      :class="{ 'is-active': isActive }"
+    >
       <BasePile
         :cards="promptStack"
-        :card-width="compact ? 40 : 56"
+        :card-width="promptCardWidth"
         :hidden-ids="hiddenIds"
         :base-id="`seat-${player.seatIndex}`"
         :highlight-card-id="lastPlayedCardId"
@@ -149,3 +163,18 @@ watch(
     </template>
   </div>
 </template>
+
+<style scoped>
+/**
+ * Smooth the size change on the prompt pile when the active seat rotates. Without this
+ * the pile snaps to its new size — fine but jarring. Easing the wrapper's transform-origin
+ * with a soft scale also adds a hint of "pop" on the seat that just gained focus.
+ */
+.prompt-pile-wrapper {
+  transition: transform 220ms cubic-bezier(.2, .7, .2, 1);
+  transform-origin: top center;
+}
+.prompt-pile-wrapper.is-active {
+  filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.22));
+}
+</style>
