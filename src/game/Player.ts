@@ -1,12 +1,16 @@
 import type { Card } from './Card';
-import type { ChantWord, PlayerId } from './types';
-import { CHANT_ORDER } from './types';
+import type { CardPrompt, ChantWord, PlayerId } from './types';
+import { CHANT_ORDER, CARD_PROMPTS } from './types';
 
 export class Player {
   readonly id: PlayerId;
   readonly seatIndex: number;
   hand: Card[] = [];
-  ownedBaseWord: ChantWord | null = null;
+  /**
+   * Versus only — cards played in front of this player. Older cards stay stacked underneath
+   * but are inert; only the top card acts as the active prompt.
+   */
+  promptStack: Card[] = [];
   isAI: boolean = true;
 
   constructor(id: PlayerId, seatIndex: number) {
@@ -14,21 +18,30 @@ export class Player {
     this.seatIndex = seatIndex;
   }
 
-  /** Sort hand in chant order so the AI / player can find the next play fast. */
+  /** Sort hand in chant order, then by prompt order within each word. */
   sortHand(): void {
     this.hand.sort((a, b) => {
       const ai = CHANT_ORDER.indexOf(a.word);
       const bi = CHANT_ORDER.indexOf(b.word);
       if (ai !== bi) return ai - bi;
-      // Specials sort after standard within the same word
-      const akind = a.kind === 'standard' && !a.isHaloHalo ? 0 : 1;
-      const bkind = b.kind === 'standard' && !b.isHaloHalo ? 0 : 1;
-      return akind - bkind;
+      const ap = CARD_PROMPTS.indexOf(a.prompt);
+      const bp = CARD_PROMPTS.indexOf(b.prompt);
+      return ap - bp;
     });
   }
 
   hasCardForBeat(beat: ChantWord): Card | null {
     return this.hand.find((c) => c.matchesBeat(beat)) ?? null;
+  }
+
+  /** Versus only — the card currently sitting face-up in front of this player. */
+  get topPrompt(): Card | null {
+    return this.promptStack.length > 0 ? this.promptStack[this.promptStack.length - 1] : null;
+  }
+
+  /** Versus only — what prompt is currently dictating this player's next play. */
+  get effectivePrompt(): CardPrompt | null {
+    return this.topPrompt?.prompt ?? null;
   }
 
   removeCard(cardId: string): Card | null {

@@ -9,8 +9,11 @@ import type { ChantWord } from './types';
  *
  * We track BOTH:
  *   - `currentIndex`: the wrapped position (0..6) within the 7-beat loop, used by game logic.
- *   - `virtualPos`: a monotonic counter (increments on advance, decrements on reverse) that
- *     never wraps. The view layer uses this to render a smoothly-sliding chant ticker.
+ *   - `virtualPos`: a monotonic counter (increments on advance) that never wraps. The view
+ *     layer uses this to render a smoothly-sliding chant ticker.
+ *
+ * v1.0 removed the Reverse card and with it the reverse-chant mechanic — the chant only
+ * ever moves forward now.
  */
 export const BEAT_ORDER: readonly ChantWord[] = [
   'chik',  // 0 — opening
@@ -49,11 +52,6 @@ export class Chant {
 
   advance(): ChantWord {
     this._virtualPos++;
-    return this.current;
-  }
-
-  reverseStep(): ChantWord {
-    this._virtualPos--;
     return this.current;
   }
 }

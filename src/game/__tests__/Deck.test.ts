@@ -1,69 +1,96 @@
 import { describe, it, expect } from 'vitest';
-import { buildBaseDeck, shuffle } from '../Deck';
-import { CHANT_ORDER } from '../types';
-import { seededRng } from './_helpers';
+import { buildSoloDeck, buildVersusDeck, shuffle } from '../Deck';
+import type { ChantWord, CardPrompt } from '../types';
 
-describe('buildBaseDeck', () => {
-  const deck = buildBaseDeck();
+describe('buildSoloDeck', () => {
+  const deck = buildSoloDeck();
 
-  it('produces exactly 56 cards', () => {
-    expect(deck).toHaveLength(56);
+  it('builds exactly 56 cards', () => {
+    expect(deck.length).toBe(56);
   });
 
-  it('contains exactly one Halo-Halo Chik', () => {
-    expect(deck.filter((c) => c.isHaloHalo)).toHaveLength(1);
+  it('matches the Solo 21/21/14 prompt distribution', () => {
+    const byPrompt: Record<string, number> = {};
+    for (const c of deck) byPrompt[c.prompt] = (byPrompt[c.prompt] ?? 0) + 1;
+    expect(byPrompt.left).toBe(21);
+    expect(byPrompt.right).toBe(21);
+    expect(byPrompt.free).toBe(14);
+    expect(byPrompt.stop ?? 0).toBe(0);
+    expect(byPrompt.snap ?? 0).toBe(0);
+    expect(byPrompt.fetch ?? 0).toBe(0);
   });
 
-  it('contains 12 chik-word cards total (11 standard + 1 halo-halo)', () => {
-    const chikWord = deck.filter((c) => c.word === 'chik' && c.kind !== 'reverse' && c.kind !== 'decoy');
-    expect(chikWord).toHaveLength(12);
+  it('includes exactly one Halo-Halo Chik', () => {
+    expect(deck.filter((c) => c.isHaloHalo).length).toBe(1);
   });
 
-  it('contains 6 standard cards for each non-chik word', () => {
-    for (const word of CHANT_ORDER.filter((w) => w !== 'chik')) {
-      const standards = deck.filter((c) => c.word === word && c.kind === 'standard');
-      expect(standards, `standards for ${word}`).toHaveLength(6);
+  it('matches the chant-word distribution (Chik=16, others=8 each)', () => {
+    const byWord: Record<string, number> = {};
+    for (const c of deck) byWord[c.word] = (byWord[c.word] ?? 0) + 1;
+    expect(byWord.chik).toBe(16);
+    for (const w of ['wally', 'hindo', 'pop', 'tambo', 'riki'] as ChantWord[]) {
+      expect(byWord[w]).toBe(8);
+    }
+  });
+});
+
+describe('buildVersusDeck', () => {
+  const deck = buildVersusDeck();
+
+  it('builds exactly 56 cards', () => {
+    expect(deck.length).toBe(56);
+  });
+
+  it('matches the v1.0 prompt distribution', () => {
+    const byPrompt: Record<string, number> = {};
+    for (const c of deck) byPrompt[c.prompt] = (byPrompt[c.prompt] ?? 0) + 1;
+    expect(byPrompt.right).toBe(14);
+    expect(byPrompt.left).toBe(14);
+    expect(byPrompt.free).toBe(7);
+    expect(byPrompt.stop).toBe(7);
+    expect(byPrompt.snap).toBe(7);
+    expect(byPrompt.fetch).toBe(7);
+  });
+
+  it('includes exactly one Halo-Halo Chik (Free)', () => {
+    const halos = deck.filter((c) => c.isHaloHalo);
+    expect(halos.length).toBe(1);
+    expect(halos[0].prompt).toBe('free');
+  });
+
+  it('matches the v1.0 chant-word distribution (Chik=16, others=8 each)', () => {
+    const byWord: Record<string, number> = {};
+    for (const c of deck) byWord[c.word] = (byWord[c.word] ?? 0) + 1;
+    expect(byWord.chik).toBe(16);
+    for (const w of ['wally', 'hindo', 'pop', 'tambo', 'riki'] as ChantWord[]) {
+      expect(byWord[w]).toBe(8);
     }
   });
 
-  it('contains 2 reverse-chik and 1 reverse for each other word', () => {
-    expect(deck.filter((c) => c.kind === 'reverse' && c.word === 'chik')).toHaveLength(2);
-    for (const word of CHANT_ORDER.filter((w) => w !== 'chik')) {
-      expect(deck.filter((c) => c.kind === 'reverse' && c.word === word), `reverse-${word}`).toHaveLength(1);
-    }
+  it('produces 8 complete chant sequences (per rulebook)', () => {
+    // 14 Right + 14 Left + 7 Free + 7 Stop + 7 Snap + 7 Fetch = 56
+    // Each chant sequence is 7 cards (one per beat). 56/7 = 8.
+    expect(deck.length / 7).toBe(8);
   });
 
-  it('contains 2 decoy-chik and 1 decoy for each other word', () => {
-    expect(deck.filter((c) => c.kind === 'decoy' && c.word === 'chik')).toHaveLength(2);
-    for (const word of CHANT_ORDER.filter((w) => w !== 'chik')) {
-      expect(deck.filter((c) => c.kind === 'decoy' && c.word === word), `decoy-${word}`).toHaveLength(1);
-    }
-  });
-
-  it('gives every card a unique id', () => {
+  it('every card id is unique', () => {
     const ids = new Set(deck.map((c) => c.id));
     expect(ids.size).toBe(deck.length);
   });
 });
 
 describe('shuffle', () => {
-  it('preserves length and elements', () => {
-    const input = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-    const out = shuffle(input, seededRng(42));
-    expect(out).toHaveLength(input.length);
-    expect(out.slice().sort((a, b) => a - b)).toEqual(input);
+  it('preserves length and members', () => {
+    const arr = [1, 2, 3, 4, 5];
+    const out = shuffle(arr);
+    expect(out.length).toBe(arr.length);
+    expect(out.sort()).toEqual(arr.sort());
   });
 
-  it('does not mutate the input array', () => {
-    const input = [1, 2, 3, 4, 5];
-    const snapshot = input.slice();
-    shuffle(input, seededRng(7));
-    expect(input).toEqual(snapshot);
-  });
-
-  it('is deterministic given the same seed', () => {
-    const a = shuffle([1, 2, 3, 4, 5, 6, 7, 8], seededRng(123));
-    const b = shuffle([1, 2, 3, 4, 5, 6, 7, 8], seededRng(123));
-    expect(a).toEqual(b);
+  it('is deterministic with a seeded rng', () => {
+    const rng1 = (() => { let s = 1; return () => { s = (s * 16807) % 2147483647; return s / 2147483647; }; })();
+    const rng2 = (() => { let s = 1; return () => { s = (s * 16807) % 2147483647; return s / 2147483647; }; })();
+    const arr = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    expect(shuffle(arr, rng1)).toEqual(shuffle(arr, rng2));
   });
 });

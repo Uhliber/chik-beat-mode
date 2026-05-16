@@ -2,54 +2,40 @@ import { describe, it, expect } from 'vitest';
 import { Card } from '../Card';
 
 describe('Card.assetPath', () => {
-  it('returns the standard path for a standard card', () => {
-    const c = new Card({ id: 'x', kind: 'standard', word: 'wally' });
-    expect(c.assetPath).toBe('/cards/wally.png');
+  it('returns the prompt+word path for standard prompts', () => {
+    expect(new Card({ id: 'x', prompt: 'right', word: 'wally' }).assetPath).toBe('/cards/wally-right.png');
+    expect(new Card({ id: 'x', prompt: 'left', word: 'pop' }).assetPath).toBe('/cards/pop-left.png');
+    expect(new Card({ id: 'x', prompt: 'free', word: 'riki' }).assetPath).toBe('/cards/riki-free.png');
   });
 
-  it('returns the reverse path for a reverse card', () => {
-    const c = new Card({ id: 'x', kind: 'reverse', word: 'pop' });
-    expect(c.assetPath).toBe('/cards/pop-reverse.png');
+  it('translates engine names to art-set filename aliases', () => {
+    expect(new Card({ id: 'x', prompt: 'stop', word: 'hindo' }).assetPath).toBe('/cards/hindo-block.png');
+    expect(new Card({ id: 'x', prompt: 'fetch', word: 'tambo' }).assetPath).toBe('/cards/tambo-off-deck.png');
+    expect(new Card({ id: 'x', prompt: 'snap', word: 'chik' }).assetPath).toBe('/cards/chik-snap.png');
   });
 
-  it('returns the decoy path for a decoy card', () => {
-    const c = new Card({ id: 'x', kind: 'decoy', word: 'riki' });
-    expect(c.assetPath).toBe('/cards/riki-decoy.png');
-  });
-
-  it('returns the halo-halo path when isHaloHalo is true regardless of kind', () => {
-    const c = new Card({ id: 'x', kind: 'halo-halo', word: 'chik', isHaloHalo: true });
-    expect(c.assetPath).toBe('/cards/halohalo-chik.png');
+  it('Halo-Halo Chik uses the distinct opener art regardless of prompt field', () => {
+    const c = new Card({ id: 'x', prompt: 'free', word: 'chik', isHaloHalo: true });
+    expect(c.assetPath).toBe('/cards/halohalo-chik-free.png');
   });
 });
 
-describe('Card.canBeSlammedOn', () => {
-  it('decoys can be slammed on any base', () => {
-    const c = new Card({ id: 'x', kind: 'decoy', word: 'chik' });
-    expect(c.canBeSlammedOn('chik')).toBe(true);
-    expect(c.canBeSlammedOn('riki')).toBe(true);
-    expect(c.canBeSlammedOn('main')).toBe(true);
-  });
-
-  it('non-decoys can be slammed on a matching word base or main', () => {
-    const c = new Card({ id: 'x', kind: 'standard', word: 'tambo' });
-    expect(c.canBeSlammedOn('tambo')).toBe(true);
-    expect(c.canBeSlammedOn('main')).toBe(true);
-    expect(c.canBeSlammedOn('chik')).toBe(false);
+describe('Card.matchesBeat', () => {
+  it('matches when word equals the current beat', () => {
+    const c = new Card({ id: 'x', prompt: 'right', word: 'tambo' });
+    expect(c.matchesBeat('tambo')).toBe(true);
+    expect(c.matchesBeat('chik')).toBe(false);
   });
 });
 
-describe('Card.matchesBeat / isSpecial', () => {
-  it('matchesBeat compares card word to beat word', () => {
-    const c = new Card({ id: 'x', kind: 'standard', word: 'hindo' });
-    expect(c.matchesBeat('hindo')).toBe(true);
-    expect(c.matchesBeat('pop')).toBe(false);
+describe('Card.legalSoloBases', () => {
+  it('left-prompt cards may only slam Left', () => {
+    expect(new Card({ id: 'x', prompt: 'left', word: 'chik' }).legalSoloBases()).toEqual(['left']);
   });
-
-  it('standard cards are not special; reverse/decoy/halo-halo are', () => {
-    expect(new Card({ id: '1', kind: 'standard', word: 'chik' }).isSpecial()).toBe(false);
-    expect(new Card({ id: '2', kind: 'reverse', word: 'chik' }).isSpecial()).toBe(true);
-    expect(new Card({ id: '3', kind: 'decoy', word: 'chik' }).isSpecial()).toBe(true);
-    expect(new Card({ id: '4', kind: 'halo-halo', word: 'chik', isHaloHalo: true }).isSpecial()).toBe(true);
+  it('right-prompt cards may only slam Right', () => {
+    expect(new Card({ id: 'x', prompt: 'right', word: 'chik' }).legalSoloBases()).toEqual(['right']);
+  });
+  it('free-prompt cards may slam either', () => {
+    expect(new Card({ id: 'x', prompt: 'free', word: 'chik' }).legalSoloBases()).toEqual(['left', 'right']);
   });
 });
