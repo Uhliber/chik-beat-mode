@@ -13,7 +13,7 @@ import GuideContent from './GuideContent.vue';
 
 defineProps<{
   mobile?: boolean;
-  mode?: 'simulation' | 'play' | 'solo';
+  mode?: 'solo' | 'versus';
 }>();
 
 const BACK = '/guides/guides-back.png';
