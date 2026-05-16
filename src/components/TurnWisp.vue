@@ -103,6 +103,11 @@ onBeforeUnmount(() => {
 /**
  * The wrapper is positioned via GSAP transforms (x/y). Translate to its own centre via
  * percentage so getBoundingClientRect centres line up.
+ *
+ * z-index: -1 paints the wisp BEHIND every positioned element in the page (player pills,
+ * prompt cards, hand, chant ticker, the slam wheel) but still ABOVE the body's coral
+ * background. The pills/cards above remain fully legible; the wisp just casts a soft
+ * glow halo around them.
  */
 .turn-wisp {
   position: fixed;
@@ -111,7 +116,7 @@ onBeforeUnmount(() => {
   width: 0;
   height: 0;
   pointer-events: none;
-  z-index: 25;
+  z-index: -1;
   will-change: transform;
 }
 
