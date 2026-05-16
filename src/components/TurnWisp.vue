@@ -40,10 +40,12 @@ let activeAnim: gsap.core.Animation | null = null;
  * relative to that parent — we translate the seat's viewport rect into the parent's
  * coordinate space by subtracting the parent's rect origin.
  *
- * We pull the anchor UP from the pill's centre by ~60% of the pill's own height. With
- * a 28px dot that lands roughly two thirds of the dot above the pill (the "peek") and
- * one third behind it (the "anchor"). The dot is still painted behind the pill via
- * source order, so the overlap reads as a glow tucked behind the player's name.
+ * Each seat is rotated to face the table centre, so the pill's local "up" (= the
+ * player's perspective "above their pill") points toward the table centre on screen.
+ * We pull the anchor in THAT direction — not screen-up — so the wisp peeks above
+ * every pill from the seated player's POV, regardless of which side of the table
+ * they're on. Magnitude: ~60% of the pill's measured height (a third of the dot
+ * remains behind the pill as an anchor; two thirds peek over).
  */
 function seatCentre(seatIdx: number): { x: number; y: number } | null {
   if (seatIdx < 0 || !wispEl.value) return null;
@@ -52,10 +54,18 @@ function seatCentre(seatIdx: number): { x: number; y: number } | null {
   if (!seatEl || !parent) return null;
   const seatRect = seatEl.getBoundingClientRect();
   const parentRect = parent.getBoundingClientRect();
-  const pillCy = seatRect.top + seatRect.height / 2;
+  const seatLocalX = seatRect.left + seatRect.width / 2 - parentRect.left;
+  const seatLocalY = seatRect.top + seatRect.height / 2 - parentRect.top;
+  // Unit vector from the seat's pill centre toward the table centre.
+  const tableCx = parentRect.width / 2;
+  const tableCy = parentRect.height / 2;
+  const dx = tableCx - seatLocalX;
+  const dy = tableCy - seatLocalY;
+  const dist = Math.hypot(dx, dy) || 1;
+  const offset = 0.6 * seatRect.height;
   return {
-    x: seatRect.left + seatRect.width / 2 - parentRect.left,
-    y: pillCy - 0.6 * seatRect.height - parentRect.top,
+    x: seatLocalX + (dx / dist) * offset,
+    y: seatLocalY + (dy / dist) * offset,
   };
 }
 
