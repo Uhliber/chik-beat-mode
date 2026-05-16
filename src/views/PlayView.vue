@@ -43,6 +43,7 @@ const {
   soloBestTimeMs,
   soloLastFinalMs,
   soloIsNewBest,
+  pendingFlights,
   initGame,
   start,
   pause,
@@ -376,6 +377,7 @@ function onPauseOverlayTap() {
         :version="state.version"
         :mode="mode"
         :active-seat-index="activeSeatIndex"
+        :pending-flights="pendingFlights"
         @solo-slam="onSoloSlam"
         @versus-play="onVersusPlay"
         @draw-deck-click="onDrawDeckClick"

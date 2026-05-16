@@ -114,3 +114,87 @@ describe('Game (Versus)', () => {
     expect(legal).not.toContain(g.activeSeatIndex);
   });
 });
+
+/**
+ * Seat-direction perspective: the seat array advances clockwise around the table
+ * as viewed from above (seat 0 south, seat 1 west, seat 2 north, seat 3 east),
+ * but each player looking inward at the table has their right hand pointing the
+ * OTHER way around the array. So from seat 0's perspective the right neighbor is
+ * seat n-1 (east on screen), NOT seat 1 (west on screen).
+ */
+describe('Game (Versus) — seat direction matches player perspective', () => {
+  function setupFourPlayerOpened(): Game {
+    const g = new Game(seededRng(11));
+    g.setupVersus(4);
+    // Force the Halo-Halo opener to be P1 (seat 0) deterministically by moving the
+    // halo card into seat 0 and updating haloHaloOwnerId.
+    if (g.haloHaloOwnerId !== 'p1') {
+      const halo = g.players
+        .flatMap((p) => p.hand.map((c) => ({ c, p })))
+        .find(({ c }) => c.isHaloHalo)!;
+      // Pull from old owner, push to p1.
+      halo.p.hand = halo.p.hand.filter((c) => c.id !== halo.c.id);
+      g.players[0].hand.push(halo.c);
+      g.haloHaloOwnerId = 'p1';
+      g.activeSeatIndex = 0;
+    }
+    return g;
+  }
+
+  it('with a Right prompt on seat 0 in a 4-player game, the legal target is seat 3', () => {
+    const g = setupFourPlayerOpened();
+    // Open onto seat 1 to advance past the opening gate. Beat becomes Wally.
+    const opener = g.players[0];
+    const halo = opener.hand.find((c) => c.isHaloHalo)!;
+    g.submitVersusAction(opener.id, { type: 'play', cardId: halo.id, targetSeatIndex: 1 });
+    // Now we want seat 0 active with a Right prompt. Force it directly:
+    g.activeSeatIndex = 0;
+    g.players[0].promptStack.push({ id: 'right-chik-stub', word: 'chik', prompt: 'right', isHaloHalo: false } as never);
+    // Pull a Wally card into seat 0's hand for legality.
+    const fromPool = g.drawPile.findIndex((c) => c.word === 'wally');
+    if (fromPool >= 0) g.players[0].hand.push(g.drawPile.splice(fromPool, 1)[0]);
+    const wally = g.players[0].hand.find((c) => c.word === 'wally')!;
+
+    const legal = g.legalTargetSeats(0, wally);
+    expect(legal).toEqual([3]);
+  });
+
+  it('with a Left prompt on seat 0 in a 4-player game, the legal target is seat 1', () => {
+    const g = setupFourPlayerOpened();
+    const opener = g.players[0];
+    const halo = opener.hand.find((c) => c.isHaloHalo)!;
+    g.submitVersusAction(opener.id, { type: 'play', cardId: halo.id, targetSeatIndex: 1 });
+    g.activeSeatIndex = 0;
+    g.players[0].promptStack.push({ id: 'left-chik-stub', word: 'chik', prompt: 'left', isHaloHalo: false } as never);
+    const fromPool = g.drawPile.findIndex((c) => c.word === 'wally');
+    if (fromPool >= 0) g.players[0].hand.push(g.drawPile.splice(fromPool, 1)[0]);
+    const wally = g.players[0].hand.find((c) => c.word === 'wally')!;
+
+    const legal = g.legalTargetSeats(0, wally);
+    expect(legal).toEqual([1]);
+  });
+
+  it('with a 6-player game, Right from seat 0 wraps to seat 5 (not seat 1)', () => {
+    const g = new Game(seededRng(13));
+    g.setupVersus(6);
+    if (g.haloHaloOwnerId !== 'p1') {
+      const halo = g.players
+        .flatMap((p) => p.hand.map((c) => ({ c, p })))
+        .find(({ c }) => c.isHaloHalo)!;
+      halo.p.hand = halo.p.hand.filter((c) => c.id !== halo.c.id);
+      g.players[0].hand.push(halo.c);
+      g.haloHaloOwnerId = 'p1';
+      g.activeSeatIndex = 0;
+    }
+    const halo = g.players[0].hand.find((c) => c.isHaloHalo)!;
+    g.submitVersusAction(g.players[0].id, { type: 'play', cardId: halo.id, targetSeatIndex: 1 });
+    g.activeSeatIndex = 0;
+    g.players[0].promptStack.push({ id: 'right-chik-stub', word: 'chik', prompt: 'right', isHaloHalo: false } as never);
+    const fromPool = g.drawPile.findIndex((c) => c.word === 'wally');
+    if (fromPool >= 0) g.players[0].hand.push(g.drawPile.splice(fromPool, 1)[0]);
+    const wally = g.players[0].hand.find((c) => c.word === 'wally')!;
+
+    const legal = g.legalTargetSeats(0, wally);
+    expect(legal).toEqual([5]);
+  });
+});

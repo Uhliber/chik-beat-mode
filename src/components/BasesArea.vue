@@ -43,6 +43,7 @@ const right = computed<Card[]>(() => props.game.soloBases.right);
       type="button"
       class="relative flex flex-col items-center gap-2 focus:outline-none"
       :aria-label="`Draw pile: ${drawPileCount} cards`"
+      data-base-id="deck"
       @click="emit('draw-deck-click')"
     >
       <div

@@ -1,15 +1,16 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import PlayerSeat from './PlayerSeat.vue';
 import BasesArea from './BasesArea.vue';
 import SlamWheel, { type WheelTarget } from './SlamWheel.vue';
 import { useSeatLayout } from '@/composables/useSeatLayout';
 import { useResponsive } from '@/composables/useResponsive';
-import { flyCardSlam } from '@/composables/useCardAnimation';
+import { flyCardSlam, flyCardDraw } from '@/composables/useCardAnimation';
+import type { FlightSpec } from '@/composables/useGame';
 import type { Game } from '@/game/Game';
 import type { Card } from '@/game/Card';
 import type { Player } from '@/game/Player';
-import type { BaseSide, GameEvent } from '@/game/types';
+import type { BaseSide, ChantWord, GameEvent } from '@/game/types';
 import type { SimMode } from '@/game/SimulationController';
 
 const props = defineProps<{
@@ -22,6 +23,8 @@ const props = defineProps<{
   speed?: number;
   /** Versus only: which seat's turn is it (-1 = none / Solo). */
   activeSeatIndex: number;
+  /** Animation queue populated by useGame; we drain by id and dispatch flights. */
+  pendingFlights: FlightSpec[];
 }>();
 
 const emit = defineEmits<{
@@ -223,84 +226,67 @@ watch(() => props.game, cleanupAim);
 
 // ---- Card flight animations (Versus + Solo) ----
 //
-// The engine emits `versusPlay` / `soloSlam` AFTER the card has been moved into the
-// destination collection (target's promptStack / soloBases[side]). Vue will re-render
-// immediately and show the card on the destination. To run a flight animation, we:
-//   1. Mark the card id as inFlight → BasePile/PlayerSeat hides it from the destination.
-//   2. Snapshot source + destination DOM rects.
-//   3. Spawn a GSAP-driven portal clone via `flyCardSlam`.
-//   4. On complete, clear the inFlight id (card pops into the destination pile) and
-//      set lastPlayedCardId so the glow ring fires.
+// Rects are pre-captured inside useGame.handleEvent at event-emission time — BEFORE Vue
+// re-renders the source's hand (one card lighter, slightly re-centered). We just drain
+// the queue here and dispatch GSAP timelines. The inFlightIds set hides the card from
+// the destination pile until the flight lands, so only the flying clone is visible
+// during travel.
+
+const draining = ref<Set<number>>(new Set());
+/** Per-seat shout state — fires the speech bubble above the source player on each play. */
+const shouts = ref<Record<number, { word: ChantWord; key: number }>>({});
 
 watch(
-  () => props.events.length,
-  async (n, prev) => {
-    if (n <= (prev ?? 0)) return;
-    const ev = props.events[props.events.length - 1];
-    if (!ev) return;
-    if (ev.kind === 'versusPlay') {
-      await nextTick();
-      handleVersusFlight(ev);
-    } else if (ev.kind === 'soloSlam') {
-      await nextTick();
-      handleSoloFlight(ev);
+  () => props.pendingFlights.length,
+  () => {
+    for (const spec of props.pendingFlights) {
+      if (draining.value.has(spec.id)) continue;
+      draining.value.add(spec.id);
+      dispatchFlight(spec);
     }
   },
+  { immediate: true },
 );
 
-function handleVersusFlight(ev: Extract<GameEvent, { kind: 'versusPlay' }>): void {
-  const sourceSeat = props.game.players.findIndex((p) => p.id === ev.playerId);
-  if (sourceSeat < 0) return;
-  const sourceEl = document.querySelector<HTMLElement>(`[data-seat-index="${sourceSeat}"]`);
-  const targetEl = document.querySelector<HTMLElement>(`[data-seat-index="${ev.targetSeatIndex}"]`);
-  if (!sourceEl || !targetEl) return;
-  // The card was just appended to target.promptStack; pull the art from there.
-  const target = props.game.players[ev.targetSeatIndex];
-  const card = target?.promptStack.find((c) => c.id === ev.cardId);
-  if (!card) return;
+function dispatchFlight(spec: FlightSpec): void {
+  inFlightIds.value = new Set(inFlightIds.value).add(spec.cardId);
+  if (spec.shoutWord != null && spec.shoutSeatIndex != null) {
+    const seat = spec.shoutSeatIndex;
+    const prev = shouts.value[seat]?.key ?? 0;
+    shouts.value = { ...shouts.value, [seat]: { word: spec.shoutWord, key: prev + 1 } };
+  }
+  const onComplete = () => {
+    const next = new Set(inFlightIds.value);
+    next.delete(spec.cardId);
+    inFlightIds.value = next;
+    if (spec.kind !== 'draw') lastPlayedCardId.value = spec.cardId;
+  };
 
-  inFlightIds.value = new Set(inFlightIds.value).add(ev.cardId);
-  flyCardSlam({
-    cardId: ev.cardId,
-    fromEl: sourceEl,
-    toEl: targetEl,
-    faceUrl: card.assetPath,
-    backUrl: '/cards/default-back.png',
-    speed: props.speed ?? 1,
-    onComplete: () => {
-      const next = new Set(inFlightIds.value);
-      next.delete(ev.cardId);
-      inFlightIds.value = next;
-      lastPlayedCardId.value = ev.cardId;
-    },
-  });
-}
-
-function handleSoloFlight(ev: Extract<GameEvent, { kind: 'soloSlam' }>): void {
-  const human = props.game.players.find((p) => !p.isAI);
-  if (!human) return;
-  const sourceEl = document.querySelector<HTMLElement>(`[data-seat-index="${human.seatIndex}"]`);
-  const targetEl = document.querySelector<HTMLElement>(`[data-base-id="${ev.baseSide}"]`);
-  if (!sourceEl || !targetEl) return;
-  const pile = props.game.soloBases[ev.baseSide];
-  const card = pile.find((c) => c.id === ev.cardId);
-  if (!card) return;
-
-  inFlightIds.value = new Set(inFlightIds.value).add(ev.cardId);
-  flyCardSlam({
-    cardId: ev.cardId,
-    fromEl: sourceEl,
-    toEl: targetEl,
-    faceUrl: card.assetPath,
-    backUrl: '/cards/default-back.png',
-    speed: props.speed ?? 1,
-    onComplete: () => {
-      const next = new Set(inFlightIds.value);
-      next.delete(ev.cardId);
-      inFlightIds.value = next;
-      lastPlayedCardId.value = ev.cardId;
-    },
-  });
+  if (spec.kind === 'draw') {
+    flyCardDraw({
+      fromEl: document.body, // unused — fromRect wins
+      toEl: document.body,
+      fromRect: spec.fromRect,
+      toRect: spec.toRect,
+      faceUrl: spec.faceUrl || undefined,
+      backUrl: '/cards/default-back.png',
+      speed: props.speed ?? 1,
+      revealFace: spec.revealFace,
+      onComplete,
+    });
+  } else {
+    flyCardSlam({
+      cardId: spec.cardId,
+      fromEl: document.body,
+      toEl: document.body,
+      fromRect: spec.fromRect,
+      toRect: spec.toRect,
+      faceUrl: spec.faceUrl,
+      backUrl: '/cards/default-back.png',
+      speed: props.speed ?? 1,
+      onComplete,
+    });
+  }
 }
 </script>
 
@@ -341,6 +327,8 @@ function handleSoloFlight(ev: Extract<GameEvent, { kind: 'soloSlam' }>): void {
           :is-legal-target="highlightedId === String(p.seatIndex)"
           :hidden-ids="inFlightIds"
           :last-played-card-id="lastPlayedCardId"
+          :shouted="shouts[p.seatIndex]?.word ?? null"
+          :shout-key="shouts[p.seatIndex]?.key ?? 0"
           :compact="isMobile"
         />
       </div>
@@ -357,6 +345,8 @@ function handleSoloFlight(ev: Extract<GameEvent, { kind: 'soloSlam' }>): void {
         :is-active="mode === 'versus' ? activeSeatIndex === humanSeat.seatIndex : true"
         :hidden-ids="inFlightIds"
         :last-played-card-id="lastPlayedCardId"
+        :shouted="shouts[humanSeat.seatIndex]?.word ?? null"
+        :shout-key="shouts[humanSeat.seatIndex]?.key ?? 0"
         @card-aim-start="onAimStart"
       />
     </div>

@@ -366,10 +366,16 @@ export class Game {
     return promptCard.prompt;
   }
 
-  /** Seat index of clockwise (right) or counter-clockwise (left) neighbor. */
+  /**
+   * The seat array advances CLOCKWISE around the table as viewed from above
+   * (south -> west -> north -> east). But each player sitting AT their seat and
+   * looking inward has their right hand pointing the OTHER way around the table
+   * — counter-clockwise from above. So "to my right" at the table is the
+   * PREVIOUS index in the seat array (mod n), and "to my left" is the next.
+   */
   private neighborSeat(seatIdx: number, dir: 'left' | 'right'): number {
     const n = this.players.length;
-    return dir === 'right' ? (seatIdx + 1) % n : (seatIdx - 1 + n) % n;
+    return dir === 'right' ? (seatIdx - 1 + n) % n : (seatIdx + 1) % n;
   }
 
   /** Move a card from hand to target's prompt stack; advance chant; rotate active player. */

@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref, watch } from 'vue';
 import CardFan from './CardFan.vue';
 import BasePile from './BasePile.vue';
+import SpeechBubble from './SpeechBubble.vue';
 import { useResponsive } from '@/composables/useResponsive';
 import type { Player } from '@/game/Player';
 import type { Card } from '@/game/Card';
+import type { ChantWord } from '@/game/types';
 
 const { width: viewportW, isMobile } = useResponsive();
 
@@ -26,6 +28,10 @@ const props = defineProps<{
   lastPlayedCardId?: string | null;
   /** Compact opponent rendering on mobile. */
   compact?: boolean;
+  /** Word this player just shouted (when they played a card). Speech bubble pops above. */
+  shouted?: ChantWord | null;
+  /** Monotonic counter that re-triggers the bubble even if the word didn't change. */
+  shoutKey?: number;
 }>();
 
 const emit = defineEmits<{
@@ -37,10 +43,28 @@ const promptStack = computed<Card[]>(() => props.player.promptStack);
 const onCardAimStart = (payload: { card: Card; el: HTMLElement; clientX: number; clientY: number }) => {
   emit('card-aim-start', { ...payload, player: props.player });
 };
+
+// SpeechBubble visibility: track the latest shoutKey, show for ~800ms then hide.
+const showBubble = ref(false);
+let bubbleTimer: number | null = null;
+watch(
+  () => props.shoutKey,
+  (k) => {
+    if (!props.shouted || !k) return;
+    showBubble.value = true;
+    if (bubbleTimer !== null) clearTimeout(bubbleTimer);
+    bubbleTimer = window.setTimeout(() => { showBubble.value = false; }, 800);
+  },
+);
 </script>
 
 <template>
-  <div class="flex flex-col items-center gap-1">
+  <div class="relative flex flex-col items-center gap-1">
+    <!-- Speech bubble — pops above the player when they shout a chant word as they play. -->
+    <div class="absolute -top-8 left-1/2 -translate-x-1/2 z-30 pointer-events-none">
+      <SpeechBubble :word="shouted ?? null" :visible="showBubble" />
+    </div>
+
     <!-- Compact opponents (mobile): hand fanned above pill. -->
     <div
       v-if="compact && !isHumanSeat && player.hand.length > 0"

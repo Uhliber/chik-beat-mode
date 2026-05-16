@@ -4,8 +4,29 @@ import { Preferences } from '@capacitor/preferences';
 import type { Card } from '@/game/Card';
 import { Game } from '@/game/Game';
 import { SimulationController, type SimStatus, type SimMode } from '@/game/SimulationController';
-import type { GameEvent, PlayerId, SoloAction, VersusAction } from '@/game/types';
+import type { BaseSide, ChantWord, GameEvent, PlayerId, SoloAction, VersusAction } from '@/game/types';
 import { useBeatAudio } from './useBeatAudio';
+
+/**
+ * A queued card-flight, snapshotted at event-emission time. Carries pre-captured DOM
+ * rects so the animation's start/end points are immune to the post-event layout shift
+ * Vue does when the source hand re-fans / target prompt-stack grows.
+ */
+export interface FlightSpec {
+  id: number;
+  kind: 'play-versus' | 'play-solo' | 'draw';
+  cardId: string;
+  faceUrl: string;
+  fromRect: DOMRect;
+  toRect: DOMRect;
+  /** For draw flights — flip back→face mid-flight so the drawer sees their card. */
+  revealFace?: boolean;
+  /** Shout-the-word state: the word + the seat that shouted it. Source-only events. */
+  shoutWord?: ChantWord;
+  shoutSeatIndex?: number;
+  /** Solo-only: which base the card landed on (Left/Right). */
+  baseSide?: BaseSide;
+}
 
 const SOLO_BEST_KEY = 'chik-solo-best-time-ms';
 
@@ -92,6 +113,20 @@ export function useGame(opts: UseGameOptions = {}) {
   // ---- Versus turn state (mirrored from game for templates) ----
   const activeSeatIndex = ref<number>(-1);
 
+  /**
+   * Flight queue — GameTable drains this on each push and starts a GSAP timeline per spec.
+   * Rects are captured here (synchronously inside the event listener) so the snapshot
+   * predates Vue's post-event re-render — the source seat is still at its pre-play layout
+   * when we read its bounding box.
+   */
+  const pendingFlights = ref<FlightSpec[]>([]);
+  let nextFlightId = 1;
+
+  function snapshotRect(selector: string): DOMRect | null {
+    const el = document.querySelector<HTMLElement>(selector);
+    return el ? el.getBoundingClientRect() : null;
+  }
+
   let unsubGame: (() => void) | null = null;
   let unsubStatus: (() => void) | null = null;
 
@@ -99,6 +134,71 @@ export function useGame(opts: UseGameOptions = {}) {
     const p = game.value.players.find((x) => x.id === playerId);
     return !!p && !p.isAI;
   };
+
+  function queueFlightForPlay(e: Extract<GameEvent, { kind: 'versusPlay' | 'soloSlam' }>): void {
+    if (e.kind === 'versusPlay') {
+      const sourceSeat = game.value.players.findIndex((p) => p.id === e.playerId);
+      const fromRect = snapshotRect(`[data-seat-index="${sourceSeat}"]`);
+      const toRect = snapshotRect(`[data-seat-index="${e.targetSeatIndex}"]`);
+      if (!fromRect || !toRect) return;
+      const target = game.value.players[e.targetSeatIndex];
+      const card = target?.promptStack.find((c) => c.id === e.cardId);
+      if (!card) return;
+      pendingFlights.value.push({
+        id: nextFlightId++,
+        kind: 'play-versus',
+        cardId: e.cardId,
+        faceUrl: card.assetPath,
+        fromRect,
+        toRect,
+        shoutWord: e.cardWord,
+        shoutSeatIndex: sourceSeat,
+      });
+    } else {
+      const human = game.value.players.find((p) => !p.isAI);
+      if (!human) return;
+      const fromRect = snapshotRect(`[data-seat-index="${human.seatIndex}"]`);
+      const toRect = snapshotRect(`[data-base-id="${e.baseSide}"]`);
+      if (!fromRect || !toRect) return;
+      const pile = game.value.soloBases[e.baseSide];
+      const card = pile.find((c) => c.id === e.cardId);
+      if (!card) return;
+      pendingFlights.value.push({
+        id: nextFlightId++,
+        kind: 'play-solo',
+        cardId: e.cardId,
+        faceUrl: card.assetPath,
+        fromRect,
+        toRect,
+        shoutWord: e.cardWord,
+        shoutSeatIndex: human.seatIndex,
+        baseSide: e.baseSide,
+      });
+    }
+  }
+
+  function queueFlightForDraw(e: Extract<GameEvent, { kind: 'versusDraw' | 'soloDraw' }>): void {
+    if (!e.cardId) return; // empty-pile "pass" — nothing to fly
+    if (e.kind === 'versusDraw' && e.from === 'hand') return; // Fetch — deferred visual
+    const recipientId = e.kind === 'versusDraw' ? e.playerId : 'p1';
+    const recipient = game.value.players.find((p) => p.id === recipientId);
+    if (!recipient) return;
+    const fromRect = snapshotRect('[data-base-id="deck"]');
+    const toRect = snapshotRect(`[data-seat-index="${recipient.seatIndex}"]`);
+    if (!fromRect || !toRect) return;
+    const card = recipient.hand.find((c) => c.id === e.cardId);
+    // We pre-flash the face for the human's own draws (only when there's a faceUrl to show).
+    const revealFace = !recipient.isAI && !!card;
+    pendingFlights.value.push({
+      id: nextFlightId++,
+      kind: 'draw',
+      cardId: e.cardId,
+      faceUrl: card?.assetPath ?? '',
+      fromRect,
+      toRect,
+      revealFace,
+    });
+  }
 
   const handleEvent = (e: GameEvent) => {
     state.version++;
@@ -117,6 +217,15 @@ export function useGame(opts: UseGameOptions = {}) {
           const targetIsHuman = !!target && !target.isAI;
           beatAudio.ding(targetIsHuman ? 'high' : 'middle');
         }
+        // Snapshot flight geometry synchronously — before Vue's re-render shifts the
+        // source seat's bounding box. The Game.emit happens after the card has moved
+        // into its destination, so we can find the card on the target side too.
+        queueFlightForPlay(e);
+        break;
+      }
+      case 'versusDraw':
+      case 'soloDraw': {
+        queueFlightForDraw(e);
         break;
       }
       case 'soloPenalty':
@@ -175,6 +284,7 @@ export function useGame(opts: UseGameOptions = {}) {
     soloPenaltyMs.value = 0;
     soloLastFinalMs.value = null;
     soloIsNewBest.value = false;
+    pendingFlights.value = [];
 
     const g = new Game();
     const ctrl = new SimulationController(g);
@@ -296,6 +406,7 @@ export function useGame(opts: UseGameOptions = {}) {
     soloBestTimeMs,
     soloLastFinalMs,
     soloIsNewBest,
+    pendingFlights,
     initGame,
     start,
     pause,
