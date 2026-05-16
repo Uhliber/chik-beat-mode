@@ -457,7 +457,7 @@ function onPauseOverlayTap() {
       title="Event Log"
       @close="closeSheet"
     >
-      <EventLog :events="state.events" />
+      <EventLog :events="state.events" hide-title />
     </MobileBottomSheet>
 
     <!-- Mobile: settings live in a bottom sheet, opened by the cog button in the header. -->

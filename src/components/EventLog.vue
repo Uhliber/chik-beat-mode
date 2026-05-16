@@ -4,6 +4,9 @@ import type { GameEvent } from '@/game/types';
 
 const props = defineProps<{
   events: GameEvent[];
+  /** Suppress the inner "Event Log" title — used when the parent container (e.g. the
+   *  mobile bottom sheet) already provides its own header. */
+  hideTitle?: boolean;
 }>();
 
 const recent = computed(() => props.events.slice(-12).reverse());
@@ -34,7 +37,10 @@ function describe(e: GameEvent): string {
 
 <template>
   <div class="event-log-scroll rounded-lg bg-stone-900/70 backdrop-blur-sm ring-1 ring-cream-soft/15 p-3 text-cream-soft/90 max-h-72 overflow-y-auto">
-    <div class="font-extrabold uppercase tracking-widest text-[10px] mb-2 text-cream-soft/70">
+    <div
+      v-if="!hideTitle"
+      class="font-extrabold uppercase tracking-widest text-[10px] mb-2 text-cream-soft/70"
+    >
       Event Log
     </div>
     <ul class="flex flex-col gap-1 text-xs">
