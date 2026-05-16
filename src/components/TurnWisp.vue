@@ -26,13 +26,23 @@ const pos = ref<{ x: number; y: number } | null>(null);
 let resizeObserver: ResizeObserver | null = null;
 let activeTween: gsap.core.Tween | null = null;
 
-/** Centre of the seat pill in viewport coordinates, or null if the element isn't mounted. */
+/**
+ * Centre of the seat pill in coordinates LOCAL TO THE WISP'S OFFSET PARENT (GameTable's
+ * root). The wisp is `position: absolute` so its GSAP x/y transforms are relative to
+ * that parent — we translate the seat's viewport rect into the parent's coordinate
+ * space by subtracting the parent's own rect origin.
+ */
 function seatCentre(seatIdx: number): { x: number; y: number } | null {
-  if (seatIdx < 0) return null;
-  const el = document.querySelector<HTMLElement>(`[data-seat-index="${seatIdx}"]`);
-  if (!el) return null;
-  const r = el.getBoundingClientRect();
-  return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  if (seatIdx < 0 || !wispEl.value) return null;
+  const seatEl = document.querySelector<HTMLElement>(`[data-seat-index="${seatIdx}"]`);
+  const parent = wispEl.value.offsetParent as HTMLElement | null;
+  if (!seatEl || !parent) return null;
+  const seatRect = seatEl.getBoundingClientRect();
+  const parentRect = parent.getBoundingClientRect();
+  return {
+    x: seatRect.left + seatRect.width / 2 - parentRect.left,
+    y: seatRect.top + seatRect.height / 2 - parentRect.top,
+  };
 }
 
 /** Tween the wisp to the seat's centre. First placement is instant (no entrance flight). */
@@ -101,22 +111,19 @@ onBeforeUnmount(() => {
 
 <style scoped>
 /**
- * The wrapper is positioned via GSAP transforms (x/y). Translate to its own centre via
- * percentage so getBoundingClientRect centres line up.
- *
- * z-index: -1 paints the wisp BEHIND every positioned element in the page (player pills,
- * prompt cards, hand, chant ticker, the slam wheel) but still ABOVE the body's coral
- * background. The pills/cards above remain fully legible; the wisp just casts a soft
- * glow halo around them.
+ * The wrapper is positioned via GSAP transforms (x/y), inside GameTable's stacking
+ * context. Stacking order is controlled by source order in GameTable — the wisp is
+ * rendered AFTER the TableSurface but BEFORE the seats, so it paints above the table
+ * surface but below player pills / prompt cards (which therefore remain fully legible).
+ * No z-index needed; source order alone places it correctly.
  */
 .turn-wisp {
-  position: fixed;
+  position: absolute;
   top: 0;
   left: 0;
   width: 0;
   height: 0;
   pointer-events: none;
-  z-index: -1;
   will-change: transform;
 }
 

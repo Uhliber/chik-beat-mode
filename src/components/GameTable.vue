@@ -4,6 +4,7 @@ import PlayerSeat from './PlayerSeat.vue';
 import BasesArea from './BasesArea.vue';
 import SlamWheel, { type WheelTarget } from './SlamWheel.vue';
 import TurnWisp from './TurnWisp.vue';
+import TableSurface from './TableSurface.vue';
 import { useSeatLayout } from '@/composables/useSeatLayout';
 import { useResponsive } from '@/composables/useResponsive';
 import { flyCardSlam, flyCardDraw } from '@/composables/useCardAnimation';
@@ -316,6 +317,18 @@ function dispatchFlight(spec: FlightSpec): void {
     class="relative w-full h-full flex items-end justify-center"
     data-game-table
   >
+    <!-- 1. The tabletop — perspective-tilted rounded rect at the back of the stacking
+         context. Everything else paints on top. -->
+    <TableSurface />
+
+    <!-- 2. Turn-indicator wisp (Versus only). Paints above the tabletop but BEFORE the
+         seats / bases (source-order stacking) so the pill text & cards remain readable. -->
+    <TurnWisp
+      v-if="mode === 'versus'"
+      :seat-index="activeSeatIndex"
+      :enabled="wispEnabled ?? true"
+    />
+
     <!-- Center area (bases + draw pile) -->
     <div
       class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
@@ -386,13 +399,6 @@ function dispatchFlight(spec: FlightSpec): void {
       :highlighted-id="highlightedId"
       :threshold="AIM_THRESHOLD_PX"
       :has-dragged="aim.hasDragged"
-    />
-
-    <!-- Turn-indicator wisp (Versus only). Solo has one player — no turn to track. -->
-    <TurnWisp
-      v-if="mode === 'versus'"
-      :seat-index="activeSeatIndex"
-      :enabled="wispEnabled ?? true"
     />
   </div>
 </template>

@@ -447,6 +447,22 @@ function onPauseOverlayTap() {
       @resume="onPauseOverlayTap"
     />
 
+    <!-- Big central Start / Play Again CTA for Versus — only shown when nothing is in
+         flight, so it never covers the deck/cards mid-game. The small header button
+         stays available too; this one is the prominent "begin" affordance. -->
+    <div
+      v-if="mode === 'versus' && !winnerId && (state.status === 'idle' || state.status === 'ended')"
+      class="absolute inset-0 z-30 flex items-center justify-center pointer-events-none"
+    >
+      <button
+        type="button"
+        class="center-cta pointer-events-auto"
+        @click="onPrimary"
+      >
+        {{ state.status === 'ended' ? 'Play Again' : 'Start' }}
+      </button>
+    </div>
+
     <aside v-if="!isMobile" class="absolute bottom-3 right-3 w-70 max-w-[80vw] z-20">
       <EventLog :events="state.events" />
     </aside>
@@ -578,5 +594,47 @@ function onPauseOverlayTap() {
   18%  { opacity: 1; transform: translate(0, -2px) scale(1.08); }
   40%  { transform: translate(0, -10px) scale(1); }
   100% { opacity: 0; transform: translate(0, -42px) scale(0.95); }
+}
+
+/**
+ * Central "Start / Play Again" CTA shown on the Versus table when idle or after the
+ * round ends. Big enough to read at a glance with a slow cream-soft halo pulse to draw
+ * the eye. Hidden during play so it never sits over the deck or active cards.
+ */
+.center-cta {
+  background: var(--color-coral-deep);
+  color: var(--color-cream-soft);
+  border: 0;
+  padding: 16px 40px;
+  border-radius: 9999px;
+  font-family: 'Modak', system-ui, sans-serif;
+  font-weight: 400;
+  font-size: 2rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow:
+    0 18px 36px rgba(0, 0, 0, 0.45),
+    0 0 0 5px rgba(252, 246, 230, 0.55);
+  transition: transform 160ms cubic-bezier(.2, .7, .2, 1), box-shadow 160ms ease;
+  animation: center-cta-pulse 2.4s ease-in-out infinite;
+}
+.center-cta:hover {
+  transform: scale(1.04);
+}
+.center-cta:active {
+  transform: scale(0.97);
+}
+@keyframes center-cta-pulse {
+  0%, 100% {
+    box-shadow:
+      0 18px 36px rgba(0, 0, 0, 0.45),
+      0 0 0 5px rgba(252, 246, 230, 0.55);
+  }
+  50% {
+    box-shadow:
+      0 18px 36px rgba(0, 0, 0, 0.45),
+      0 0 0 12px rgba(252, 246, 230, 0.22);
+  }
 }
 </style>
