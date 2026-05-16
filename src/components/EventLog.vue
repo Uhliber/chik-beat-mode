@@ -30,7 +30,7 @@ function describe(e: GameEvent): string {
 </script>
 
 <template>
-  <div class="rounded-lg bg-stone-900/70 backdrop-blur-sm ring-1 ring-cream-soft/15 p-3 text-cream-soft/90 max-h-72 overflow-y-auto">
+  <div class="event-log-scroll rounded-lg bg-stone-900/70 backdrop-blur-sm ring-1 ring-cream-soft/15 p-3 text-cream-soft/90 max-h-72 overflow-y-auto">
     <div class="font-extrabold uppercase tracking-widest text-[10px] mb-2 text-cream-soft/70">
       Event Log
     </div>
@@ -40,3 +40,29 @@ function describe(e: GameEvent): string {
     </ul>
   </div>
 </template>
+
+<style scoped>
+/**
+ * Theme the scrollbar so it doesn't surface as the OS default (typically a bright
+ * white/light bar) against the log's dark bg. Cream at low alpha matches the body
+ * text colour; track stays transparent so the log's translucent stone background
+ * shows through. Firefox + WebKit covered.
+ */
+.event-log-scroll {
+  scrollbar-color: rgba(252, 246, 230, 0.22) transparent;
+  scrollbar-width: thin;
+}
+.event-log-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.event-log-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.event-log-scroll::-webkit-scrollbar-thumb {
+  background: rgba(252, 246, 230, 0.22);
+  border-radius: 3px;
+}
+.event-log-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(252, 246, 230, 0.38);
+}
+</style>
