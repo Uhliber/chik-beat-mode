@@ -116,26 +116,25 @@ onBeforeUnmount(() => {
 }
 
 /**
- * Outer warm bloom. Sized larger than it visibly extends, with the gradient already at
- * very low alpha by the time it reaches the box edge — so when the wrapper sits near
- * the viewport edge and the box gets clipped, the visible "cut" is at near-zero alpha
- * and reads as a smooth fade instead of a hard line. No `filter: blur` (that creates
- * its own containing-block clip + interacts badly with mix-blend-mode at the edges).
+ * Outer cream bloom. Plain alpha compositing (no mix-blend-mode) — the previous
+ * `screen` blend was subtly changing how the element's edge composited against the
+ * coral background, which read as a vertical seam when the glow box clipped to the
+ * viewport edge. Plain alpha = a true zero-alpha edge is invisible regardless of
+ * underlying colour. Theme cream-soft (#fcf6e6) replaces the yellow palette.
  */
 .wisp-glow {
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 360px;
-  height: 360px;
+  width: 180px;
+  height: 180px;
   transform: translate(-50%, -50%);
   background: radial-gradient(circle,
-    rgba(255, 210, 130, 0.42) 0%,
-    rgba(255, 195, 110, 0.25) 18%,
-    rgba(255, 175, 90, 0.11) 36%,
-    rgba(231, 100, 70, 0.04) 60%,
-    rgba(231, 89, 61, 0) 85%);
-  mix-blend-mode: screen;
+    rgba(252, 246, 230, 0.55) 0%,
+    rgba(252, 246, 230, 0.30) 22%,
+    rgba(252, 246, 230, 0.12) 44%,
+    rgba(252, 246, 230, 0.03) 68%,
+    rgba(252, 246, 230, 0) 90%);
   animation: wisp-glow-pulse 1.8s ease-in-out infinite;
 }
 
@@ -143,14 +142,14 @@ onBeforeUnmount(() => {
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 42px;
-  height: 42px;
+  width: 16px;
+  height: 16px;
   transform: translate(-50%, -50%);
   background: radial-gradient(circle,
-    rgba(255, 248, 220, 0.95) 0%,
-    rgba(255, 220, 150, 0.6) 35%,
-    rgba(255, 195, 100, 0.25) 65%,
-    rgba(255, 180, 80, 0) 100%);
+    rgba(252, 246, 230, 0.98) 0%,
+    rgba(252, 246, 230, 0.65) 45%,
+    rgba(252, 246, 230, 0.2) 75%,
+    rgba(252, 246, 230, 0) 100%);
   animation: wisp-core-pulse 1.6s ease-in-out infinite;
 }
 

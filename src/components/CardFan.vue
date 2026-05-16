@@ -246,7 +246,7 @@ const circleBoxSize = computed(() => (circleRadius.value + cardW.value * 1.6) * 
 /* Halo-Halo gets a heartbeat pulse pre-open so the player knows where the game starts. */
 .halo-pulse {
   animation: halo-heartbeat 1.4s ease-in-out infinite;
-  filter: drop-shadow(0 0 12px rgba(255, 196, 80, 0.6));
+  filter: drop-shadow(0 0 12px rgba(252, 246, 230, 0.6));
 }
 @keyframes halo-heartbeat {
   0%, 100% { transform: scale(1); }

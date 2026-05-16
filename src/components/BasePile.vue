@@ -129,8 +129,8 @@ function jitterFor(id: string): { rot: number; jx: number; jy: number } {
 <style scoped>
 .last-played-pulse {
   box-shadow:
-    0 0 0 3px rgba(255, 245, 200, 0.9),
-    0 0 22px 8px rgba(255, 213, 120, 0.65);
+    0 0 0 3px rgba(252, 246, 230, 0.92),
+    0 0 22px 8px rgba(252, 246, 230, 0.55);
   animation: last-played-pulse 1.4s ease-in-out infinite;
 }
 @keyframes last-played-pulse {

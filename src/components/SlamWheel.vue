@@ -115,7 +115,7 @@ const targetLayouts = computed(() =>
         left: t.wx + 'px',
         top: t.wy + 'px',
         filter: highlightedId === t.id
-          ? 'drop-shadow(0 0 14px rgba(255,235,170,0.95))'
+          ? 'drop-shadow(0 0 14px rgba(252,246,230,0.95))'
           : 'drop-shadow(0 4px 8px rgba(0,0,0,0.35))',
       }"
     >
@@ -129,7 +129,7 @@ const targetLayouts = computed(() =>
           backgroundSize: 'cover',
           backgroundPosition: 'center',
           boxShadow: highlightedId === t.id
-            ? '0 0 0 3px rgba(255,235,170,0.95), 0 0 22px 6px rgba(255,235,170,0.55)'
+            ? '0 0 0 3px rgba(252,246,230,0.95), 0 0 22px 6px rgba(252,246,230,0.55)'
             : '0 0 0 2px rgba(255,255,255,0.7), 0 6px 14px rgba(0,0,0,0.35)',
         }"
       >
