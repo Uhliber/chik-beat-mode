@@ -3,7 +3,7 @@ import { App as CapApp } from '@capacitor/app';
 import { Preferences } from '@capacitor/preferences';
 import type { Card } from '@/game/Card';
 import { Game } from '@/game/Game';
-import { SimulationController, type SimStatus, type SimMode } from '@/game/SimulationController';
+import { SimulationController, type SimStatus, type SimMode, type AiSkillLevel } from '@/game/SimulationController';
 import type { BaseSide, ChantWord, GameEvent, PlayerId, SoloAction, VersusAction } from '@/game/types';
 import { useBeatAudio } from './useBeatAudio';
 
@@ -31,6 +31,7 @@ export interface FlightSpec {
 const SOLO_BEST_KEY = 'chik-solo-best-time-ms';
 const WISP_ENABLED_KEY = 'chik-wisp-enabled';
 const STRICT_PROMPTS_KEY = 'chik-strict-prompts';
+const AI_SKILL_KEY = 'chik-ai-skill';
 
 async function loadSoloBestTime(): Promise<number | null> {
   try {
@@ -73,6 +74,21 @@ async function loadStrictPrompts(): Promise<boolean> {
 
 function saveStrictPrompts(on: boolean): void {
   void Preferences.set({ key: STRICT_PROMPTS_KEY, value: on ? '1' : '0' }).catch(() => undefined);
+}
+
+async function loadAiSkill(): Promise<AiSkillLevel> {
+  try {
+    const { value } = await Preferences.get({ key: AI_SKILL_KEY });
+    const n = Number(value);
+    if (n === 1 || n === 2 || n === 3 || n === 4) return n;
+    return 3; // default: Hard
+  } catch {
+    return 3;
+  }
+}
+
+function saveAiSkill(level: AiSkillLevel): void {
+  void Preferences.set({ key: AI_SKILL_KEY, value: String(level) }).catch(() => undefined);
 }
 
 export interface UseGameOptions {
@@ -134,6 +150,18 @@ export function useGame(opts: UseGameOptions = {}) {
     strictPrompts.value = on;
     saveStrictPrompts(on);
     if (game.value) game.value.setStrictPromptsEnabled(on);
+  };
+
+  // AI skill (Versus only). Persisted, default 3 (Hard).
+  const aiSkill = ref<AiSkillLevel>(3);
+  void loadAiSkill().then((level) => {
+    aiSkill.value = level;
+    if (controller.value) controller.value.setAiSkill(level);
+  });
+  const setAiSkill = (level: AiSkillLevel) => {
+    aiSkill.value = level;
+    saveAiSkill(level);
+    if (controller.value) controller.value.setAiSkill(level);
   };
 
   /**
@@ -371,6 +399,7 @@ export function useGame(opts: UseGameOptions = {}) {
     const ctrl = new SimulationController(g);
     ctrl.setOptions({ speed: speed.value });
     ctrl.setMode(mode.value);
+    ctrl.setAiSkill(aiSkill.value);
     g.setStrictPromptsEnabled(strictPrompts.value);
     unsubGame = g.on(handleEvent);
     unsubStatus = ctrl.onStatusChange(handleStatus);
@@ -510,6 +539,8 @@ export function useGame(opts: UseGameOptions = {}) {
     setWispEnabled,
     strictPrompts,
     setStrictPrompts,
+    aiSkill,
+    setAiSkill,
     pendingSnapDraw,
     submitSnapDirection,
     submitSoloAction,

@@ -672,15 +672,20 @@ export class Game {
   }
 
   /**
-   * Which seats can the human at `seatIdx` target right now?
+   * Which seats can the player at `seatIdx` target right now?
    *  - Pre-open Halo-Halo opening: any non-self seat.
    *  - Strict-prompts mode ON: any non-self seat — illegal targets / wrong beat will
    *    be allowed by the engine and converted to a penalty draw. The UI's wheel widens
    *    accordingly; the human learns through feedback instead of being blocked.
    *  - Strict-prompts mode OFF (default): standard rulebook gating — beat must match
    *    and direction must obey the prompt.
+   *
+   * `ignoreStrictMode = true` always computes rulebook-legal targets regardless of the
+   * strictPromptsEnabled flag. The AI uses this to make smart non-penalty plays even
+   * when the toggle is on; the UI passes the default (false) so the wheel widens in
+   * strict mode.
    */
-  legalTargetSeats(seatIdx: number, card: Card): number[] {
+  legalTargetSeats(seatIdx: number, card: Card, ignoreStrictMode = false): number[] {
     if (seatIdx < 0 || seatIdx >= this.players.length) return [];
     if (!this.opened) {
       if (!card.isHaloHalo) return [];
@@ -688,7 +693,7 @@ export class Game {
       for (let i = 0; i < this.players.length; i++) if (i !== seatIdx) out.push(i);
       return out;
     }
-    if (this.strictPromptsEnabled) {
+    if (this.strictPromptsEnabled && !ignoreStrictMode) {
       const out: number[] = [];
       for (let i = 0; i < this.players.length; i++) if (i !== seatIdx) out.push(i);
       return out;

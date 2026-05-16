@@ -50,6 +50,8 @@ const {
   setWispEnabled,
   strictPrompts,
   setStrictPrompts,
+  aiSkill,
+  setAiSkill,
   pendingSnapDraw,
   submitSnapDirection,
   initGame,
@@ -470,11 +472,13 @@ function onPauseOverlayTap() {
         :audio-muted="audioMuted"
         :wisp-enabled="wispEnabled"
         :strict-prompts="strictPrompts"
+        :ai-skill="aiSkill"
         :player-count="playerCount"
         :speed="speed"
         @update:audio-muted="setAudioMuted"
         @update:wisp-enabled="setWispEnabled"
         @update:strict-prompts="setStrictPrompts"
+        @update:ai-skill="setAiSkill"
         @update:player-count="setPlayerCount"
         @update:speed="setSpeed"
         @restart="onSettingsRestart"
@@ -494,11 +498,13 @@ function onPauseOverlayTap() {
         :audio-muted="audioMuted"
         :wisp-enabled="wispEnabled"
         :strict-prompts="strictPrompts"
+        :ai-skill="aiSkill"
         :player-count="playerCount"
         :speed="speed"
         @update:audio-muted="setAudioMuted"
         @update:wisp-enabled="setWispEnabled"
         @update:strict-prompts="setStrictPrompts"
+        @update:ai-skill="setAiSkill"
         @update:player-count="setPlayerCount"
         @update:speed="setSpeed"
         @restart="onSettingsRestart"

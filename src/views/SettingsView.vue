@@ -19,13 +19,19 @@ const { audioMuted, setMuted } = useBeatAudio();
 // toggles are the same keys, surveyed from this view too.
 const WISP_KEY = 'chik-wisp-enabled';
 const STRICT_KEY = 'chik-strict-prompts';
+const SKILL_KEY = 'chik-ai-skill';
 const wispEnabled = ref(true);
 const strictPrompts = ref(false);
+const aiSkill = ref<1 | 2 | 3 | 4>(3);
 void Preferences.get({ key: WISP_KEY }).then(({ value }) => {
   wispEnabled.value = value === null || value === undefined ? true : (value === '1' || value === 'true');
 }).catch(() => undefined);
 void Preferences.get({ key: STRICT_KEY }).then(({ value }) => {
   strictPrompts.value = value === '1' || value === 'true';
+}).catch(() => undefined);
+void Preferences.get({ key: SKILL_KEY }).then(({ value }) => {
+  const n = Number(value);
+  if (n === 1 || n === 2 || n === 3 || n === 4) aiSkill.value = n;
 }).catch(() => undefined);
 function setWispEnabled(v: boolean) {
   wispEnabled.value = v;
@@ -34,6 +40,10 @@ function setWispEnabled(v: boolean) {
 function setStrictPrompts(v: boolean) {
   strictPrompts.value = v;
   void Preferences.set({ key: STRICT_KEY, value: v ? '1' : '0' }).catch(() => undefined);
+}
+function setAiSkill(v: 1 | 2 | 3 | 4) {
+  aiSkill.value = v;
+  void Preferences.set({ key: SKILL_KEY, value: String(v) }).catch(() => undefined);
 }
 
 function back() {
@@ -69,6 +79,7 @@ function back() {
         :audio-muted="audioMuted"
         :wisp-enabled="wispEnabled"
         :strict-prompts="strictPrompts"
+        :ai-skill="aiSkill"
         :player-count="4"
         :speed="1"
         hide-game-section
@@ -76,6 +87,7 @@ function back() {
         @update:audio-muted="setMuted"
         @update:wisp-enabled="setWispEnabled"
         @update:strict-prompts="setStrictPrompts"
+        @update:ai-skill="setAiSkill"
         @update:player-count="() => undefined"
         @update:speed="() => undefined"
         @restart="() => undefined"
