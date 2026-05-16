@@ -115,32 +115,41 @@ onBeforeUnmount(() => {
   will-change: transform;
 }
 
+/**
+ * Outer warm bloom. Sized larger than it visibly extends, with the gradient already at
+ * very low alpha by the time it reaches the box edge — so when the wrapper sits near
+ * the viewport edge and the box gets clipped, the visible "cut" is at near-zero alpha
+ * and reads as a smooth fade instead of a hard line. No `filter: blur` (that creates
+ * its own containing-block clip + interacts badly with mix-blend-mode at the edges).
+ */
 .wisp-glow {
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 240px;
-  height: 240px;
+  width: 360px;
+  height: 360px;
   transform: translate(-50%, -50%);
   background: radial-gradient(circle,
-    rgba(255, 200, 120, 0.34) 0%,
-    rgba(231, 89, 61, 0.18) 35%,
-    rgba(231, 89, 61, 0) 70%);
+    rgba(255, 210, 130, 0.42) 0%,
+    rgba(255, 195, 110, 0.25) 18%,
+    rgba(255, 175, 90, 0.11) 36%,
+    rgba(231, 100, 70, 0.04) 60%,
+    rgba(231, 89, 61, 0) 85%);
   mix-blend-mode: screen;
   animation: wisp-glow-pulse 1.8s ease-in-out infinite;
-  filter: blur(2px);
 }
 
 .wisp-core {
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 30px;
-  height: 30px;
+  width: 42px;
+  height: 42px;
   transform: translate(-50%, -50%);
   background: radial-gradient(circle,
     rgba(255, 248, 220, 0.95) 0%,
-    rgba(255, 210, 130, 0.7) 55%,
+    rgba(255, 220, 150, 0.6) 35%,
+    rgba(255, 195, 100, 0.25) 65%,
     rgba(255, 180, 80, 0) 100%);
   animation: wisp-core-pulse 1.6s ease-in-out infinite;
 }
