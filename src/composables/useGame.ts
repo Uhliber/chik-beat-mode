@@ -30,6 +30,7 @@ export interface FlightSpec {
 
 const SOLO_BEST_KEY = 'chik-solo-best-time-ms';
 const WISP_ENABLED_KEY = 'chik-wisp-enabled';
+const STRICT_PROMPTS_KEY = 'chik-strict-prompts';
 
 async function loadSoloBestTime(): Promise<number | null> {
   try {
@@ -58,6 +59,20 @@ async function loadWispEnabled(): Promise<boolean> {
 
 function saveWispEnabled(on: boolean): void {
   void Preferences.set({ key: WISP_ENABLED_KEY, value: on ? '1' : '0' }).catch(() => undefined);
+}
+
+async function loadStrictPrompts(): Promise<boolean> {
+  try {
+    const { value } = await Preferences.get({ key: STRICT_PROMPTS_KEY });
+    if (value === null || value === undefined) return false; // default OFF
+    return value === '1' || value === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function saveStrictPrompts(on: boolean): void {
+  void Preferences.set({ key: STRICT_PROMPTS_KEY, value: on ? '1' : '0' }).catch(() => undefined);
 }
 
 export interface UseGameOptions {
@@ -108,6 +123,25 @@ export function useGame(opts: UseGameOptions = {}) {
     wispEnabled.value = on;
     saveWispEnabled(on);
   };
+
+  // Strict-prompts house rule (Versus only). Persisted, default OFF.
+  const strictPrompts = ref(false);
+  void loadStrictPrompts().then((on) => {
+    strictPrompts.value = on;
+    if (game.value) game.value.setStrictPromptsEnabled(on);
+  });
+  const setStrictPrompts = (on: boolean) => {
+    strictPrompts.value = on;
+    saveStrictPrompts(on);
+    if (game.value) game.value.setStrictPromptsEnabled(on);
+  };
+
+  /**
+   * Reactive mirror of game.pendingSnapDraw so the UI can show the Left/Right chooser
+   * to the human. Updated synchronously inside handleEvent on versusSnapDrawnAvailable
+   * (and cleared on snap-played / kept).
+   */
+  const pendingSnapDraw = ref<{ playerId: PlayerId; cardId: string } | null>(null);
   let soloRafId: number | null = null;
   let soloStartedAt = 0;
   const startSoloTimer = () => {
@@ -275,6 +309,17 @@ export function useGame(opts: UseGameOptions = {}) {
       case 'versusTurnChanged':
         activeSeatIndex.value = e.seatIndex;
         break;
+      case 'versusSnapDrawnAvailable':
+        pendingSnapDraw.value = { playerId: e.playerId, cardId: e.cardId };
+        break;
+      case 'versusSnapDrawnPlayed':
+      case 'versusSnapDrawnKept':
+        pendingSnapDraw.value = null;
+        break;
+      case 'versusStrictPenalty':
+        // The penalty drawer hears the same fail sting Solo penalties use.
+        if (isHumanEvent(e.playerId)) beatAudio.fx('fail');
+        break;
       case 'winner':
         if (mode.value === 'solo') {
           stopSoloTimer();
@@ -320,11 +365,13 @@ export function useGame(opts: UseGameOptions = {}) {
     soloLastFinalMs.value = null;
     soloIsNewBest.value = false;
     pendingFlights.value = [];
+    pendingSnapDraw.value = null;
 
     const g = new Game();
     const ctrl = new SimulationController(g);
     ctrl.setOptions({ speed: speed.value });
     ctrl.setMode(mode.value);
+    g.setStrictPromptsEnabled(strictPrompts.value);
     unsubGame = g.on(handleEvent);
     unsubStatus = ctrl.onStatusChange(handleStatus);
     game.value = g;
@@ -387,6 +434,14 @@ export function useGame(opts: UseGameOptions = {}) {
     if (state.status !== 'running') return;
     beatAudio.fx('tap');
     controller.value.submitVersusHumanAction(playerId, action);
+  };
+
+  /** Human's snap-drawn direction choice. Light wrapper so PlayView doesn't need to
+   *  reach for VersusAction shapes. Pass 'keep' to decline the snap-play. */
+  const submitSnapDirection = (playerId: PlayerId, direction: 'left' | 'right' | 'keep') => {
+    if (state.status !== 'running') return;
+    beatAudio.fx('tap');
+    controller.value.submitVersusHumanAction(playerId, { type: 'snap-direction', direction });
   };
 
   const setMode = (m: SimMode) => {
@@ -453,6 +508,10 @@ export function useGame(opts: UseGameOptions = {}) {
     setAudioMuted,
     wispEnabled,
     setWispEnabled,
+    strictPrompts,
+    setStrictPrompts,
+    pendingSnapDraw,
+    submitSnapDirection,
     submitSoloAction,
     submitVersusAction,
   };

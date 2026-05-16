@@ -18,7 +18,10 @@ function describe(e: GameEvent): string {
     case 'soloPenalty':     return `Penalty: ${e.reason} (+${e.penaltyMs / 1000}s)`;
     case 'versusPlay':      return `${e.playerId} played ${e.cardPrompt} ${e.cardWord} → seat ${e.targetSeatIndex}`;
     case 'versusDraw':      return e.cardId ? `${e.playerId} drew from ${e.from}` : `${e.playerId} pass (empty pile)`;
+    case 'versusSnapDrawnAvailable': return `${e.playerId} drew a Snap matching the beat`;
     case 'versusSnapDrawnPlayed': return `${e.playerId} snap-played a drawn card`;
+    case 'versusSnapDrawnKept': return `${e.playerId} kept the drawn Snap`;
+    case 'versusStrictPenalty': return `${e.playerId} penalty (${e.reason})`;
     case 'versusTurnChanged': return `Turn → ${e.playerId}${e.viaChain ? ' (chain)' : ''}`;
     case 'versusChainStarted': return `Chain: seat ${e.sourceSeatIndex} bounces back`;
     case 'versusChainEnded':   return `Chain ended (${e.reason})`;

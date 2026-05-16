@@ -16,6 +16,7 @@ defineProps<{
   mode: SimMode;
   audioMuted: boolean;
   wispEnabled: boolean;
+  strictPrompts: boolean;
   playerCount: number;
   speed: number;
   /** Hide the Game group rows when no round is in flight (e.g. from /settings). */
@@ -28,6 +29,7 @@ defineProps<{
 const emit = defineEmits<{
   (e: 'update:audio-muted', v: boolean): void;
   (e: 'update:wisp-enabled', v: boolean): void;
+  (e: 'update:strict-prompts', v: boolean): void;
   (e: 'update:player-count', n: number): void;
   (e: 'update:speed', n: number): void;
   (e: 'restart'): void;
@@ -86,6 +88,21 @@ const playerOptions = [3, 4, 5, 6].map((n) => ({ label: String(n), value: n }));
           :model-value="speed"
           :options="speedOptions"
           @update:model-value="(v) => emit('update:speed', Number(v))"
+        />
+      </SettingsRow>
+      <SettingsRow description="Lets you attempt any play; wrong moves draw a penalty card.">
+        <template #icon>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 9v4" />
+            <path d="M12 17h.01" />
+            <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+          </svg>
+        </template>
+        <template #label>Strict prompts</template>
+        <SettingsToggle
+          :model-value="strictPrompts"
+          aria-label="Strict prompts"
+          @update:model-value="(v) => emit('update:strict-prompts', v)"
         />
       </SettingsRow>
     </SettingsGroup>

@@ -228,3 +228,109 @@ describe('Game (Versus) — seat direction matches player perspective', () => {
     expect(legal).toEqual([5]);
   });
 });
+
+/**
+ * Strict-prompts house rule + Snap-drawn pending direction. Both are off-by-default
+ * extensions that the user toggles via settings.
+ */
+describe('Game (Versus) — strict prompts house rule', () => {
+  function setupForStrict(): Game {
+    const g = new Game(seededRng(31));
+    g.setupVersus(4);
+    g.setStrictPromptsEnabled(true);
+    // Force opener to seat 0 for determinism.
+    if (g.haloHaloOwnerId !== 'p1') {
+      const halo = g.players
+        .flatMap((p) => p.hand.map((c) => ({ c, p })))
+        .find(({ c }) => c.isHaloHalo)!;
+      halo.p.hand = halo.p.hand.filter((c) => c.id !== halo.c.id);
+      g.players[0].hand.push(halo.c);
+      g.haloHaloOwnerId = 'p1';
+      g.activeSeatIndex = 0;
+    }
+    return g;
+  }
+
+  it('with strict prompts ON, every non-self seat is a legal target', () => {
+    const g = setupForStrict();
+    const opener = g.players[0];
+    const halo = opener.hand.find((c) => c.isHaloHalo)!;
+    g.submitVersusAction(opener.id, { type: 'play', cardId: halo.id, targetSeatIndex: 1 });
+    g.activeSeatIndex = 0;
+    g.players[0].promptStack.push({ id: 'right-stub', word: 'chik', prompt: 'right', isHaloHalo: false } as never);
+    const di = g.drawPile.findIndex((c) => c.word === 'wally');
+    if (di >= 0) g.players[0].hand.push(g.drawPile.splice(di, 1)[0]);
+    const wally = g.players[0].hand.find((c) => c.word === 'wally')!;
+
+    const legal = g.legalTargetSeats(0, wally).sort();
+    expect(legal).toEqual([1, 2, 3]);
+  });
+
+  it('wrong-direction play in strict mode triggers penalty: card stays in hand, +1 draw', () => {
+    const g = setupForStrict();
+    const opener = g.players[0];
+    const halo = opener.hand.find((c) => c.isHaloHalo)!;
+    g.submitVersusAction(opener.id, { type: 'play', cardId: halo.id, targetSeatIndex: 1 });
+    g.activeSeatIndex = 0;
+    g.players[0].promptStack.push({ id: 'right-stub', word: 'chik', prompt: 'right', isHaloHalo: false } as never);
+    const di = g.drawPile.findIndex((c) => c.word === 'wally');
+    if (di >= 0) g.players[0].hand.push(g.drawPile.splice(di, 1)[0]);
+    const wally = g.players[0].hand.find((c) => c.word === 'wally')!;
+
+    const handSizeBefore = g.players[0].cardCount;
+    // Right prompt restricts to seat 3; play to seat 1 (wrong direction) instead.
+    const r = g.submitVersusAction(g.players[0].id, { type: 'play', cardId: wally.id, targetSeatIndex: 1 });
+    expect(r.type).toBe('rejected');
+    if (r.type === 'rejected') expect(r.reason).toBe('illegal-target');
+    // Card stays in hand and the player drew 1 penalty card → net +1.
+    expect(g.players[0].cardCount).toBe(handSizeBefore + 1);
+    expect(g.players[0].hand.some((c) => c.id === wally.id)).toBe(true);
+  });
+});
+
+describe('Game (Versus) — drawn-Snap parks for direction', () => {
+  it('drawing a Snap matching the current beat sets pendingSnapDraw and does not auto-play', () => {
+    const g = new Game(seededRng(53));
+    g.setupVersus(4);
+    // Force opener = seat 0 and open the game so we're past the Halo-Halo gate.
+    if (g.haloHaloOwnerId !== 'p1') {
+      const haloEntry = g.players
+        .flatMap((p) => p.hand.map((c) => ({ c, p })))
+        .find(({ c }) => c.isHaloHalo)!;
+      haloEntry.p.hand = haloEntry.p.hand.filter((c) => c.id !== haloEntry.c.id);
+      g.players[0].hand.push(haloEntry.c);
+      g.haloHaloOwnerId = 'p1';
+      g.activeSeatIndex = 0;
+    }
+    const halo = g.players[0].hand.find((c) => c.isHaloHalo)!;
+    g.submitVersusAction(g.players[0].id, { type: 'play', cardId: halo.id, targetSeatIndex: 1 });
+    // Chant is now Wally and seat 1 is the active player. Make sure seat 1 has no
+    // Wally cards in hand so they're forced to draw.
+    g.players[1].hand = g.players[1].hand.filter((c) => c.word !== 'wally');
+    // The deck has exactly one Wally-Snap. Fish it out from wherever it landed and
+    // park it on top of the draw pile so the next pop() returns it.
+    let snap: import('../Card').Card | null = null;
+    const inPile = g.drawPile.findIndex((c) => c.word === 'wally' && c.prompt === 'snap');
+    if (inPile >= 0) {
+      snap = g.drawPile.splice(inPile, 1)[0];
+    } else {
+      for (const p of g.players) {
+        const idx = p.hand.findIndex((c) => c.word === 'wally' && c.prompt === 'snap');
+        if (idx >= 0) { snap = p.hand.splice(idx, 1)[0]; break; }
+      }
+    }
+    if (!snap) throw new Error('Wally-Snap not present in this deal — seed regression?');
+    g.drawPile.push(snap);
+    const snapId = snap.id;
+
+    const r = g.submitVersusAction(g.players[1].id, { type: 'draw' });
+    expect(r.type).toBe('drew');
+    expect(g.pendingSnapDraw).not.toBeNull();
+    expect(g.pendingSnapDraw?.cardId).toBe(snapId);
+    // The Snap is in seat 1's hand and NOT yet placed on anyone's promptStack.
+    expect(g.players[1].hand.some((c) => c.id === snapId)).toBe(true);
+    for (const p of g.players) {
+      expect(p.promptStack.some((c) => c.id === snapId)).toBe(false);
+    }
+  });
+});

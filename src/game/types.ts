@@ -58,7 +58,8 @@ export type SoloActionResult =
 
 export type VersusAction =
   | { type: 'play'; cardId: string; targetSeatIndex: number }
-  | { type: 'draw' };
+  | { type: 'draw' }
+  | { type: 'snap-direction'; direction: 'left' | 'right' | 'keep' };
 
 export type VersusRejectReason =
   | 'not-your-turn'
@@ -66,7 +67,10 @@ export type VersusRejectReason =
   | 'wrong-beat'
   | 'illegal-target'
   | 'stopped'
-  | 'self-target';
+  | 'self-target'
+  | 'no-pending-snap';
+
+export type StrictPenaltyReason = 'wrong-beat' | 'illegal-target' | 'stopped';
 
 export type VersusActionResult =
   | { type: 'played'; cardId: string; targetSeatIndex: number; chainTriggered: boolean }
@@ -89,7 +93,10 @@ export type GameEvent =
   // Versus events
   | { kind: 'versusPlay'; playerId: PlayerId; cardId: string; targetSeatIndex: number; cardWord: ChantWord; cardPrompt: CardPrompt }
   | { kind: 'versusDraw'; playerId: PlayerId; cardId: string | null; from: 'pile' | 'hand'; fromPlayerId?: PlayerId }
+  | { kind: 'versusSnapDrawnAvailable'; playerId: PlayerId; cardId: string }
   | { kind: 'versusSnapDrawnPlayed'; playerId: PlayerId; cardId: string }
+  | { kind: 'versusSnapDrawnKept'; playerId: PlayerId; cardId: string }
+  | { kind: 'versusStrictPenalty'; playerId: PlayerId; cardId: string; reason: 'wrong-beat' | 'illegal-target' | 'stopped'; penaltyCardId: string | null }
   | { kind: 'versusTurnChanged'; playerId: PlayerId; seatIndex: number; viaChain: boolean }
   | { kind: 'versusChainStarted'; sourceSeatIndex: number; targetSeatIndex: number }
   | { kind: 'versusChainEnded'; reason: 'target-played' | 'source-drew' }

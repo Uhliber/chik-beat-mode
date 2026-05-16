@@ -11,6 +11,7 @@ import ChantTicker from '@/components/ChantTicker.vue';
 import MobileBottomSheet from '@/components/MobileBottomSheet.vue';
 import SidePanel from '@/components/SidePanel.vue';
 import SettingsPanel from '@/components/SettingsPanel.vue';
+import SnapDirectionPrompt from '@/components/SnapDirectionPrompt.vue';
 import PauseOverlay from '@/components/PauseOverlay.vue';
 import IconVolume from '@/components/icons/IconVolume.vue';
 import { useGame } from '@/composables/useGame';
@@ -47,6 +48,10 @@ const {
   pendingFlights,
   wispEnabled,
   setWispEnabled,
+  strictPrompts,
+  setStrictPrompts,
+  pendingSnapDraw,
+  submitSnapDirection,
   initGame,
   start,
   pause,
@@ -57,6 +62,28 @@ const {
   submitSoloAction,
   submitVersusAction,
 } = useGame({ initialMode });
+
+// Reactive Card lookup for the snap-direction chooser — we hand the actual Card object
+// to the prompt so it can render the art the human just drew.
+const pendingSnapCard = computed(() => {
+  const p = pendingSnapDraw.value;
+  if (!p) return null;
+  const player = game.value.players.find((pl) => pl.id === p.playerId);
+  return player?.hand.find((c) => c.id === p.cardId) ?? null;
+});
+// Only surface the chooser when the pending snap belongs to the HUMAN seat. AI's
+// pending snaps are auto-resolved by the SimulationController.
+const showSnapChooser = computed(() => {
+  const p = pendingSnapDraw.value;
+  if (!p) return false;
+  const player = game.value.players.find((pl) => pl.id === p.playerId);
+  return !!player && !player.isAI;
+});
+function onSnapChoose(direction: 'left' | 'right' | 'keep') {
+  const p = pendingSnapDraw.value;
+  if (!p) return;
+  submitSnapDirection(p.playerId, direction);
+}
 
 const { isMobile } = useResponsive();
 const { fx } = useBeatAudio();
@@ -442,10 +469,12 @@ function onPauseOverlayTap() {
         :mode="mode"
         :audio-muted="audioMuted"
         :wisp-enabled="wispEnabled"
+        :strict-prompts="strictPrompts"
         :player-count="playerCount"
         :speed="speed"
         @update:audio-muted="setAudioMuted"
         @update:wisp-enabled="setWispEnabled"
+        @update:strict-prompts="setStrictPrompts"
         @update:player-count="setPlayerCount"
         @update:speed="setSpeed"
         @restart="onSettingsRestart"
@@ -464,10 +493,12 @@ function onPauseOverlayTap() {
         :mode="mode"
         :audio-muted="audioMuted"
         :wisp-enabled="wispEnabled"
+        :strict-prompts="strictPrompts"
         :player-count="playerCount"
         :speed="speed"
         @update:audio-muted="setAudioMuted"
         @update:wisp-enabled="setWispEnabled"
+        @update:strict-prompts="setStrictPrompts"
         @update:player-count="setPlayerCount"
         @update:speed="setSpeed"
         @restart="onSettingsRestart"
@@ -482,6 +513,15 @@ function onPauseOverlayTap() {
       :subtitle="mode === 'solo' ? (soloIsNewBest ? 'New best!' : `Best ${soloBestDisplay}`) : undefined"
       :subtitle-tone="soloIsNewBest ? 'celebrate' : 'info'"
       @restart="onRestart"
+    />
+
+    <!-- Surfaced when the human draws a Snap matching the current beat — they pick
+         Left / Right / Keep. AI's pending snap auto-resolves; this only fires for the
+         human. -->
+    <SnapDirectionPrompt
+      :card="pendingSnapCard"
+      :open="showSnapChooser"
+      @choose="onSnapChoose"
     />
   </div>
 </template>

@@ -15,16 +15,25 @@ import { useBeatAudio } from '@/composables/useBeatAudio';
 const router = useRouter();
 const { audioMuted, setMuted } = useBeatAudio();
 
-// Mirror useGame's wisp persistence (without spinning up a Game) so the toggle is the
-// same key, surveyed from this view too.
+// Mirror useGame's wisp + strict-prompts persistence (without spinning up a Game) so the
+// toggles are the same keys, surveyed from this view too.
 const WISP_KEY = 'chik-wisp-enabled';
+const STRICT_KEY = 'chik-strict-prompts';
 const wispEnabled = ref(true);
+const strictPrompts = ref(false);
 void Preferences.get({ key: WISP_KEY }).then(({ value }) => {
   wispEnabled.value = value === null || value === undefined ? true : (value === '1' || value === 'true');
+}).catch(() => undefined);
+void Preferences.get({ key: STRICT_KEY }).then(({ value }) => {
+  strictPrompts.value = value === '1' || value === 'true';
 }).catch(() => undefined);
 function setWispEnabled(v: boolean) {
   wispEnabled.value = v;
   void Preferences.set({ key: WISP_KEY, value: v ? '1' : '0' }).catch(() => undefined);
+}
+function setStrictPrompts(v: boolean) {
+  strictPrompts.value = v;
+  void Preferences.set({ key: STRICT_KEY, value: v ? '1' : '0' }).catch(() => undefined);
 }
 
 function back() {
@@ -59,12 +68,14 @@ function back() {
         mode="versus"
         :audio-muted="audioMuted"
         :wisp-enabled="wispEnabled"
+        :strict-prompts="strictPrompts"
         :player-count="4"
         :speed="1"
         hide-game-section
         hide-round-actions
         @update:audio-muted="setMuted"
         @update:wisp-enabled="setWispEnabled"
+        @update:strict-prompts="setStrictPrompts"
         @update:player-count="() => undefined"
         @update:speed="() => undefined"
         @restart="() => undefined"

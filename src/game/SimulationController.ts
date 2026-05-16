@@ -125,6 +125,24 @@ export class SimulationController {
   private tick(): void {
     if (this.status !== 'running' || this.game.winnerId) return;
 
+    // Pending snap-draw choice: if the holder is AI, auto-pick a direction so the loop
+    // doesn't stall. The human's pending snap is surfaced by useGame and resolved by a
+    // UI chooser. (We can't tell from `activeSeatIndex` alone — the engine doesn't
+    // rotate the seat while parked, so the holder is also the active player.)
+    const pending = this.game.pendingSnapDraw;
+    if (pending) {
+      const holder = this.game.players.find((p) => p.id === pending.playerId);
+      if (holder && holder.isAI) {
+        const direction = this.rng() < 0.5 ? 'left' : 'right';
+        this.game.submitVersusAction(holder.id, { type: 'snap-direction', direction });
+        if (this.game.winnerId) { this.setStatus('ended'); return; }
+        this.scheduleNext();
+        return;
+      }
+      // Human's pending — park and wait for the UI to submit.
+      return;
+    }
+
     const seat = this.game.activeSeatIndex;
     if (seat < 0 || seat >= this.game.players.length) return;
     const player = this.game.players[seat];
