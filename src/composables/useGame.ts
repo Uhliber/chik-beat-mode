@@ -29,6 +29,7 @@ export interface FlightSpec {
 }
 
 const SOLO_BEST_KEY = 'chik-solo-best-time-ms';
+const WISP_ENABLED_KEY = 'chik-wisp-enabled';
 
 async function loadSoloBestTime(): Promise<number | null> {
   try {
@@ -43,6 +44,20 @@ async function loadSoloBestTime(): Promise<number | null> {
 
 function saveSoloBestTime(ms: number): void {
   void Preferences.set({ key: SOLO_BEST_KEY, value: String(Math.round(ms)) }).catch(() => undefined);
+}
+
+async function loadWispEnabled(): Promise<boolean> {
+  try {
+    const { value } = await Preferences.get({ key: WISP_ENABLED_KEY });
+    if (value === null || value === undefined) return true; // default on
+    return value === '1' || value === 'true';
+  } catch {
+    return true;
+  }
+}
+
+function saveWispEnabled(on: boolean): void {
+  void Preferences.set({ key: WISP_ENABLED_KEY, value: on ? '1' : '0' }).catch(() => undefined);
 }
 
 export interface UseGameOptions {
@@ -85,6 +100,14 @@ export function useGame(opts: UseGameOptions = {}) {
   void loadSoloBestTime().then((ms) => {
     if (ms !== null) soloBestTimeMs.value = ms;
   });
+
+  // Turn-indicator wisp (Versus only). Persisted, default ON.
+  const wispEnabled = ref(true);
+  void loadWispEnabled().then((on) => { wispEnabled.value = on; });
+  const setWispEnabled = (on: boolean) => {
+    wispEnabled.value = on;
+    saveWispEnabled(on);
+  };
   let soloRafId: number | null = null;
   let soloStartedAt = 0;
   const startSoloTimer = () => {
@@ -428,6 +451,8 @@ export function useGame(opts: UseGameOptions = {}) {
     setPlayerHuman,
     setMode,
     setAudioMuted,
+    wispEnabled,
+    setWispEnabled,
     submitSoloAction,
     submitVersusAction,
   };

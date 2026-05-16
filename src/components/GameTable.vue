@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import PlayerSeat from './PlayerSeat.vue';
 import BasesArea from './BasesArea.vue';
 import SlamWheel, { type WheelTarget } from './SlamWheel.vue';
+import TurnWisp from './TurnWisp.vue';
 import { useSeatLayout } from '@/composables/useSeatLayout';
 import { useResponsive } from '@/composables/useResponsive';
 import { flyCardSlam, flyCardDraw } from '@/composables/useCardAnimation';
@@ -25,6 +26,8 @@ const props = defineProps<{
   activeSeatIndex: number;
   /** Animation queue populated by useGame; we drain by id and dispatch flights. */
   pendingFlights: FlightSpec[];
+  /** When true (Versus only), render the moving turn-indicator wisp. */
+  wispEnabled?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -363,6 +366,13 @@ function dispatchFlight(spec: FlightSpec): void {
       :highlighted-id="highlightedId"
       :threshold="AIM_THRESHOLD_PX"
       :has-dragged="aim.hasDragged"
+    />
+
+    <!-- Turn-indicator wisp (Versus only). Solo has one player — no turn to track. -->
+    <TurnWisp
+      v-if="mode === 'versus'"
+      :seat-index="activeSeatIndex"
+      :enabled="wispEnabled ?? true"
     />
   </div>
 </template>

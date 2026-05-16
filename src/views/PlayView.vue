@@ -44,6 +44,7 @@ const {
   soloLastFinalMs,
   soloIsNewBest,
   pendingFlights,
+  wispEnabled,
   initGame,
   start,
   pause,
@@ -378,6 +379,7 @@ function onPauseOverlayTap() {
         :mode="mode"
         :active-seat-index="activeSeatIndex"
         :pending-flights="pendingFlights"
+        :wisp-enabled="wispEnabled"
         @solo-slam="onSoloSlam"
         @versus-play="onVersusPlay"
         @draw-deck-click="onDrawDeckClick"
