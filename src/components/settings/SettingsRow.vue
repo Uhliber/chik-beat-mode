@@ -96,7 +96,14 @@ function onRowClick() {
   margin-top: 2px;
 }
 .row-control {
+  /**
+   * `margin-left: auto` consumes any remaining inline space in the row and converts it
+   * into a left margin on this element — the canonical flex pattern for "always at the
+   * end of the row, regardless of label width". `.row-label`'s `flex: 1` alone wasn't
+   * shrinking-and-growing the way we needed when the label's intrinsic width was small.
+   */
   flex-shrink: 0;
+  margin-left: auto;
   color: rgb(120, 113, 108);
   display: flex;
   align-items: center;
