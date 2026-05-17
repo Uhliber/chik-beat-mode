@@ -526,15 +526,6 @@ function onPauseOverlayTap() {
       :supports-tutorial="mode === 'solo' || mode === 'versus'"
       @start-tutorial="onStartTutorialFromGuide"
     />
-    <button
-      v-if="isMobile"
-      type="button"
-      :aria-label="audioMuted ? 'Unmute' : 'Mute'"
-      class="fixed bottom-3 left-3 z-30 w-11 h-11 rounded-full bg-cream-soft/95 ring-1 ring-black/10 flex items-center justify-center text-coral-deep shadow-lg"
-      @click="setAudioMuted(!audioMuted)"
-    >
-      <IconVolume :muted="audioMuted" :size="22" />
-    </button>
 
     <aside
       v-if="!isMobile && !isTutorial && guideOnTable"
