@@ -19,12 +19,14 @@ const { audioMuted, setMuted } = useBeatAudio();
 // toggles are the same keys, surveyed from this view too.
 const WISP_KEY = 'chik-wisp-enabled';
 const EVENT_LOG_KEY = 'chik-event-log-enabled';
+const GUIDE_ON_TABLE_KEY = 'chik-guide-on-table';
 const STRICT_KEY = 'chik-strict-prompts';
 const SKILL_KEY = 'chik-ai-skill';
 const PROMPT_SIZE_KEY = 'chik-prompt-size';
 type PromptSize = 'small' | 'medium' | 'large' | 'xl';
 const wispEnabled = ref(true);
 const eventLogEnabled = ref(true);
+const guideOnTable = ref(true);
 const strictPrompts = ref(false);
 const aiSkill = ref<1 | 2 | 3 | 4>(3);
 const promptSize = ref<PromptSize>('medium');
@@ -33,6 +35,11 @@ void Preferences.get({ key: WISP_KEY }).then(({ value }) => {
 }).catch(() => undefined);
 void Preferences.get({ key: EVENT_LOG_KEY }).then(({ value }) => {
   eventLogEnabled.value = value === null || value === undefined ? true : (value === '1' || value === 'true');
+}).catch(() => undefined);
+void Preferences.get({ key: GUIDE_ON_TABLE_KEY }).then(({ value }) => {
+  // No "auto" sentinel surfaced from this view — desktop default of true is fine here
+  // since the standalone settings is typically reached via menu (mostly desktop).
+  guideOnTable.value = value === null || value === undefined ? true : (value === '1' || value === 'true');
 }).catch(() => undefined);
 void Preferences.get({ key: STRICT_KEY }).then(({ value }) => {
   strictPrompts.value = value === '1' || value === 'true';
@@ -51,6 +58,10 @@ function setWispEnabled(v: boolean) {
 function setEventLogEnabled(v: boolean) {
   eventLogEnabled.value = v;
   void Preferences.set({ key: EVENT_LOG_KEY, value: v ? '1' : '0' }).catch(() => undefined);
+}
+function setGuideOnTable(v: boolean) {
+  guideOnTable.value = v;
+  void Preferences.set({ key: GUIDE_ON_TABLE_KEY, value: v ? '1' : '0' }).catch(() => undefined);
 }
 function setStrictPrompts(v: boolean) {
   strictPrompts.value = v;
@@ -98,6 +109,7 @@ function back() {
         :audio-muted="audioMuted"
         :wisp-enabled="wispEnabled"
         :event-log-enabled="eventLogEnabled"
+        :guide-on-table="guideOnTable"
         :strict-prompts="strictPrompts"
         :ai-skill="aiSkill"
         :player-count="4"
@@ -105,9 +117,11 @@ function back() {
         :prompt-size="promptSize"
         hide-game-section
         hide-round-actions
+        hide-guide-action
         @update:audio-muted="setMuted"
         @update:wisp-enabled="setWispEnabled"
         @update:event-log-enabled="setEventLogEnabled"
+        @update:guide-on-table="setGuideOnTable"
         @update:prompt-size="setPromptSize"
         @update:strict-prompts="setStrictPrompts"
         @update:ai-skill="setAiSkill"

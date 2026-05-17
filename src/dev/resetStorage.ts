@@ -25,6 +25,7 @@ const SETTINGS_KEYS: readonly string[] = [
   'chik-solo-best-time-ms',
   'chik-wisp-enabled',
   'chik-event-log-enabled',
+  'chik-guide-on-table',
   'chik-strict-prompts',
   'chik-ai-skill',
   'chik-playground-composition',

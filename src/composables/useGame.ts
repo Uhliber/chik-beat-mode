@@ -37,6 +37,7 @@ const PLAYGROUND_COMPOSITION_KEY = 'chik-playground-composition';
 const PLAYGROUND_HAND_SIZE_KEY = 'chik-playground-hand-size';
 const PROMPT_SIZE_KEY = 'chik-prompt-size';
 const EVENT_LOG_ENABLED_KEY = 'chik-event-log-enabled';
+const GUIDE_ON_TABLE_KEY = 'chik-guide-on-table';
 
 /** Visible-size preset for the ACTIVE prompt card (Solo's last-played card, and each
  *  Versus seat's top promptStack card). Medium is the canonical default; Extra Large
@@ -92,6 +93,24 @@ async function loadEventLogEnabled(): Promise<boolean> {
 
 function saveEventLogEnabled(on: boolean): void {
   void Preferences.set({ key: EVENT_LOG_ENABLED_KEY, value: on ? '1' : '0' }).catch(() => undefined);
+}
+
+/** Guide-on-table preference is tri-state: explicitly true, explicitly false, or "not
+ *  set" (null) — when null, the consumer falls back to a platform-aware default
+ *  (desktop = on, mobile = off). Returning null lets PlayView pick the right default
+ *  without baking the responsive check into the persistence layer. */
+async function loadGuideOnTable(): Promise<boolean | null> {
+  try {
+    const { value } = await Preferences.get({ key: GUIDE_ON_TABLE_KEY });
+    if (value === null || value === undefined) return null;
+    return value === '1' || value === 'true';
+  } catch {
+    return null;
+  }
+}
+
+function saveGuideOnTable(on: boolean): void {
+  void Preferences.set({ key: GUIDE_ON_TABLE_KEY, value: on ? '1' : '0' }).catch(() => undefined);
 }
 
 async function loadStrictPrompts(): Promise<boolean> {
@@ -223,6 +242,16 @@ export function useGame(opts: UseGameOptions = {}) {
   const setEventLogEnabled = (on: boolean) => {
     eventLogEnabled.value = on;
     saveEventLogEnabled(on);
+  };
+
+  // Guide-on-table preference (null = use platform default in the consumer). The view
+  // layer resolves null → !isMobile so desktop sees the floating guide by default and
+  // mobile keeps the table clean; an explicit user toggle overrides either way.
+  const guideOnTablePref = ref<boolean | null>(null);
+  void loadGuideOnTable().then((v) => { guideOnTablePref.value = v; });
+  const setGuideOnTable = (on: boolean) => {
+    guideOnTablePref.value = on;
+    saveGuideOnTable(on);
   };
 
   // Strict-prompts house rule (Versus only). Persisted, default OFF.
@@ -708,6 +737,8 @@ export function useGame(opts: UseGameOptions = {}) {
     setWispEnabled,
     eventLogEnabled,
     setEventLogEnabled,
+    guideOnTablePref,
+    setGuideOnTable,
     strictPrompts,
     setStrictPrompts,
     aiSkill,

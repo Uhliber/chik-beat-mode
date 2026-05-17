@@ -20,6 +20,7 @@ const props = defineProps<{
   audioMuted: boolean;
   wispEnabled: boolean;
   eventLogEnabled: boolean;
+  guideOnTable: boolean;
   strictPrompts: boolean;
   aiSkill: AiSkillLevel;
   playerCount: number;
@@ -32,6 +33,9 @@ const props = defineProps<{
   hideGameSection?: boolean;
   /** Hide Restart / Back-to-menu (e.g. from /settings already on the menu). */
   hideRoundActions?: boolean;
+  /** Hide the "How to play" action row (e.g. from /settings without an active game
+   *  that can host the guide modal). */
+  hideGuideAction?: boolean;
   promptSize?: 'small' | 'medium' | 'large' | 'xl';
   appVersion?: string;
 }>();
@@ -40,6 +44,8 @@ const emit = defineEmits<{
   (e: 'update:audio-muted', v: boolean): void;
   (e: 'update:wisp-enabled', v: boolean): void;
   (e: 'update:event-log-enabled', v: boolean): void;
+  (e: 'update:guide-on-table', v: boolean): void;
+  (e: 'show-guide'): void;
   (e: 'update:strict-prompts', v: boolean): void;
   (e: 'update:ai-skill', v: AiSkillLevel): void;
   (e: 'update:player-count', n: number): void;
@@ -276,6 +282,30 @@ const deckSufficient = computed(() => deckTotal.value >= minDeckNeeded.value);
           aria-label="Event log"
           @update:model-value="(v) => emit('update:event-log-enabled', v)"
         />
+      </SettingsRow>
+      <SettingsRow description="Show the How-to-Play card floating on the table. Off keeps the table clean — open the guide from the row below instead.">
+        <template #icon>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+          </svg>
+        </template>
+        <template #label>Guide on table</template>
+        <SettingsToggle
+          :model-value="guideOnTable"
+          aria-label="Guide on table"
+          @update:model-value="(v) => emit('update:guide-on-table', v)"
+        />
+      </SettingsRow>
+      <SettingsRow v-if="!hideGuideAction" as-button @click="emit('show-guide')">
+        <template #icon>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10" />
+            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+            <line x1="12" y1="17" x2="12.01" y2="17" />
+          </svg>
+        </template>
+        <template #label>How to play</template>
       </SettingsRow>
     </SettingsGroup>
 

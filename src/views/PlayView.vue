@@ -8,6 +8,7 @@ import GameTable from '@/components/GameTable.vue';
 import EventLog from '@/components/EventLog.vue';
 import WinnerOverlay from '@/components/WinnerOverlay.vue';
 import GuideCard from '@/components/GuideCard.vue';
+import GuideContent from '@/components/GuideContent.vue';
 import ChantTicker from '@/components/ChantTicker.vue';
 import MobileBottomSheet from '@/components/MobileBottomSheet.vue';
 import SidePanel from '@/components/SidePanel.vue';
@@ -59,6 +60,8 @@ const {
   setWispEnabled,
   eventLogEnabled,
   setEventLogEnabled,
+  guideOnTablePref,
+  setGuideOnTable,
   strictPrompts,
   setStrictPrompts,
   aiSkill,
@@ -165,6 +168,21 @@ function onSnapChooseTarget(targetSeatIndex: number) {
 
 const { isMobile } = useResponsive();
 const { fx } = useBeatAudio();
+
+/** Whether to render the How-to-Play card floating on the table. Resolves the user's
+ *  saved preference if any (true/false), otherwise falls back to the platform default —
+ *  desktop sees the floating guide, mobile keeps the table clean. The user can override
+ *  either way from Settings > Display > "Guide on table". */
+const guideOnTable = computed(() => guideOnTablePref.value ?? !isMobile.value);
+
+/** When the user picks "How to play" from Settings, we close the settings sheet and
+ *  surface the rules in a modal overlay. Independent of guideOnTable so the user can
+ *  read the rules even when the floating card is hidden. */
+const guideModalOpen = ref(false);
+function onShowGuide() {
+  closeSheet();           // closes both the mobile sheet and the desktop side panel
+  guideModalOpen.value = true;
+}
 /** Mode capability flags — branch on these instead of `mode === 'versus'` etc. so
  *  adding a new mode is a one-row edit to MODE_CAPS rather than a hunt across files. */
 const caps = computed(() => modeCaps(mode.value));
@@ -501,7 +519,7 @@ function onPauseOverlayTap() {
     </div>
 
     <GuideCard
-      v-if="isMobile && !isTutorial"
+      v-if="isMobile && !isTutorial && guideOnTable"
       mobile
       :mode="mode"
       :tutorial-completed="mode === 'solo' ? tutorialCompletion.solo : mode === 'versus' ? tutorialCompletion.versus : false"
@@ -519,7 +537,7 @@ function onPauseOverlayTap() {
     </button>
 
     <aside
-      v-if="!isMobile && !isTutorial"
+      v-if="!isMobile && !isTutorial && guideOnTable"
       class="absolute top-20 sm:top-23 left-3 sm:left-4 flex flex-col gap-5"
     >
       <div class="relative z-30">
@@ -631,6 +649,7 @@ function onPauseOverlayTap() {
         :audio-muted="audioMuted"
         :wisp-enabled="wispEnabled"
         :event-log-enabled="eventLogEnabled"
+        :guide-on-table="guideOnTable"
         :prompt-size="promptSize"
         :strict-prompts="strictPrompts"
         :ai-skill="aiSkill"
@@ -641,6 +660,8 @@ function onPauseOverlayTap() {
         @update:audio-muted="setAudioMuted"
         @update:wisp-enabled="setWispEnabled"
         @update:event-log-enabled="setEventLogEnabled"
+        @update:guide-on-table="setGuideOnTable"
+        @show-guide="onShowGuide"
         @update:prompt-size="setPromptSize"
         @update:strict-prompts="setStrictPrompts"
         @update:ai-skill="setAiSkill"
@@ -666,6 +687,7 @@ function onPauseOverlayTap() {
         :audio-muted="audioMuted"
         :wisp-enabled="wispEnabled"
         :event-log-enabled="eventLogEnabled"
+        :guide-on-table="guideOnTable"
         :prompt-size="promptSize"
         :strict-prompts="strictPrompts"
         :ai-skill="aiSkill"
@@ -676,6 +698,8 @@ function onPauseOverlayTap() {
         @update:audio-muted="setAudioMuted"
         @update:wisp-enabled="setWispEnabled"
         @update:event-log-enabled="setEventLogEnabled"
+        @update:guide-on-table="setGuideOnTable"
+        @show-guide="onShowGuide"
         @update:prompt-size="setPromptSize"
         @update:strict-prompts="setStrictPrompts"
         @update:ai-skill="setAiSkill"
@@ -719,6 +743,35 @@ function onPauseOverlayTap() {
       @quit="onTutorialQuit"
       @finish="onTutorialFinish"
     />
+
+    <!-- "How to play" modal — opened from Settings > Display > How to play. Renders the
+         same GuideContent the floating GuideCard uses, in a centred backdrop. Lets the
+         user reach the rules without the floating card cluttering the table. -->
+    <Teleport to="body">
+      <div
+        v-if="guideModalOpen"
+        class="guide-modal-backdrop"
+        role="dialog"
+        aria-modal="true"
+        aria-label="How to play"
+        @click.self="guideModalOpen = false"
+      >
+        <div class="guide-modal-card" @click.stop>
+          <GuideContent
+            :mode="mode"
+            :supports-tutorial="mode === 'solo' || mode === 'versus'"
+            :tutorial-completed="mode === 'solo' ? tutorialCompletion.solo : mode === 'versus' ? tutorialCompletion.versus : false"
+            @start-tutorial="onStartTutorialFromGuide"
+          />
+          <button
+            type="button"
+            class="guide-modal-close"
+            aria-label="Close"
+            @click="guideModalOpen = false"
+          >DONE</button>
+        </div>
+      </div>
+    </Teleport>
 
     <!-- Toast: floating pill at the bottom of the viewport. Currently used only for the
          "restart to apply new config" nudge; auto-dismisses after a few seconds. -->
@@ -850,4 +903,45 @@ function onPauseOverlayTap() {
   opacity: 0;
   transform: translate(-50%, 16px);
 }
+
+/* Guide-from-settings modal. Reuses GuideContent at near-full-screen with a coral
+ * backdrop matching the in-game palette. Close affordance is the DONE pill at the
+ * top-right; clicking the backdrop also dismisses. */
+.guide-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(20, 14, 10, 0.62);
+  padding: max(env(safe-area-inset-top, 0px), 32px) 16px max(env(safe-area-inset-bottom, 0px), 32px);
+}
+.guide-modal-card {
+  position: relative;
+  width: min(100%, 480px);
+  height: min(88dvh, 720px);
+  border-radius: 18px;
+  overflow: hidden;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45);
+  background: var(--color-cream-soft);
+}
+.guide-modal-close {
+  position: absolute;
+  top: -36px;
+  right: 8px;
+  padding: 6px 14px;
+  border-radius: 9999px;
+  border: 0;
+  background: var(--color-coral);
+  color: var(--color-cream-soft);
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+}
+.guide-modal-close:hover { background: var(--color-coral-deep); }
 </style>
