@@ -36,6 +36,7 @@ const AI_SKILL_KEY = 'chik-ai-skill';
 const PLAYGROUND_COMPOSITION_KEY = 'chik-playground-composition';
 const PLAYGROUND_HAND_SIZE_KEY = 'chik-playground-hand-size';
 const PROMPT_SIZE_KEY = 'chik-prompt-size';
+const EVENT_LOG_ENABLED_KEY = 'chik-event-log-enabled';
 
 /** Visible-size preset for the ACTIVE prompt card (Solo's last-played card, and each
  *  Versus seat's top promptStack card). Medium is the canonical default; Extra Large
@@ -77,6 +78,20 @@ async function loadWispEnabled(): Promise<boolean> {
 
 function saveWispEnabled(on: boolean): void {
   void Preferences.set({ key: WISP_ENABLED_KEY, value: on ? '1' : '0' }).catch(() => undefined);
+}
+
+async function loadEventLogEnabled(): Promise<boolean> {
+  try {
+    const { value } = await Preferences.get({ key: EVENT_LOG_ENABLED_KEY });
+    if (value === null || value === undefined) return true; // default on
+    return value === '1' || value === 'true';
+  } catch {
+    return true;
+  }
+}
+
+function saveEventLogEnabled(on: boolean): void {
+  void Preferences.set({ key: EVENT_LOG_ENABLED_KEY, value: on ? '1' : '0' }).catch(() => undefined);
 }
 
 async function loadStrictPrompts(): Promise<boolean> {
@@ -200,6 +215,14 @@ export function useGame(opts: UseGameOptions = {}) {
   const setWispEnabled = (on: boolean) => {
     wispEnabled.value = on;
     saveWispEnabled(on);
+  };
+
+  // Event log visibility (desktop sidebar + mobile sheet). Persisted, default ON.
+  const eventLogEnabled = ref(true);
+  void loadEventLogEnabled().then((on) => { eventLogEnabled.value = on; });
+  const setEventLogEnabled = (on: boolean) => {
+    eventLogEnabled.value = on;
+    saveEventLogEnabled(on);
   };
 
   // Strict-prompts house rule (Versus only). Persisted, default OFF.
@@ -683,6 +706,8 @@ export function useGame(opts: UseGameOptions = {}) {
     setAudioMuted,
     wispEnabled,
     setWispEnabled,
+    eventLogEnabled,
+    setEventLogEnabled,
     strictPrompts,
     setStrictPrompts,
     aiSkill,

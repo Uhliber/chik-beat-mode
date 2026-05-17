@@ -53,6 +53,8 @@ const {
   pendingFlights,
   wispEnabled,
   setWispEnabled,
+  eventLogEnabled,
+  setEventLogEnabled,
   strictPrompts,
   setStrictPrompts,
   aiSkill,
@@ -600,12 +602,12 @@ function onPauseOverlayTap() {
       </button>
     </div>
 
-    <aside v-if="!isMobile" class="absolute bottom-3 right-3 w-70 max-w-[80vw] z-20">
+    <aside v-if="!isMobile && eventLogEnabled" class="absolute bottom-3 right-3 w-70 max-w-[80vw] z-20">
       <EventLog :events="state.events" />
     </aside>
 
     <MobileBottomSheet
-      v-if="isMobile"
+      v-if="isMobile && eventLogEnabled"
       :open="sheetOpen === 'log'"
       title="Event Log"
       @close="closeSheet"
@@ -624,6 +626,7 @@ function onPauseOverlayTap() {
         :mode="mode"
         :audio-muted="audioMuted"
         :wisp-enabled="wispEnabled"
+        :event-log-enabled="eventLogEnabled"
         :prompt-size="promptSize"
         :strict-prompts="strictPrompts"
         :ai-skill="aiSkill"
@@ -633,6 +636,7 @@ function onPauseOverlayTap() {
         :playground-hand-size="playgroundHandSize"
         @update:audio-muted="setAudioMuted"
         @update:wisp-enabled="setWispEnabled"
+        @update:event-log-enabled="setEventLogEnabled"
         @update:prompt-size="setPromptSize"
         @update:strict-prompts="setStrictPrompts"
         @update:ai-skill="setAiSkill"
@@ -657,6 +661,7 @@ function onPauseOverlayTap() {
         :mode="mode"
         :audio-muted="audioMuted"
         :wisp-enabled="wispEnabled"
+        :event-log-enabled="eventLogEnabled"
         :prompt-size="promptSize"
         :strict-prompts="strictPrompts"
         :ai-skill="aiSkill"
@@ -666,6 +671,7 @@ function onPauseOverlayTap() {
         :playground-hand-size="playgroundHandSize"
         @update:audio-muted="setAudioMuted"
         @update:wisp-enabled="setWispEnabled"
+        @update:event-log-enabled="setEventLogEnabled"
         @update:prompt-size="setPromptSize"
         @update:strict-prompts="setStrictPrompts"
         @update:ai-skill="setAiSkill"

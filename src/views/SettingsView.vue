@@ -18,16 +18,21 @@ const { audioMuted, setMuted } = useBeatAudio();
 // Mirror useGame's wisp + strict-prompts persistence (without spinning up a Game) so the
 // toggles are the same keys, surveyed from this view too.
 const WISP_KEY = 'chik-wisp-enabled';
+const EVENT_LOG_KEY = 'chik-event-log-enabled';
 const STRICT_KEY = 'chik-strict-prompts';
 const SKILL_KEY = 'chik-ai-skill';
 const PROMPT_SIZE_KEY = 'chik-prompt-size';
 type PromptSize = 'small' | 'medium' | 'large' | 'xl';
 const wispEnabled = ref(true);
+const eventLogEnabled = ref(true);
 const strictPrompts = ref(false);
 const aiSkill = ref<1 | 2 | 3 | 4>(3);
 const promptSize = ref<PromptSize>('medium');
 void Preferences.get({ key: WISP_KEY }).then(({ value }) => {
   wispEnabled.value = value === null || value === undefined ? true : (value === '1' || value === 'true');
+}).catch(() => undefined);
+void Preferences.get({ key: EVENT_LOG_KEY }).then(({ value }) => {
+  eventLogEnabled.value = value === null || value === undefined ? true : (value === '1' || value === 'true');
 }).catch(() => undefined);
 void Preferences.get({ key: STRICT_KEY }).then(({ value }) => {
   strictPrompts.value = value === '1' || value === 'true';
@@ -42,6 +47,10 @@ void Preferences.get({ key: PROMPT_SIZE_KEY }).then(({ value }) => {
 function setWispEnabled(v: boolean) {
   wispEnabled.value = v;
   void Preferences.set({ key: WISP_KEY, value: v ? '1' : '0' }).catch(() => undefined);
+}
+function setEventLogEnabled(v: boolean) {
+  eventLogEnabled.value = v;
+  void Preferences.set({ key: EVENT_LOG_KEY, value: v ? '1' : '0' }).catch(() => undefined);
 }
 function setStrictPrompts(v: boolean) {
   strictPrompts.value = v;
@@ -88,6 +97,7 @@ function back() {
         mode="versus"
         :audio-muted="audioMuted"
         :wisp-enabled="wispEnabled"
+        :event-log-enabled="eventLogEnabled"
         :strict-prompts="strictPrompts"
         :ai-skill="aiSkill"
         :player-count="4"
@@ -97,6 +107,7 @@ function back() {
         hide-round-actions
         @update:audio-muted="setMuted"
         @update:wisp-enabled="setWispEnabled"
+        @update:event-log-enabled="setEventLogEnabled"
         @update:prompt-size="setPromptSize"
         @update:strict-prompts="setStrictPrompts"
         @update:ai-skill="setAiSkill"

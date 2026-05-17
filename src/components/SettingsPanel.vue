@@ -19,6 +19,7 @@ const props = defineProps<{
   mode: SimMode;
   audioMuted: boolean;
   wispEnabled: boolean;
+  eventLogEnabled: boolean;
   strictPrompts: boolean;
   aiSkill: AiSkillLevel;
   playerCount: number;
@@ -38,6 +39,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'update:audio-muted', v: boolean): void;
   (e: 'update:wisp-enabled', v: boolean): void;
+  (e: 'update:event-log-enabled', v: boolean): void;
   (e: 'update:strict-prompts', v: boolean): void;
   (e: 'update:ai-skill', v: AiSkillLevel): void;
   (e: 'update:player-count', n: number): void;
@@ -255,6 +257,24 @@ const deckSufficient = computed(() => deckTotal.value >= minDeckNeeded.value);
           :options="promptSizeOptions"
           aria-label="Prompt size"
           @update:model-value="(v) => emit('update:prompt-size', v as 'small' | 'medium' | 'large' | 'xl')"
+        />
+      </SettingsRow>
+      <SettingsRow description="Show the running event log (desktop sidebar / mobile sheet).">
+        <template #icon>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="8" y1="6" x2="21" y2="6" />
+            <line x1="8" y1="12" x2="21" y2="12" />
+            <line x1="8" y1="18" x2="21" y2="18" />
+            <line x1="3" y1="6" x2="3.01" y2="6" />
+            <line x1="3" y1="12" x2="3.01" y2="12" />
+            <line x1="3" y1="18" x2="3.01" y2="18" />
+          </svg>
+        </template>
+        <template #label>Event log</template>
+        <SettingsToggle
+          :model-value="eventLogEnabled"
+          aria-label="Event log"
+          @update:model-value="(v) => emit('update:event-log-enabled', v)"
         />
       </SettingsRow>
     </SettingsGroup>
