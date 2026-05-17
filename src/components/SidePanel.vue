@@ -59,7 +59,7 @@ const emit = defineEmits<{ (e: 'close'): void }>();
           </button>
         </header>
 
-        <div class="flex-1 overflow-y-auto px-3 py-4">
+        <div class="settings-scroll flex-1 overflow-y-auto px-3 py-4">
           <slot />
         </div>
       </aside>
@@ -81,4 +81,22 @@ const emit = defineEmits<{ (e: 'close'): void }>();
 }
 .done-pill:hover { background: var(--color-cream-soft); }
 .done-pill:active { transform: scale(0.96); }
+
+/* Themed scrollbar — coral-deep at low alpha against the cream panel background.
+ * Matches the muted vibe of the rest of the settings UI; the default browser scrollbar
+ * is far too bright on this surface. Covers Firefox (scrollbar-* properties) and WebKit
+ * (::-webkit-scrollbar pseudos). */
+.settings-scroll {
+  scrollbar-color: rgba(201, 84, 59, 0.32) transparent;
+  scrollbar-width: thin;
+}
+.settings-scroll::-webkit-scrollbar { width: 6px; }
+.settings-scroll::-webkit-scrollbar-track { background: transparent; }
+.settings-scroll::-webkit-scrollbar-thumb {
+  background: rgba(201, 84, 59, 0.32);
+  border-radius: 3px;
+}
+.settings-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(201, 84, 59, 0.5);
+}
 </style>

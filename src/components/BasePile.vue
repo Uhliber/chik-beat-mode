@@ -8,12 +8,19 @@ const props = defineProps<{
   cards: Card[];
   /** Optional label below the pile ("Left", "Right", or a player's name). */
   label?: string;
+  /** Optional secondary label (e.g. "Prompt") rendered as a smaller tag beneath the
+   *  primary label. Used to mark Solo's active prompt base. */
+  secondaryLabel?: string;
   /** When true, the pile glows to indicate it's the current drop target. */
   highlighted?: boolean;
   /** Card IDs that are currently flying in — hidden until landing. */
   hiddenIds?: Set<string>;
-  /** Visible card width in px. */
+  /** Visible card width in px — applied uniformly to every card in the pile so the top
+   *  card always sits cleanly atop a same-size stack (no mismatched edges). */
   cardWidth?: number;
+  /** When true, the top card is rendered cropped to its upper half with a soft fade —
+   *  used by the Extra Large promptSize so a huge card doesn't overflow the layout. */
+  topCardCropTop?: boolean;
   /** How many top cards to render. Older cards are completely hidden behind the top card. */
   visibleTop?: number;
   /** Optional dataset attribute for layout/aim queries (e.g. 'left', 'right', a seat id). */
@@ -24,6 +31,10 @@ const props = defineProps<{
 }>();
 
 const cardWidth = computed(() => props.cardWidth ?? 64);
+/** Crop ratio for the XL top card. Container reserves the top 85% of the card's natural
+ *  height; the mask fades from fully opaque at the 50% midpoint to fully transparent at
+ *  85%, landing the fade tail exactly at the container's bottom edge. */
+const TOP_CROP_RATIO = 0.85;
 /** How many cards form the "stack thickness" peek. Keep it small (3-4) so older cards
  *  don't accumulate a visible fringe; they just imply depth. */
 const visibleTop = computed(() => props.visibleTop ?? 4);
@@ -72,8 +83,14 @@ function jitterFor(id: string): { rot: number; jx: number; jy: number } {
   >
     <div
       class="relative rounded-xl ring-2 transition-all"
-      :class="highlighted ? 'ring-coral-deep shadow-[0_0_24px_6px_rgba(231,89,61,0.55)]' : 'ring-cream-soft/30'"
-      :style="{ width: cardWidth + 'px', height: (cardWidth * 1.45) + 'px' }"
+      :class="[
+        highlighted ? 'ring-coral-deep shadow-[0_0_24px_6px_rgba(231,89,61,0.55)]' : 'ring-cream-soft/30',
+        topCardCropTop ? 'pile-crop' : '',
+      ]"
+      :style="{
+        width: cardWidth + 'px',
+        height: (topCardCropTop ? cardWidth * 1.45 * TOP_CROP_RATIO : cardWidth * 1.45) + 'px',
+      }"
     >
       <div
         v-if="visible.length === 0"
@@ -86,12 +103,9 @@ function jitterFor(id: string): { rot: number; jx: number; jy: number } {
         Newer cards layer IN FRONT (higher z-index). Each older card is offset DOWN-RIGHT
         by a tiny amount (PEEK_PX × layer depth) so its bottom-right edge peeks out from
         beneath the newest. The top card has zero offset; you only see card thickness, not
-        a fanned-out spread.
+        a fanned-out spread. The TOP card may use a different width (topCardWidth) to
+        spotlight the active prompt.
       -->
-      <!-- Each card gets a base stack-offset (down-right by PEEK_PX * layer depth) PLUS a
-           deterministic per-card jitter (rotation + sub-px position) so the pile reads as
-           a hand-thrown stack instead of a perfectly machined deck. The CardView's root is
-           position:relative — we wrap it in an absolute container so positioning sticks. -->
       <div
         v-for="(c, i) in visible"
         :key="c.id"
@@ -117,16 +131,37 @@ function jitterFor(id: string): { rot: number; jx: number; jy: number } {
         </div>
       </div>
     </div>
-    <div
-      v-if="label"
-      class="font-extrabold uppercase tracking-widest text-[10px] text-cream-soft/85"
-    >
-      {{ label }}
+    <div v-if="label || secondaryLabel" class="flex flex-col items-center gap-0.5">
+      <div
+        v-if="label"
+        class="font-extrabold uppercase tracking-widest text-[10px] text-cream-soft/85"
+      >
+        {{ label }}
+      </div>
+      <div
+        v-if="secondaryLabel"
+        class="font-bold uppercase tracking-[0.18em] text-[9px] text-coral-deep/80"
+      >
+        {{ secondaryLabel }}
+      </div>
     </div>
   </div>
 </template>
 
 <style scoped>
+/* XL prompt: clip and fade the WHOLE pile (not just the top card) so cards stacked
+ * behind don't bleed through the fade.
+ *  - overflow:hidden cuts every card at the container's bottom edge (= 85% of the
+ *    card's natural height).
+ *  - The mask fades from fully opaque at the card's 50% midpoint down to transparent
+ *    at the container edge. Container height is 85% of card height, so the 50% card
+ *    mark sits at ~58.8% of container height.
+ * Every card in the pile (top + the stack underneath) inherits this fade uniformly. */
+.pile-crop {
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, black 0%, black 58.8%, transparent 100%);
+          mask-image: linear-gradient(to bottom, black 0%, black 58.8%, transparent 100%);
+}
 .last-played-pulse {
   box-shadow:
     0 0 0 3px rgba(252, 246, 230, 0.92),

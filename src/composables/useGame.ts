@@ -5,6 +5,7 @@ import type { Card } from '@/game/Card';
 import { Game } from '@/game/Game';
 import { SimulationController, type SimStatus, type SimMode, type AiSkillLevel } from '@/game/SimulationController';
 import type { BaseSide, CardPrompt, ChantWord, GameEvent, PlayerId, PlaygroundComposition, SoloAction, VersusAction } from '@/game/types';
+import { modeCaps } from '@/game/modes';
 import { useBeatAudio } from './useBeatAudio';
 
 /**
@@ -34,6 +35,15 @@ const STRICT_PROMPTS_KEY = 'chik-strict-prompts';
 const AI_SKILL_KEY = 'chik-ai-skill';
 const PLAYGROUND_COMPOSITION_KEY = 'chik-playground-composition';
 const PLAYGROUND_HAND_SIZE_KEY = 'chik-playground-hand-size';
+const PROMPT_SIZE_KEY = 'chik-prompt-size';
+
+/** Visible-size preset for the ACTIVE prompt card (Solo's last-played card, and each
+ *  Versus seat's top promptStack card). Medium is the canonical default; Extra Large
+ *  crops the bottom half of the card with a soft mask so it dominates the table without
+ *  overflowing layouts. */
+export type PromptSize = 'small' | 'medium' | 'large' | 'xl';
+const DEFAULT_PROMPT_SIZE: PromptSize = 'medium';
+const PROMPT_SIZE_VALUES: readonly PromptSize[] = ['small', 'medium', 'large', 'xl'] as const;
 
 const DEFAULT_PLAYGROUND_COMPOSITION: PlaygroundComposition = {
   right: 14, left: 14, free: 7, stop: 7, snap: 7, fetch: 7,
@@ -128,6 +138,21 @@ function savePlaygroundHandSize(n: number): void {
   void Preferences.set({ key: PLAYGROUND_HAND_SIZE_KEY, value: String(n) }).catch(() => undefined);
 }
 
+async function loadPromptSize(): Promise<PromptSize> {
+  try {
+    const { value } = await Preferences.get({ key: PROMPT_SIZE_KEY });
+    if (value && (PROMPT_SIZE_VALUES as readonly string[]).includes(value)) {
+      return value as PromptSize;
+    }
+    return DEFAULT_PROMPT_SIZE;
+  } catch {
+    return DEFAULT_PROMPT_SIZE;
+  }
+}
+function savePromptSize(v: PromptSize): void {
+  void Preferences.set({ key: PROMPT_SIZE_KEY, value: v }).catch(() => undefined);
+}
+
 export interface UseGameOptions {
   initialMode?: SimMode;
 }
@@ -201,18 +226,39 @@ export function useGame(opts: UseGameOptions = {}) {
     if (controller.value) controller.value.setAiSkill(level);
   };
 
-  // Playground deck composition + hand size (only relevant in 'playground' mode).
-  // Persisted via Capacitor Preferences, default = canonical 56-card / 7-hand setup.
+  // Prompt-size display preference. Live — applies to the current round without restart.
+  const promptSize = ref<PromptSize>(DEFAULT_PROMPT_SIZE);
+  void loadPromptSize().then((v) => { promptSize.value = v; });
+  const setPromptSize = (v: PromptSize) => {
+    promptSize.value = v;
+    savePromptSize(v);
+  };
+
+  // Custom-deck state (used by any mode whose caps.hasCustomDeck === true; only
+  // 'playground' today). Persisted via Capacitor Preferences; default = canonical 56-card.
   const playgroundComposition = ref<PlaygroundComposition>({ ...DEFAULT_PLAYGROUND_COMPOSITION });
   const playgroundHandSize = ref<number>(DEFAULT_PLAYGROUND_HAND_SIZE);
-  void loadPlaygroundComposition().then((c) => { playgroundComposition.value = c; });
-  void loadPlaygroundHandSize().then((n) => { playgroundHandSize.value = n; });
+  /** Re-run initGame iff the current mode actually consumes the custom-deck knobs
+   *  AND we're idle (so we don't yank the rug out from under an in-progress round). */
+  const rebuildIfCustomDeckActive = () => {
+    if (modeCaps(mode.value).hasCustomDeck && state.status === 'idle') initGame();
+  };
+  // Async preference loads — if the game was initialized with defaults before these
+  // resolve, rebuild so the persisted composition/hand size take effect.
+  void loadPlaygroundComposition().then((c) => {
+    playgroundComposition.value = c;
+    rebuildIfCustomDeckActive();
+  });
+  void loadPlaygroundHandSize().then((n) => {
+    playgroundHandSize.value = n;
+    rebuildIfCustomDeckActive();
+  });
   /** Updating either of these while idle re-runs initGame so the new deck is reflected
    *  on the table without an explicit Restart (matches the existing playerCount pattern). */
   const setPlaygroundComposition = (comp: PlaygroundComposition) => {
     playgroundComposition.value = { ...comp };
     savePlaygroundComposition(comp);
-    if (mode.value === 'playground' && state.status === 'idle') initGame();
+    rebuildIfCustomDeckActive();
   };
   const setPlaygroundPromptCount = (prompt: CardPrompt, count: number) => {
     setPlaygroundComposition({ ...playgroundComposition.value, [prompt]: count });
@@ -221,7 +267,16 @@ export function useGame(opts: UseGameOptions = {}) {
     const clamped = Math.max(3, Math.min(14, Math.round(n)));
     playgroundHandSize.value = clamped;
     savePlaygroundHandSize(clamped);
-    if (mode.value === 'playground' && state.status === 'idle') initGame();
+    rebuildIfCustomDeckActive();
+  };
+  /** Reset both composition and hand size to the canonical v1.0 Versus defaults. */
+  const resetPlaygroundDefaults = () => {
+    const defaultComp = { ...DEFAULT_PLAYGROUND_COMPOSITION };
+    playgroundComposition.value = defaultComp;
+    playgroundHandSize.value = DEFAULT_PLAYGROUND_HAND_SIZE;
+    savePlaygroundComposition(defaultComp);
+    savePlaygroundHandSize(DEFAULT_PLAYGROUND_HAND_SIZE);
+    rebuildIfCustomDeckActive();
   };
 
   /**
@@ -386,7 +441,7 @@ export function useGame(opts: UseGameOptions = {}) {
         break;
       }
       case 'soloPenalty':
-        if (mode.value === 'solo') {
+        if (modeCaps(mode.value).isTimeAttack) {
           soloPenaltyMs.value += e.penaltyMs;
           beatAudio.fx('fail');
         }
@@ -404,11 +459,12 @@ export function useGame(opts: UseGameOptions = {}) {
         pendingSnapDraw.value = null;
         break;
       case 'versusStrictPenalty':
-        // The penalty drawer hears the same fail sting Solo penalties use.
-        if (isHumanEvent(e.playerId)) beatAudio.fx('fail');
+        // Same fail sting Solo penalties use — fires for ANY player so the human
+        // can hear when an AI fumbles too (otherwise penalties are easy to miss).
+        beatAudio.fx('fail');
         break;
       case 'winner':
-        if (mode.value === 'solo') {
+        if (modeCaps(mode.value).isTimeAttack) {
           stopSoloTimer();
           const final = soloElapsedMs.value + soloPenaltyMs.value;
           soloLastFinalMs.value = final;
@@ -430,7 +486,7 @@ export function useGame(opts: UseGameOptions = {}) {
   const handleStatus = (s: SimStatus) => {
     state.status = s;
     state.version++;
-    if (mode.value === 'solo') {
+    if (modeCaps(mode.value).isTimeAttack) {
       if (s === 'running') startSoloTimer();
       else stopSoloTimer();
     }
@@ -465,37 +521,41 @@ export function useGame(opts: UseGameOptions = {}) {
     game.value = g;
     controller.value = ctrl;
 
-    if (mode.value === 'solo') {
-      g.setupSolo();
-    } else if (mode.value === 'playground') {
-      // Playground uses the same human/AI seat assignment as Versus — only the deck
-      // and hand size differ at setup time. setupPlayground throws on invalid combos
-      // (e.g. Free < 7 or deck too small for players × handSize); we surface that as
-      // an idle game with no players, which the UI handles via the central Start CTA
-      // (user opens Settings, adjusts composition, restart).
-      try {
-        g.setupPlayground({
-          playerCount: playerCount.value,
-          handSize: playgroundHandSize.value,
-          composition: playgroundComposition.value,
-        });
-        for (let i = 0; i < g.players.length; i++) {
-          ctrl.setPlayerHuman(g.players[i].id, i === 0);
-        }
-        activeSeatIndex.value = g.activeSeatIndex;
-      } catch (err) {
-        // Composition is misconfigured for the current player/hand combo. The game stays
-        // in resetState (no players, no deck); the UI shows the central Start CTA but
-        // hitting Start will fail until composition is fixed via Settings.
-        console.warn('[playground] setup rejected:', (err as Error).message);
-      }
-    } else {
-      g.setupVersus(playerCount.value);
-      // Seat 0 is the human in Versus; everyone else AI.
+    // Per-mode setup dispatch. This is intentionally a switch on mode identity (not
+    // capability flags) because each mode's setup signature differs — buildSoloDeck
+    // takes nothing, setupVersus takes playerCount, setupPlayground takes the custom
+    // PlaygroundSetup. Adding a new mode = add a case here and a row to MODE_CAPS.
+    const assignTurnBasedSeats = () => {
+      // Seat 0 is the human; everyone else is AI.
       for (let i = 0; i < g.players.length; i++) {
         ctrl.setPlayerHuman(g.players[i].id, i === 0);
       }
       activeSeatIndex.value = g.activeSeatIndex;
+    };
+    switch (mode.value) {
+      case 'solo':
+        g.setupSolo();
+        break;
+      case 'playground':
+        // setupPlayground throws on invalid combos (Free < 7, deck too small for
+        // players × handSize). We surface that as an idle game with no players;
+        // the UI shows the central Start CTA but hitting Start fails until the
+        // composition is fixed via Settings.
+        try {
+          g.setupPlayground({
+            playerCount: playerCount.value,
+            handSize: playgroundHandSize.value,
+            composition: playgroundComposition.value,
+          });
+          assignTurnBasedSeats();
+        } catch (err) {
+          console.warn('[playground] setup rejected:', (err as Error).message);
+        }
+        break;
+      case 'versus':
+        g.setupVersus(playerCount.value);
+        assignTurnBasedSeats();
+        break;
     }
 
     // Reactive proxy hand / promptStack / drawPile / soloBases so in-place mutations trigger renders.
@@ -512,7 +572,7 @@ export function useGame(opts: UseGameOptions = {}) {
 
   const start = () => {
     controller.value.start();
-    if (mode.value === 'solo') startSoloTimer();
+    if (modeCaps(mode.value).isTimeAttack) startSoloTimer();
   };
   const pause = () => controller.value.pause();
   const resume = () => controller.value.resume();
@@ -530,12 +590,13 @@ export function useGame(opts: UseGameOptions = {}) {
     triggerRef(game);
   };
 
-  /** Solo player input. */
+  /** Solo player input. Time-attack modes auto-start on the first action; everything
+   *  else requires an explicit Start (controller already running). */
   const submitSoloAction = (action: SoloAction) => {
-    const isSoloIdleStart = mode.value === 'solo' && state.status === 'idle';
-    if (state.status !== 'running' && !isSoloIdleStart) return;
+    const startsOnFirstAction = modeCaps(mode.value).isTimeAttack && state.status === 'idle';
+    if (state.status !== 'running' && !startsOnFirstAction) return;
     beatAudio.fx('tap');
-    if (isSoloIdleStart) start();
+    if (startsOnFirstAction) start();
     game.value.submitSoloAction(action);
   };
 
@@ -558,10 +619,12 @@ export function useGame(opts: UseGameOptions = {}) {
 
   const setMode = (m: SimMode) => {
     if (mode.value === m) return;
-    if (m === 'solo') {
+    const wasSingleSeat = modeCaps(mode.value).isSingleSeat;
+    const isSingleSeat = modeCaps(m).isSingleSeat;
+    if (isSingleSeat && !wasSingleSeat) {
       lastNonSoloPlayerCount = playerCount.value;
       playerCount.value = 1;
-    } else if (mode.value === 'solo') {
+    } else if (!isSingleSeat && wasSingleSeat) {
       playerCount.value = lastNonSoloPlayerCount;
     }
     mode.value = m;
@@ -624,11 +687,14 @@ export function useGame(opts: UseGameOptions = {}) {
     setStrictPrompts,
     aiSkill,
     setAiSkill,
+    promptSize,
+    setPromptSize,
     playgroundComposition,
     setPlaygroundComposition,
     setPlaygroundPromptCount,
     playgroundHandSize,
     setPlaygroundHandSize,
+    resetPlaygroundDefaults,
     pendingSnapDraw,
     submitSnapPlay,
     submitSoloAction,

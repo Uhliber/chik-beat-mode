@@ -15,6 +15,7 @@ import type { Card } from '@/game/Card';
 import type { Player } from '@/game/Player';
 import type { BaseSide, ChantWord, GameEvent } from '@/game/types';
 import type { SimMode } from '@/game/SimulationController';
+import { modeCaps } from '@/game/modes';
 
 const props = defineProps<{
   game: Game;
@@ -37,6 +38,9 @@ const props = defineProps<{
   pendingSnapLegalTargets?: number[];
   pendingSnapInteractive?: boolean;
   pendingSnapAiPick?: number | null;
+  /** User's prompt-size preference. Threads through to PlayerSeat (Versus) and the Solo
+   *  BasesArea so the active prompt scales to taste. */
+  promptSize?: 'small' | 'medium' | 'large' | 'xl';
 }>();
 
 const emit = defineEmits<{
@@ -48,18 +52,47 @@ const emit = defineEmits<{
 
 const { isMobile, width: viewportW, height: viewportH } = useResponsive();
 
+/** Mode capability flags. Branch on these instead of `mode === 'solo'` etc. so new
+ *  modes only need a row in MODE_CAPS, not a hunt across this component. */
+const caps = computed(() => modeCaps(props.mode));
+
 // ---- Seat layout ----
 const radius = computed(() => {
-  if (props.mode === 'solo') return 0;
+  if (caps.value.isSingleSeat) return 0;
   const d = Math.min(viewportW.value, viewportH.value);
   return Math.max(140, Math.round(d * 0.32));
 });
 const seatLayoutMode = computed(() => {
-  if (props.mode === 'solo') return 'solo' as const;
+  if (caps.value.isSingleSeat) return 'solo' as const;
   return isMobile.value ? ('semicircle' as const) : ('radial' as const);
 });
 const playerCount = computed(() => props.game.players.length);
 const { seats } = useSeatLayout(playerCount, radius, seatLayoutMode);
+
+/** Solo bases always render at this fixed width regardless of the promptSize setting —
+ *  the user's promptSize preference only affects the CLONE that surfaces behind the
+ *  human's hand (see soloHumanCloneCard below). Keeping the table bases at a stable
+ *  size leaves the centre of the table balanced against the deck. */
+const SOLO_BASE_CARD_WIDTH = 64;
+/** Solo XL: render a CLONE of the active prompt above the human's hand (mirroring how
+ *  Versus renders the human's promptStack). Lookup walks both Solo bases to find the
+ *  card whose id matches the engine's `soloActiveCardId`. Returns null whenever a clone
+ *  shouldn't be shown — non-Solo modes, non-XL sizes, or no active prompt yet.
+ *
+ *  Reactivity note: `game.soloActiveCardId` is a plain field on the Game class, not a
+ *  reactive proxy, so reads of it aren't tracked. Touching the .length of both reactive
+ *  `soloBases` arrays makes this computed re-evaluate on every slam (which is exactly
+ *  when soloActiveCardId can change), so the clone follows the most recent play. */
+const soloHumanCloneCard = computed(() => {
+  if (props.mode !== 'solo' || (props.promptSize ?? 'medium') !== 'xl') return null;
+  void props.game.soloBases.left.length;
+  void props.game.soloBases.right.length;
+  const id = props.game.soloActiveCardId;
+  if (!id) return null;
+  const left = props.game.soloBases.left.find((c) => c.id === id);
+  if (left) return left;
+  return props.game.soloBases.right.find((c) => c.id === id) ?? null;
+});
 
 // ---- Drag-aim state ----
 interface AimState {
@@ -105,7 +138,7 @@ const highlightedId = computed<string | ''>(() => {
 
 /** Sync the BasesArea highlight ring to whichever solo target is currently picked. */
 watch(highlightedId, (id) => {
-  if (props.mode !== 'solo') {
+  if (!caps.value.usesSoloBases) {
     highlightedSoloSide.value = null;
     return;
   }
@@ -157,13 +190,13 @@ function snapshotVersusTargets(card: Card, seatIdx: number): WheelTarget[] {
 }
 
 function onAimStart(payload: { card: Card; el: HTMLElement; clientX: number; clientY: number; player: Player }) {
-  const targets = props.mode === 'solo'
+  const targets = caps.value.usesSoloBases
     ? snapshotSoloTargets()
     : snapshotVersusTargets(payload.card, payload.player.seatIndex);
 
-  // Versus: if no legal targets exist for this card, swallow the press silently —
-  // there's nowhere to throw the card, so don't even open the aim ring.
-  if (props.mode === 'versus' && targets.length === 0) return;
+  // Turn-based modes: if no legal targets exist for this card, swallow the press
+  // silently — there's nowhere to throw, so don't even open the aim ring.
+  if (caps.value.isTurnBased && targets.length === 0) return;
 
   aim.value = {
     card: payload.card,
@@ -201,7 +234,7 @@ function onAimUp() {
   if (!a) return;
   const dist = Math.hypot(a.cursorX - a.startX, a.cursorY - a.startY);
   if (dist < AIM_THRESHOLD_PX || !hid) return; // cancel
-  if (props.mode === 'solo') {
+  if (caps.value.usesSoloBases) {
     if (hid === 'left' || hid === 'right') {
       emit('solo-slam', { cardId: a.card.id, baseSide: hid });
     }
@@ -330,10 +363,11 @@ function dispatchFlight(spec: FlightSpec): void {
          context. Everything else paints on top. -->
     <TableSurface />
 
-    <!-- 2. Turn-indicator wisp (Versus only). Paints above the tabletop but BEFORE the
-         seats / bases (source-order stacking) so the pill text & cards remain readable. -->
+    <!-- 2. Turn-indicator wisp (Versus + Playground — anything turn-based). Paints
+         above the tabletop but BEFORE the seats / bases (source-order stacking) so
+         the pill text & cards remain readable. -->
     <TurnWisp
-      v-if="mode === 'versus'"
+      v-if="caps.isTurnBased"
       :seat-index="activeSeatIndex"
       :enabled="wispEnabled ?? true"
     />
@@ -348,12 +382,13 @@ function dispatchFlight(spec: FlightSpec): void {
         :highlighted-side="highlightedSoloSide"
         :hidden-ids="inFlightIds"
         :last-played-card-id="lastPlayedCardId"
+        :prompt-card-width="SOLO_BASE_CARD_WIDTH"
         @draw-deck-click="emit('draw-deck-click')"
       />
     </div>
 
-    <!-- Versus: opponent seats arrayed around the table -->
-    <template v-if="mode === 'versus'">
+    <!-- Opponent seats arrayed around the table (only multi-seat modes). -->
+    <template v-if="!caps.isSingleSeat">
       <div
         v-for="(p, i) in game.players"
         :key="p.id"
@@ -374,6 +409,7 @@ function dispatchFlight(spec: FlightSpec): void {
           :shout-key="shouts[p.seatIndex]?.key ?? 0"
           :fresh-card-ids="freshCardIds"
           :compact="isMobile"
+          :prompt-size="promptSize"
         />
       </div>
     </template>
@@ -386,12 +422,14 @@ function dispatchFlight(spec: FlightSpec): void {
         v-if="humanSeat"
         :player="humanSeat"
         :is-human-seat="true"
-        :is-active="mode === 'versus' ? activeSeatIndex === humanSeat.seatIndex : true"
+        :is-active="caps.isTurnBased ? activeSeatIndex === humanSeat.seatIndex : true"
         :hidden-ids="inFlightIds"
         :last-played-card-id="lastPlayedCardId"
         :shouted="shouts[humanSeat.seatIndex]?.word ?? null"
         :shout-key="shouts[humanSeat.seatIndex]?.key ?? 0"
         :fresh-card-ids="freshCardIds"
+        :prompt-size="promptSize"
+        :extra-prompt-card="soloHumanCloneCard"
         @card-aim-start="onAimStart"
       />
     </div>
@@ -410,11 +448,10 @@ function dispatchFlight(spec: FlightSpec): void {
       :has-dragged="aim.hasDragged"
     />
 
-    <!-- Snap-drawn overlay (Versus only). Inline, anchored to the deck — replaces the
-         previous modal chooser. Shown for both human and AI pending snaps; the chips
-         are interactive only for the human's pending snap. -->
+    <!-- Snap-drawn overlay — inline, anchored to the deck. Shown in any mode that
+         uses prompt stacks (Snap mechanic only exists with the prompt system). -->
     <SnapDrawnOverlay
-      v-if="mode === 'versus' && pendingSnapCard"
+      v-if="caps.usesPromptStacks && pendingSnapCard"
       :card="pendingSnapCard"
       :players="game.players"
       :holder-seat-index="pendingSnapHolderSeat ?? -1"

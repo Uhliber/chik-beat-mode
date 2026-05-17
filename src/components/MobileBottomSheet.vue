@@ -114,10 +114,29 @@ watch(
         </div>
 
         <!-- Body — scrollable. -->
-        <div class="flex-1 overflow-y-auto px-4 pb-4" style="touch-action: pan-y;">
+        <div class="sheet-scroll flex-1 overflow-y-auto px-4 pb-4" style="touch-action: pan-y;">
           <slot />
         </div>
       </div>
     </Transition>
   </Teleport>
 </template>
+
+<style scoped>
+/* Themed scrollbar — coral-deep at low alpha against the cream sheet background, so it
+ * blends with the rest of the settings UI instead of showing the browser's default
+ * bright-white scrollbar. Covers Firefox + WebKit. */
+.sheet-scroll {
+  scrollbar-color: rgba(201, 84, 59, 0.32) transparent;
+  scrollbar-width: thin;
+}
+.sheet-scroll::-webkit-scrollbar { width: 6px; }
+.sheet-scroll::-webkit-scrollbar-track { background: transparent; }
+.sheet-scroll::-webkit-scrollbar-thumb {
+  background: rgba(201, 84, 59, 0.32);
+  border-radius: 3px;
+}
+.sheet-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(201, 84, 59, 0.5);
+}
+</style>

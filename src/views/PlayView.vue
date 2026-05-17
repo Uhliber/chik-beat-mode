@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import type { GameEvent, BaseSide } from '@/game/types';
+import type { GameEvent, BaseSide, CardPrompt, PlaygroundComposition } from '@/game/types';
 import type { SimMode } from '@/game/SimulationController';
+import { modeCaps } from '@/game/modes';
 import GameTable from '@/components/GameTable.vue';
 import EventLog from '@/components/EventLog.vue';
 import WinnerOverlay from '@/components/WinnerOverlay.vue';
@@ -57,6 +58,9 @@ const {
   setPlaygroundPromptCount,
   playgroundHandSize,
   setPlaygroundHandSize,
+  resetPlaygroundDefaults,
+  promptSize,
+  setPromptSize,
   pendingSnapDraw,
   submitSnapPlay,
   initGame,
@@ -110,6 +114,9 @@ function onSnapChooseTarget(targetSeatIndex: number) {
 
 const { isMobile } = useResponsive();
 const { fx } = useBeatAudio();
+/** Mode capability flags — branch on these instead of `mode === 'versus'` etc. so
+ *  adding a new mode is a one-row edit to MODE_CAPS rather than a hunt across files. */
+const caps = computed(() => modeCaps(mode.value));
 
 const winnerId = computed(() => game.value.winnerId);
 
@@ -133,7 +140,7 @@ let penaltyBubbleId = 0;
 watch(
   () => state.events.length,
   (n, prev) => {
-    if (mode.value !== 'solo' || n <= (prev ?? 0)) return;
+    if (!caps.value.isTimeAttack || n <= (prev ?? 0)) return;
     const ev = state.events[state.events.length - 1] as GameEvent | undefined;
     if (ev?.kind !== 'soloPenalty') return;
     const id = ++penaltyBubbleId;
@@ -161,7 +168,7 @@ const onVersusPlay = (payload: { cardId: string; targetSeatIndex: number }) => {
 };
 
 const onDrawDeckClick = () => {
-  if (mode.value === 'solo') {
+  if (!caps.value.isTurnBased) {
     submitSoloAction({ type: 'draw' });
   } else {
     const human = game.value.players.find((p) => !p.isAI);
@@ -190,6 +197,53 @@ function onSettingsRestart() {
   closeSheet();
   onRestart();
 }
+
+// Toast for "settings change won't apply until next round". Some settings — player count
+// and the Playground deck knobs — only take effect on initGame(); the engine auto-runs
+// initGame() when the round is idle (see useGame: rebuildIfCustomDeckActive + the
+// playerCount watch below), so during idle there's nothing to nag about. For running or
+// paused rounds, we snapshot these on settings open and show a toast on close if any
+// changed.
+const toastMessage = ref<string | null>(null);
+let toastTimer: number | null = null;
+function showToast(msg: string, durationMs = 3500) {
+  toastMessage.value = msg;
+  if (toastTimer !== null) clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => {
+    toastMessage.value = null;
+    toastTimer = null;
+  }, durationMs);
+}
+
+interface RestartSnapshot {
+  playerCount: number;
+  handSize: number;
+  composition: PlaygroundComposition;
+}
+let settingsSnapshot: RestartSnapshot | null = null;
+const COMPOSITION_KEYS: CardPrompt[] = ['right', 'left', 'free', 'stop', 'snap', 'fetch'];
+watch(settingsOpen, (isOpen) => {
+  if (isOpen) {
+    settingsSnapshot = {
+      playerCount: playerCount.value,
+      handSize: playgroundHandSize.value,
+      composition: { ...playgroundComposition.value },
+    };
+    return;
+  }
+  // Closing the panel — diff against the snapshot.
+  if (!settingsSnapshot) return;
+  const snap = settingsSnapshot;
+  settingsSnapshot = null;
+  if (state.status === 'idle' || state.status === 'ended') return; // auto-applies, no nag
+  const changed =
+    playerCount.value !== snap.playerCount ||
+    playgroundHandSize.value !== snap.handSize ||
+    COMPOSITION_KEYS.some((k) => playgroundComposition.value[k] !== snap.composition[k]);
+  if (changed) {
+    showToast('Restart the round to apply the new configuration.');
+  }
+});
 
 const primaryLabel = computed(() => {
   switch (state.status) {
@@ -244,7 +298,7 @@ function onPauseOverlayTap() {
             class="h-9 sm:h-11 w-auto"
           />
           <div class="font-subtitle text-cream-soft/85 text-xs sm:text-sm font-medium">
-            Visual Simulation · v1.0
+            by Halohalo Games
           </div>
         </div>
       </div>
@@ -340,7 +394,7 @@ function onPauseOverlayTap() {
 
       <div class="flex items-center gap-1 shrink-0">
         <button
-          v-if="mode === 'versus'"
+          v-if="caps.isTurnBased"
           type="button"
           aria-label="Event log"
           class="w-9 h-9 rounded-full bg-cream-soft/95 ring-1 ring-black/10 flex items-center justify-center text-coral-deep"
@@ -380,10 +434,14 @@ function onPauseOverlayTap() {
       </div>
     </header>
 
+    <!-- Versus / Playground chant ticker — top-centre on both mobile and desktop. Solo
+         has its own ticker inline with the timer (see below). The vertical offset is
+         taller on desktop (sits below the header) and shorter on mobile (where the
+         header is more compact). -->
     <div
-      v-if="isMobile && mode !== 'solo'"
+      v-if="!caps.isSingleSeat"
       class="absolute left-1/2 -translate-x-1/2 z-[20] pointer-events-none"
-      style="top: 56px;"
+      :style="{ top: isMobile ? '56px' : '20px' }"
     >
       <ChantTicker
         :last-played-pos="lastPlayedVirtualPos"
@@ -409,25 +467,19 @@ function onPauseOverlayTap() {
       <div class="relative z-30">
         <GuideCard :mode="mode" />
       </div>
-      <div v-if="mode !== 'solo'" class="relative z-[20] pointer-events-none">
-        <ChantTicker
-          :last-played-pos="lastPlayedVirtualPos"
-          :next-pos="chantVirtualPos"
-        />
-      </div>
     </aside>
 
     <!-- Solo timer HUD -->
     <div
-      v-if="mode === 'solo'"
+      v-if="caps.isTimeAttack"
       class="absolute left-1/2 -translate-x-1/2 z-[20] flex flex-col items-center gap-2 pointer-events-none"
       :style="{ top: isMobile ? '120px' : '20px' }"
     >
       <div
-        class="relative flex items-baseline gap-3 px-5 py-2 rounded-2xl bg-cream-soft/95 shadow-lg ring-1 ring-black/10"
+        class="relative flex items-center gap-3 px-5 py-2 rounded-2xl bg-cream-soft/95 shadow-lg ring-1 ring-black/10"
       >
-        <span class="solo-timer text-coral-deep">{{ soloDisplay }}</span>
-        <span class="flex flex-col items-start leading-tight">
+        <span class="solo-timer text-coral-deep leading-none">{{ soloDisplay }}</span>
+        <span class="flex flex-col items-start justify-center leading-tight">
           <span class="text-[10px] font-bold uppercase tracking-widest text-stone-500">Best</span>
           <span class="solo-best text-stone-700">{{ soloBestDisplay }}</span>
         </span>
@@ -462,6 +514,7 @@ function onPauseOverlayTap() {
         :pending-snap-legal-targets="pendingSnapLegalTargets"
         :pending-snap-interactive="pendingSnapIsHuman"
         :pending-snap-ai-pick="pendingSnapAiPick"
+        :prompt-size="promptSize"
         @solo-slam="onSoloSlam"
         @versus-play="onVersusPlay"
         @draw-deck-click="onDrawDeckClick"
@@ -478,7 +531,7 @@ function onPauseOverlayTap() {
          flight, so it never covers the deck/cards mid-game. The small header button
          stays available too; this one is the prominent "begin" affordance. -->
     <div
-      v-if="mode === 'versus' && !winnerId && (state.status === 'idle' || state.status === 'ended')"
+      v-if="caps.isTurnBased && !winnerId && (state.status === 'idle' || state.status === 'ended')"
       class="absolute inset-0 z-30 flex items-center justify-center pointer-events-none font-subtitle"
     >
       <button
@@ -514,6 +567,7 @@ function onPauseOverlayTap() {
         :mode="mode"
         :audio-muted="audioMuted"
         :wisp-enabled="wispEnabled"
+        :prompt-size="promptSize"
         :strict-prompts="strictPrompts"
         :ai-skill="aiSkill"
         :player-count="playerCount"
@@ -522,12 +576,14 @@ function onPauseOverlayTap() {
         :playground-hand-size="playgroundHandSize"
         @update:audio-muted="setAudioMuted"
         @update:wisp-enabled="setWispEnabled"
+        @update:prompt-size="setPromptSize"
         @update:strict-prompts="setStrictPrompts"
         @update:ai-skill="setAiSkill"
         @update:player-count="setPlayerCount"
         @update:speed="setSpeed"
         @update:playground-prompt-count="(p) => setPlaygroundPromptCount(p.prompt, p.count)"
         @update:playground-hand-size="setPlaygroundHandSize"
+        @reset-playground-defaults="resetPlaygroundDefaults"
         @restart="onSettingsRestart"
         @back-to-menu="onSettingsBackToMenu"
       />
@@ -544,6 +600,7 @@ function onPauseOverlayTap() {
         :mode="mode"
         :audio-muted="audioMuted"
         :wisp-enabled="wispEnabled"
+        :prompt-size="promptSize"
         :strict-prompts="strictPrompts"
         :ai-skill="aiSkill"
         :player-count="playerCount"
@@ -552,12 +609,14 @@ function onPauseOverlayTap() {
         :playground-hand-size="playgroundHandSize"
         @update:audio-muted="setAudioMuted"
         @update:wisp-enabled="setWispEnabled"
+        @update:prompt-size="setPromptSize"
         @update:strict-prompts="setStrictPrompts"
         @update:ai-skill="setAiSkill"
         @update:player-count="setPlayerCount"
         @update:speed="setSpeed"
         @update:playground-prompt-count="(p) => setPlaygroundPromptCount(p.prompt, p.count)"
         @update:playground-hand-size="setPlaygroundHandSize"
+        @reset-playground-defaults="resetPlaygroundDefaults"
         @restart="onSettingsRestart"
         @back-to-menu="onSettingsBackToMenu"
       />
@@ -565,15 +624,25 @@ function onPauseOverlayTap() {
 
     <WinnerOverlay
       :winner-id="winnerId"
-      :title="mode === 'solo' ? 'Cleared!' : undefined"
-      :headline="mode === 'solo' && soloLastFinalMs !== null ? formatSoloTime(soloLastFinalMs) : undefined"
-      :subtitle="mode === 'solo' ? (soloIsNewBest ? 'New best!' : `Best ${soloBestDisplay}`) : undefined"
+      :title="caps.isTimeAttack ? 'Cleared!' : undefined"
+      :headline="caps.isTimeAttack && soloLastFinalMs !== null ? formatSoloTime(soloLastFinalMs) : undefined"
+      :subtitle="caps.isTimeAttack ? (soloIsNewBest ? 'New best!' : `Best ${soloBestDisplay}`) : undefined"
       :subtitle-tone="soloIsNewBest ? 'celebrate' : 'info'"
       @restart="onRestart"
     />
 
     <!-- Snap-drawn surfaces inline on the deck via SnapDrawnOverlay (mounted INSIDE
          GameTable above) — replaces the previous modal chooser. -->
+
+    <!-- Toast: floating pill at the bottom of the viewport. Currently used only for the
+         "restart to apply new config" nudge; auto-dismisses after a few seconds. -->
+    <Teleport to="body">
+      <Transition name="toast">
+        <div v-if="toastMessage" class="toast-root" role="status" aria-live="polite">
+          {{ toastMessage }}
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
@@ -664,5 +733,35 @@ function onPauseOverlayTap() {
       0 18px 36px rgba(0, 0, 0, 0.45),
       0 0 0 12px rgba(252, 246, 230, 0.22);
   }
+}
+
+.toast-root {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  z-index: 200;
+  max-width: calc(100vw - 32px);
+  padding: 12px 20px;
+  border-radius: 9999px;
+  background: rgba(36, 22, 18, 0.92);
+  color: var(--color-cream-soft);
+  font-weight: 600;
+  font-size: 0.9rem;
+  letter-spacing: 0.01em;
+  text-align: center;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  pointer-events: none;
+}
+.toast-enter-active,
+.toast-leave-active {
+  transition: opacity 220ms ease, transform 260ms cubic-bezier(.2, .7, .2, 1);
+}
+.toast-enter-from,
+.toast-leave-to {
+  opacity: 0;
+  transform: translate(-50%, 16px);
 }
 </style>

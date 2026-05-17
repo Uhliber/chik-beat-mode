@@ -20,9 +20,12 @@ const { audioMuted, setMuted } = useBeatAudio();
 const WISP_KEY = 'chik-wisp-enabled';
 const STRICT_KEY = 'chik-strict-prompts';
 const SKILL_KEY = 'chik-ai-skill';
+const PROMPT_SIZE_KEY = 'chik-prompt-size';
+type PromptSize = 'small' | 'medium' | 'large' | 'xl';
 const wispEnabled = ref(true);
 const strictPrompts = ref(false);
 const aiSkill = ref<1 | 2 | 3 | 4>(3);
+const promptSize = ref<PromptSize>('medium');
 void Preferences.get({ key: WISP_KEY }).then(({ value }) => {
   wispEnabled.value = value === null || value === undefined ? true : (value === '1' || value === 'true');
 }).catch(() => undefined);
@@ -32,6 +35,9 @@ void Preferences.get({ key: STRICT_KEY }).then(({ value }) => {
 void Preferences.get({ key: SKILL_KEY }).then(({ value }) => {
   const n = Number(value);
   if (n === 1 || n === 2 || n === 3 || n === 4) aiSkill.value = n;
+}).catch(() => undefined);
+void Preferences.get({ key: PROMPT_SIZE_KEY }).then(({ value }) => {
+  if (value === 'small' || value === 'medium' || value === 'large' || value === 'xl') promptSize.value = value;
 }).catch(() => undefined);
 function setWispEnabled(v: boolean) {
   wispEnabled.value = v;
@@ -44,6 +50,10 @@ function setStrictPrompts(v: boolean) {
 function setAiSkill(v: 1 | 2 | 3 | 4) {
   aiSkill.value = v;
   void Preferences.set({ key: SKILL_KEY, value: String(v) }).catch(() => undefined);
+}
+function setPromptSize(v: PromptSize) {
+  promptSize.value = v;
+  void Preferences.set({ key: PROMPT_SIZE_KEY, value: v }).catch(() => undefined);
 }
 
 function back() {
@@ -82,10 +92,12 @@ function back() {
         :ai-skill="aiSkill"
         :player-count="4"
         :speed="1"
+        :prompt-size="promptSize"
         hide-game-section
         hide-round-actions
         @update:audio-muted="setMuted"
         @update:wisp-enabled="setWispEnabled"
+        @update:prompt-size="setPromptSize"
         @update:strict-prompts="setStrictPrompts"
         @update:ai-skill="setAiSkill"
         @update:player-count="() => undefined"

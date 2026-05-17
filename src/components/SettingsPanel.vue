@@ -13,6 +13,7 @@ import SettingsSegmented from './settings/SettingsSegmented.vue';
 import IconVolume from './icons/IconVolume.vue';
 import type { SimMode, AiSkillLevel } from '@/game/SimulationController';
 import type { CardPrompt, PlaygroundComposition } from '@/game/types';
+import { modeCaps } from '@/game/modes';
 
 const props = defineProps<{
   mode: SimMode;
@@ -30,6 +31,7 @@ const props = defineProps<{
   hideGameSection?: boolean;
   /** Hide Restart / Back-to-menu (e.g. from /settings already on the menu). */
   hideRoundActions?: boolean;
+  promptSize?: 'small' | 'medium' | 'large' | 'xl';
   appVersion?: string;
 }>();
 
@@ -42,6 +44,8 @@ const emit = defineEmits<{
   (e: 'update:speed', n: number): void;
   (e: 'update:playground-prompt-count', payload: { prompt: CardPrompt; count: number }): void;
   (e: 'update:playground-hand-size', n: number): void;
+  (e: 'reset-playground-defaults'): void;
+  (e: 'update:prompt-size', v: 'small' | 'medium' | 'large' | 'xl'): void;
   (e: 'restart'): void;
   (e: 'back-to-menu'): void;
 }>();
@@ -60,9 +64,18 @@ const aiSkillOptions = [
   { label: 'Hard',   value: 3 },
   { label: 'Master', value: 4 },
 ];
+const promptSizeOptions = [
+  { label: 'S',  value: 'small'  },
+  { label: 'M',  value: 'medium' },
+  { label: 'L',  value: 'large'  },
+  { label: 'XL', value: 'xl'     },
+];
 
-// Versus + Playground share the same Game group (players, speed, strict, AI skill).
-const showVersusSettings = computed(() => props.mode === 'versus' || props.mode === 'playground');
+const caps = computed(() => modeCaps(props.mode));
+/** The "Game" group (players, speed, strict, AI skill) is meaningful for any
+ *  turn-based mode. Today that's Versus + Playground, but a future turn-based mode
+ *  picks up these settings automatically. */
+const showVersusSettings = computed(() => caps.value.isTurnBased);
 
 // Playground deck composition: each prompt picks from 0..6 × 7. Free has a 7 floor.
 const promptCountOptions = [0, 7, 14, 21, 28, 35, 42].map((n) => ({ label: String(n), value: n }));
@@ -164,7 +177,7 @@ const deckSufficient = computed(() => deckTotal.value >= minDeckNeeded.value);
       </SettingsRow>
     </SettingsGroup>
 
-    <SettingsGroup v-if="mode === 'playground' && playgroundComposition && !hideGameSection" title="Playground deck">
+    <SettingsGroup v-if="caps.hasCustomDeck && playgroundComposition && !hideGameSection" title="Playground deck">
       <SettingsRow description="Cards each player starts with (3 to 14).">
         <template #icon>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -202,10 +215,20 @@ const deckSufficient = computed(() => deckTotal.value >= minDeckNeeded.value);
           {{ deckTotal }} · need ≥ {{ minDeckNeeded }}
         </span>
       </SettingsRow>
+
+      <SettingsRow as-button @click="emit('reset-playground-defaults')">
+        <template #icon>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="1 4 1 10 7 10" />
+            <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+          </svg>
+        </template>
+        <template #label>Reset to defaults</template>
+      </SettingsRow>
     </SettingsGroup>
 
-    <SettingsGroup v-if="showVersusSettings" title="Display">
-      <SettingsRow description="Glowing wisp that follows whose turn it is.">
+    <SettingsGroup title="Display">
+      <SettingsRow v-if="showVersusSettings" description="Glowing wisp that follows whose turn it is.">
         <template #icon>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="4" />
@@ -217,6 +240,21 @@ const deckSufficient = computed(() => deckTotal.value >= minDeckNeeded.value);
           :model-value="wispEnabled"
           aria-label="Turn indicator"
           @update:model-value="(v) => emit('update:wisp-enabled', v)"
+        />
+      </SettingsRow>
+      <SettingsRow description="Size of the active prompt card. XL crops to the upper half.">
+        <template #icon>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <line x1="9" y1="9" x2="15" y2="9" />
+          </svg>
+        </template>
+        <template #label>Prompt size</template>
+        <SettingsSegmented
+          :model-value="promptSize ?? 'medium'"
+          :options="promptSizeOptions"
+          aria-label="Prompt size"
+          @update:model-value="(v) => emit('update:prompt-size', v as 'small' | 'medium' | 'large' | 'xl')"
         />
       </SettingsRow>
     </SettingsGroup>
