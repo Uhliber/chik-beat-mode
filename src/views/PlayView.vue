@@ -920,7 +920,14 @@ function onPauseOverlayTap() {
   text-align: center;
   pointer-events: none;
   box-shadow: 0 4px 10px rgba(0, 0, 0, 0.28);
-  animation: solo-start-hint-pulse 2.4s ease-in-out infinite;
+  transform-origin: top center;
+  /* Two-stage animation: a one-shot pop-in for entry (drops in from above with a small
+   * overshoot so the eye locks onto the new pill), then the steady opacity throb takes
+   * over to keep drawing attention while idle. The 520ms delay on the throb lines up
+   * with the entrance duration so the two never compete. */
+  animation:
+    solo-start-hint-in 520ms cubic-bezier(.2, .8, .2, 1.2) both,
+    solo-start-hint-pulse 2.4s ease-in-out 520ms infinite;
 }
 @media (min-width: 768px) {
   .solo-start-hint {
@@ -929,9 +936,29 @@ function onPauseOverlayTap() {
     letter-spacing: 0.1em;
   }
 }
+@keyframes solo-start-hint-in {
+  0% {
+    opacity: 0;
+    transform: translateY(-14px) scale(0.7);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(0) scale(1.08);
+  }
+  100% {
+    opacity: 0.92;
+    transform: translateY(0) scale(1);
+  }
+}
 @keyframes solo-start-hint-pulse {
   0%, 100% { opacity: 0.92; }
   50%      { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .solo-start-hint {
+    animation: none;
+    opacity: 1;
+  }
 }
 
 .toast-root {
