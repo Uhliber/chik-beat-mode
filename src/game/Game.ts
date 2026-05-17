@@ -2,6 +2,7 @@ import { Card } from './Card';
 import { Player } from './Player';
 import { Chant } from './Chant';
 import { buildSoloDeck, buildVersusDeck, buildPlaygroundDeck, shuffle } from './Deck';
+import { modeCaps } from './modes';
 import type {
   BaseSide,
   CardPrompt,
@@ -23,6 +24,16 @@ type Listener = (e: GameEvent) => void;
 
 const SOLO_PENALTY_MS = 2000;
 
+/** Which Solo bases are legal NEXT, given the prompt of the most-recently-slammed card.
+ *  Solo's direction gate flipped in v1.1: it's now the PREVIOUS card's prompt that
+ *  decides where the NEXT card must land — mirroring Versus where the recipient's top
+ *  prompt dictates how they can play. `null` (pre-open) means either base is fair game. */
+function allowedBasesAfter(prompt: CardPrompt | null): BaseSide[] {
+  if (prompt === 'left') return ['left'];
+  if (prompt === 'right') return ['right'];
+  return ['left', 'right'];
+}
+
 /**
  * Pure rules engine. Has no concept of time or animation. The view layer subscribes via
  * `on()` and reacts to `GameEvent` emissions.
@@ -42,6 +53,13 @@ export class Game {
   drawPile: Card[] = [];
   /** Solo only — Left and Right discard stacks. */
   soloBases: { left: Card[]; right: Card[] } = { left: [], right: [] };
+  /** Solo only — the most-recently-slammed card. Its PROMPT (left/right/free) dictates
+   *  which base the NEXT card may be slammed on (left → left base, right → right base,
+   *  free → either). Null before the Halo-Halo opener lands, in which case Halo-Halo may
+   *  go on either base. The UI uses this id to highlight + enlarge the active prompt. */
+  soloActiveCardId: string | null = null;
+  soloActivePrompt: CardPrompt | null = null;
+  soloActiveBaseSide: BaseSide | null = null;
 
   mode: GameMode = 'solo';
   opened = false;
@@ -111,8 +129,8 @@ export class Game {
     const fullDeck = buildSoloDeck();
     const halo = fullDeck.find((c) => c.isHaloHalo)!;
     const rest = shuffle(fullDeck.filter((c) => !c.isHaloHalo), this.rng);
-    // Deal 6 random cards + 1 Halo-Halo = 7-card opening hand.
-    for (let i = 0; i < 6; i++) {
+    // Deal 13 random cards + 1 Halo-Halo = 14-card opening hand.
+    for (let i = 0; i < 13; i++) {
       const card = rest.pop();
       if (card) this.players[0].hand.push(card);
     }
@@ -266,6 +284,9 @@ export class Game {
     this.chant.reset();
     this.drawPile = [];
     this.soloBases = { left: [], right: [] };
+    this.soloActiveCardId = null;
+    this.soloActivePrompt = null;
+    this.soloActiveBaseSide = null;
     this.opened = false;
     this.haloHaloOwnerId = null;
     this.winnerId = null;
@@ -285,7 +306,7 @@ export class Game {
   // ===========================================================================
 
   submitSoloAction(action: SoloAction): SoloActionResult {
-    if (this.mode !== 'solo' || this.winnerId) {
+    if (modeCaps(this.mode).isTurnBased || this.winnerId) {
       return { type: 'penalty', reason: 'wrong-beat', penaltyMs: 0 };
     }
     const player = this.players[0];
@@ -295,17 +316,16 @@ export class Game {
       const card = player.hand.find((c) => c.id === action.cardId);
       if (!card) return { type: 'penalty', reason: 'wrong-beat', cardId: action.cardId, penaltyMs: 0 };
 
-      // Opening gate: only Halo-Halo Chik may open the game.
+      // Opening gate: only Halo-Halo Chik may open the game. Halo-Halo's prompt is Free,
+      // so allowedBasesAfter(null) = either base — the opener may land on Left or Right.
       if (!this.opened) {
         if (!card.isHaloHalo) {
           return this.emitSoloPenalty('wrong-beat', card.id, action.baseSide);
         }
-        // Halo-Halo must still go on a legal base (Free → either is fine).
-        if (!card.legalSoloBases().includes(action.baseSide)) {
+        if (!allowedBasesAfter(this.soloActivePrompt).includes(action.baseSide)) {
           return this.emitSoloPenalty('wrong-base', card.id, action.baseSide);
         }
-        player.removeCard(card.id);
-        this.soloBases[action.baseSide].push(card);
+        this.applySoloSlam(card, action.baseSide);
         this.opened = true;
         this.emit({ kind: 'gameOpened', openerId: player.id });
         this.emit({ kind: 'soloSlam', cardId: card.id, baseSide: action.baseSide, cardWord: card.word, cardPrompt: card.prompt });
@@ -317,14 +337,15 @@ export class Game {
       if (!card.matchesBeat(beat)) {
         return this.emitSoloPenalty('wrong-beat', card.id, action.baseSide);
       }
-      // Card prompt must allow this base.
-      if (!card.legalSoloBases().includes(action.baseSide)) {
+      // Base must match the PREVIOUS prompt's direction — Left → only Left base, Right →
+      // only Right base, Free → either. The card's OWN prompt is unconstrained; it
+      // becomes the new active prompt for the next turn.
+      if (!allowedBasesAfter(this.soloActivePrompt).includes(action.baseSide)) {
         return this.emitSoloPenalty('wrong-base', card.id, action.baseSide);
       }
 
       // Legal slam.
-      player.removeCard(card.id);
-      this.soloBases[action.baseSide].push(card);
+      this.applySoloSlam(card, action.baseSide);
       this.emit({ kind: 'soloSlam', cardId: card.id, baseSide: action.baseSide, cardWord: card.word, cardPrompt: card.prompt });
       this.advanceChant();
 
@@ -341,12 +362,11 @@ export class Game {
       // Drawing from an empty pile is harmless — just a no-op. Don't penalize.
       return { type: 'drew', cardId: null };
     }
-    // Unnecessary-draw penalty: only AFTER the game has opened, and only if the player has
-    // a card legally playable on the current beat (correct word AND a base that accepts it).
+    // Unnecessary-draw penalty: only AFTER the game has opened, and only if the player
+    // holds ANY beat-matching card. (The previous prompt's direction is fixed for the turn
+    // and always permits at least one base, so beat-match alone is sufficient to play.)
     if (this.opened) {
-      const hasLegalPlay = player.hand.some(
-        (c) => c.matchesBeat(beat) && c.legalSoloBases().length > 0,
-      );
+      const hasLegalPlay = player.hand.some((c) => c.matchesBeat(beat));
       if (hasLegalPlay) {
         return this.emitSoloPenalty('unnecessary-draw', undefined, undefined);
       }
@@ -376,12 +396,22 @@ export class Game {
     return { type: 'penalty', reason, cardId, baseSide, penaltyMs: SOLO_PENALTY_MS };
   }
 
+  /** Commit a legal slam: move card from hand to base + record it as the new active
+   *  prompt. The card's prompt becomes the directional gate for the NEXT slam. */
+  private applySoloSlam(card: Card, baseSide: BaseSide): void {
+    this.players[0].removeCard(card.id);
+    this.soloBases[baseSide].push(card);
+    this.soloActiveCardId = card.id;
+    this.soloActivePrompt = card.prompt;
+    this.soloActiveBaseSide = baseSide;
+  }
+
   // ===========================================================================
   // VERSUS
   // ===========================================================================
 
   submitVersusAction(playerId: PlayerId, action: VersusAction): VersusActionResult {
-    if (this.mode !== 'versus' || this.winnerId) {
+    if (!modeCaps(this.mode).isTurnBased || this.winnerId) {
       return { type: 'rejected', reason: 'not-your-turn' };
     }
     const seatIdx = this.players.findIndex((p) => p.id === playerId);
@@ -679,12 +709,22 @@ export class Game {
     if (targetSeatIndex < 0 || targetSeatIndex >= this.players.length) {
       return { type: 'rejected', reason: 'illegal-target' };
     }
-    if (!this.strictPromptsEnabled) {
-      const left = this.neighborSeat(seatIdx, 'left');
-      const right = this.neighborSeat(seatIdx, 'right');
-      if (targetSeatIndex !== left && targetSeatIndex !== right) {
+    const left = this.neighborSeat(seatIdx, 'left');
+    const right = this.neighborSeat(seatIdx, 'right');
+    const isNeighbor = targetSeatIndex === left || targetSeatIndex === right;
+    if (!isNeighbor) {
+      // Non-neighbor target. In standard mode reject silently. In strict mode treat
+      // this the same as any other illegal play attempt: snap stays in hand, player
+      // draws a penalty card, turn passes.
+      if (!this.strictPromptsEnabled) {
         return { type: 'rejected', reason: 'illegal-target' };
       }
+      const player = this.players[seatIdx];
+      const card = player.hand.find((c) => c.id === cardId);
+      if (!card) return { type: 'rejected', reason: 'card-not-in-hand' };
+      this.pendingSnapDraw = null;
+      this.emit({ kind: 'versusSnapDrawnPlayed', playerId, cardId });
+      return this.applyStrictPenalty(seatIdx, card, 'illegal-target');
     }
     const player = this.players[seatIdx];
     const card = player.hand.find((c) => c.id === cardId);

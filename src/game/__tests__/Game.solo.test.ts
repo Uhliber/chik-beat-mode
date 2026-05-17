@@ -14,9 +14,9 @@ describe('Game (Solo)', () => {
     g.setupSolo();
   });
 
-  it('deals 7 cards and puts rest in the draw pile', () => {
-    expect(g.players[0].cardCount).toBe(7);
-    expect(g.drawPile.length).toBe(49);
+  it('deals 14 cards and puts rest in the draw pile', () => {
+    expect(g.players[0].cardCount).toBe(14);
+    expect(g.drawPile.length).toBe(42);
   });
 
   it('starts unopened with the player as the Halo-Halo owner', () => {
@@ -33,54 +33,81 @@ describe('Game (Solo)', () => {
   });
 
   it('opens with Halo-Halo Chik on either base', () => {
-    // Force Halo-Halo into hand if not there.
-    const halo = g.players[0].hand.find((c) => c.isHaloHalo);
-    if (!halo) {
-      // Drawing-driven Halo discovery is rare for the seeded deck. Use deterministic path:
-      // pull Halo-Halo out of the draw pile to the player's hand.
-      const idx = g.drawPile.findIndex((c) => c.isHaloHalo);
-      if (idx >= 0) g.players[0].hand.push(g.drawPile.splice(idx, 1)[0]);
-    }
     const halo2 = g.players[0].hand.find((c) => c.isHaloHalo)!;
     const r = g.submitSoloAction({ type: 'slam', cardId: halo2.id, baseSide: 'right' });
     expect(r.type).toBe('opened');
     expect(g.opened).toBe(true);
     expect(g.chant.current).toBe('wally');
     expect(g.soloBases.right.at(-1)?.id).toBe(halo2.id);
+    // Halo-Halo becomes the active prompt; its prompt is Free → next slam can be either base.
+    expect(g.soloActiveCardId).toBe(halo2.id);
+    expect(g.soloActivePrompt).toBe('free');
+    expect(g.soloActiveBaseSide).toBe('right');
   });
 
-  it('penalizes wrong-base slams (Right card on Left base)', () => {
-    // Open first.
-    const idx = g.drawPile.findIndex((c) => c.isHaloHalo);
-    if (idx >= 0) g.players[0].hand.push(g.drawPile.splice(idx, 1)[0]);
+  // The new v1.1 Solo rule: which base the next card may land on depends on the PREVIOUS
+  // card's prompt, NOT on the card you're about to play.
+  it('after a Left prompt is active, slamming on Right base is wrong-base', () => {
+    // Open with Halo-Halo on Right. Active prompt becomes Free → next can be either.
     const halo = g.players[0].hand.find((c) => c.isHaloHalo)!;
-    g.submitSoloAction({ type: 'slam', cardId: halo.id, baseSide: 'left' });
-    expect(g.opened).toBe(true);
-    expect(g.chant.current).toBe('wally');
+    g.submitSoloAction({ type: 'slam', cardId: halo.id, baseSide: 'right' });
 
-    // Find a Right Wally and slam on left.
-    const rightWally = g.players[0].hand.find((c) => c.prompt === 'right' && c.word === 'wally');
-    if (!rightWally) {
-      // Pull one in from the deck for the test.
-      const di = g.drawPile.findIndex((c) => c.prompt === 'right' && c.word === 'wally');
-      if (di >= 0) g.players[0].hand.push(g.drawPile.splice(di, 1)[0]);
+    // Play a Left Wally → active prompt becomes Left.
+    let leftWally = g.players[0].hand.find((c) => c.prompt === 'left' && c.word === 'wally');
+    if (!leftWally) {
+      const i = g.drawPile.findIndex((c) => c.prompt === 'left' && c.word === 'wally');
+      if (i >= 0) g.players[0].hand.push(g.drawPile.splice(i, 1)[0]);
+      leftWally = g.players[0].hand.find((c) => c.prompt === 'left' && c.word === 'wally')!;
     }
-    const rw = g.players[0].hand.find((c) => c.prompt === 'right' && c.word === 'wally')!;
-    const r = g.submitSoloAction({ type: 'slam', cardId: rw.id, baseSide: 'left' });
+    expect(g.submitSoloAction({ type: 'slam', cardId: leftWally!.id, baseSide: 'left' }).type).toBe('success');
+    expect(g.soloActivePrompt).toBe('left');
+    expect(g.chant.current).toBe('hindo');
+
+    // Now any Hindo card slammed on RIGHT base should be wrong-base.
+    let hindo = g.players[0].hand.find((c) => c.word === 'hindo');
+    if (!hindo) {
+      const i = g.drawPile.findIndex((c) => c.word === 'hindo');
+      if (i >= 0) g.players[0].hand.push(g.drawPile.splice(i, 1)[0]);
+      hindo = g.players[0].hand.find((c) => c.word === 'hindo')!;
+    }
+    const r = g.submitSoloAction({ type: 'slam', cardId: hindo!.id, baseSide: 'right' });
     expect(r.type).toBe('penalty');
     if (r.type === 'penalty') expect(r.reason).toBe('wrong-base');
-    // Card stays in hand.
-    expect(g.players[0].hand.some((c) => c.id === rw.id)).toBe(true);
+    // Card stays in hand on penalty.
+    expect(g.players[0].hand.some((c) => c.id === hindo!.id)).toBe(true);
   });
 
-  it('penalizes unnecessary draws (deck click while holding a legal play)', () => {
-    // Open and arrive at Wally beat.
-    const idx = g.drawPile.findIndex((c) => c.isHaloHalo);
-    if (idx >= 0) g.players[0].hand.push(g.drawPile.splice(idx, 1)[0]);
+  it('after a Left prompt, slamming a Right-typed Hindo on Left base is LEGAL', () => {
+    // Open + plant a Left active prompt.
+    const halo = g.players[0].hand.find((c) => c.isHaloHalo)!;
+    g.submitSoloAction({ type: 'slam', cardId: halo.id, baseSide: 'left' });
+    let leftWally = g.players[0].hand.find((c) => c.prompt === 'left' && c.word === 'wally');
+    if (!leftWally) {
+      const i = g.drawPile.findIndex((c) => c.prompt === 'left' && c.word === 'wally');
+      if (i >= 0) g.players[0].hand.push(g.drawPile.splice(i, 1)[0]);
+      leftWally = g.players[0].hand.find((c) => c.prompt === 'left' && c.word === 'wally')!;
+    }
+    g.submitSoloAction({ type: 'slam', cardId: leftWally!.id, baseSide: 'left' });
+    expect(g.soloActivePrompt).toBe('left');
+
+    // Pull in a RIGHT-typed Hindo and slam it on LEFT base. Card's own prompt is right —
+    // but the gate is on the PREVIOUS prompt (left), so left base is required. Legal.
+    let rightHindo = g.players[0].hand.find((c) => c.prompt === 'right' && c.word === 'hindo');
+    if (!rightHindo) {
+      const i = g.drawPile.findIndex((c) => c.prompt === 'right' && c.word === 'hindo');
+      if (i >= 0) g.players[0].hand.push(g.drawPile.splice(i, 1)[0]);
+      rightHindo = g.players[0].hand.find((c) => c.prompt === 'right' && c.word === 'hindo')!;
+    }
+    const r = g.submitSoloAction({ type: 'slam', cardId: rightHindo!.id, baseSide: 'left' });
+    expect(r.type).toBe('success');
+    // Active prompt now flips to right (the card we just slammed).
+    expect(g.soloActivePrompt).toBe('right');
+  });
+
+  it('penalizes unnecessary draws (deck click while holding a beat-matching card)', () => {
     const halo = g.players[0].hand.find((c) => c.isHaloHalo)!;
     g.submitSoloAction({ type: 'slam', cardId: halo.id, baseSide: 'left' });
 
-    // Ensure player has a Wally card to make a legal play possible.
     if (!g.players[0].hand.some((c) => c.word === 'wally')) {
       const di = g.drawPile.findIndex((c) => c.word === 'wally');
       if (di >= 0) g.players[0].hand.push(g.drawPile.splice(di, 1)[0]);
@@ -90,10 +117,7 @@ describe('Game (Solo)', () => {
     if (r.type === 'penalty') expect(r.reason).toBe('unnecessary-draw');
   });
 
-  it('allows draws when no legal play is in hand', () => {
-    // Open game.
-    const idx = g.drawPile.findIndex((c) => c.isHaloHalo);
-    if (idx >= 0) g.players[0].hand.push(g.drawPile.splice(idx, 1)[0]);
+  it('allows draws when no beat-matching card is in hand', () => {
     const halo = g.players[0].hand.find((c) => c.isHaloHalo)!;
     g.submitSoloAction({ type: 'slam', cardId: halo.id, baseSide: 'left' });
 
