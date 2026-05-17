@@ -49,6 +49,15 @@ public/cards/          Card PNG faces + back
 - All animations use `transform` + `opacity` only — no layout thrash.
 - Touch-friendly: `touch-action: manipulation`, large tap targets.
 
+## Developer commands
+
+Open the browser DevTools console while the app is running:
+
+- `chikReset()` — wipe ALL persisted state (tutorial completion, Solo best time, settings, Playground config). Reload after to see a fresh start.
+- `chikReset('tutorial')` — wipe only the tutorial-completion flags (Solo + Versus). Use when iterating on the tutorial flow.
+
+A one-line hint is logged on app startup so the command is discoverable.
+
 ## What's not in v1 (yet)
 
 - Sleeping / Boss expansions (assets exist, code path open)
