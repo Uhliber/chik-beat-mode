@@ -383,6 +383,7 @@ function dispatchFlight(spec: FlightSpec): void {
         :hidden-ids="inFlightIds"
         :last-played-card-id="lastPlayedCardId"
         :prompt-card-width="SOLO_BASE_CARD_WIDTH"
+        :prompt-size="promptSize"
         @draw-deck-click="emit('draw-deck-click')"
       />
     </div>
