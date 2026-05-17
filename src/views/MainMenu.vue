@@ -81,7 +81,7 @@ function openSettings() {
         disabled
         aria-disabled="true"
       >
-        Login (soon)
+        Online (soon)
       </button>
     </main>
 

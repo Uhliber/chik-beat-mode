@@ -18,45 +18,47 @@ defineProps<{ mode?: 'solo' | 'versus' | 'playground' }>();
       </section>
 
       <section class="section">
-        <h3>Bases</h3>
-        <p>Two physical bases sit in the centre: <strong>Left</strong> and <strong>Right</strong>. Each card's prompt dictates which base accepts it.</p>
+        <h3>The Prompt</h3>
+        <p>Two physical bases sit in the centre: <strong>Left</strong> and <strong>Right</strong>. The most recently slammed card sits on top of one of them — that's the <strong class="hi-high">Prompt</strong> (marked with a "PROMPT" label and a glowing ring). Its direction decides where your NEXT card may land.</p>
       </section>
 
       <section class="section">
         <h3>How to Play</h3>
-        <p><strong>Drag</strong> a card toward a base to slam it. <strong>Drag back to centre</strong> to cancel. <strong>Click the deck</strong> to draw a card.</p>
-      </section>
-
-      <section class="section">
-        <h3>Card Prompts</h3>
+        <p>Each turn, in order:</p>
+        <p>
+          <strong>1.</strong> Find a card in your hand whose word matches the current <em>chant beat</em>.<br />
+          <strong>2.</strong> Drag it onto the base allowed by the current Prompt:
+        </p>
         <ul class="cards-list">
           <li>
-            <img src="/cards/chik-left.png" alt="Left" class="mini-card" />
-            <p><strong>Left</strong> — slam on the Left base only.</p>
+            <img src="/cards/chik-left.png" alt="Left prompt" class="mini-card" />
+            <p>Prompt is <strong>Left</strong> → slam on the Left base.</p>
           </li>
           <li>
-            <img src="/cards/chik-right.png" alt="Right" class="mini-card" />
-            <p><strong>Right</strong> — slam on the Right base only.</p>
+            <img src="/cards/chik-right.png" alt="Right prompt" class="mini-card" />
+            <p>Prompt is <strong>Right</strong> → slam on the Right base.</p>
           </li>
           <li>
-            <img src="/cards/chik-free.png" alt="Free" class="mini-card" />
-            <p><strong>Free</strong> — slam on either base.</p>
+            <img src="/cards/chik-free.png" alt="Free prompt" class="mini-card" />
+            <p>Prompt is <strong>Free</strong> → either base works.</p>
           </li>
         </ul>
+        <p><strong>3.</strong> Drag back to centre to cancel a slam in progress. If no beat-matching card is in hand, <strong>click the deck</strong> to draw.</p>
+        <p>The card you just played becomes the new Prompt — its own type (Left/Right/Free) sets the next direction.</p>
       </section>
 
       <section class="section">
         <h3>Penalties (+2s each)</h3>
         <p>
-          <strong>Wrong base</strong> — slamming a Left card on Right or vice versa.<br />
-          <strong>Wrong beat</strong> — the card's chant word doesn't match the current beat.<br />
-          <strong>Unnecessary draw</strong> — clicking the deck while you have a legal play in hand.
+          <strong>Wrong base</strong> — slamming on a base the current Prompt doesn't allow.<br />
+          <strong>Wrong beat</strong> — the card's word doesn't match the current beat.<br />
+          <strong>Unnecessary draw</strong> — clicking the deck while a beat-matching card is in your hand.
         </p>
       </section>
 
       <section class="section">
         <h3>Opening</h3>
-        <p>The <strong class="hi-high">Halo-Halo Chik</strong> opens the game on the first Chik beat. Until you slam it, no other card is legal.</p>
+        <p>The <strong class="hi-high">Halo-Halo Chik</strong> opens the game on the first Chik beat. It's Free, so it can land on either base. Until you slam it, no other card is legal.</p>
       </section>
     </div>
 
@@ -81,10 +83,12 @@ defineProps<{ mode?: 'solo' | 'versus' | 'playground' }>();
     </div>
   </div>
 
-  <!-- ============== VERSUS RULES ============== -->
+  <!-- ============== VERSUS / PLAYGROUND RULES ============== -->
   <div v-else class="guide-grid">
     <div class="left-col">
-      <h2 class="guide-title">Versus · Turn-based</h2>
+      <h2 class="guide-title">
+        {{ mode === 'playground' ? 'Playground · Sandbox' : 'Versus · Turn-based' }}
+      </h2>
 
       <section class="section">
         <h3>Goal</h3>
@@ -93,7 +97,13 @@ defineProps<{ mode?: 'solo' | 'versus' | 'playground' }>();
 
       <section class="section">
         <h3>How to Play</h3>
-        <p><strong>Drag</strong> a card toward an opponent's seat — legal targets glow. <strong>Drag back</strong> to cancel. <strong>Click the deck</strong> to draw if you can't play.</p>
+        <p>On your turn, in order:</p>
+        <p>
+          <strong>1.</strong> Check your prompt — the card stacked in front of you. Its type (Left / Right / Free / Stop / Snap / Fetch) dictates which opponents are legal targets.<br />
+          <strong>2.</strong> Drag a beat-matching card onto a legal seat (legal seats glow). Drag back to centre to cancel.<br />
+          <strong>3.</strong> If no legal play exists, click the deck to draw — your turn ends.
+        </p>
+        <p>Whatever card you play becomes the recipient's new prompt.</p>
       </section>
 
       <section class="section">
@@ -113,11 +123,11 @@ defineProps<{ mode?: 'solo' | 'versus' | 'playground' }>();
           </li>
           <li>
             <img src="/cards/chik-snap.png" alt="Snap" class="mini-card" />
-            <p><strong>Snap</strong> — drawing this matching the beat lets you play it immediately.</p>
+            <p><strong>Snap</strong> — if you DRAW this on a matching beat, play it immediately on your left or right neighbour (overrides Stop).</p>
           </li>
           <li>
             <img src="/cards/chik-off-deck.png" alt="Fetch" class="mini-card" />
-            <p><strong>Fetch</strong> — forced draws come from the Fetch owner's hand, not the pile.</p>
+            <p><strong>Fetch</strong> — when the recipient must draw, they pull from the Fetch player's hand instead of the deck. Draining that hand to zero is an instant win for the Fetch player.</p>
           </li>
         </ul>
       </section>
@@ -125,6 +135,21 @@ defineProps<{ mode?: 'solo' | 'versus' | 'playground' }>();
       <section class="section">
         <h3>The Chain</h3>
         <p>If your card forces the target to draw, you get an <strong>immediate bonus turn</strong>. The chain ends when a target plays successfully OR you draw.</p>
+      </section>
+
+      <section class="section">
+        <h3>Strict Prompts (optional)</h3>
+        <p>Toggle on in Settings to attempt any play — illegal moves still land, but you draw a +1 penalty card. Lets you experiment instead of being blocked.</p>
+      </section>
+
+      <section v-if="mode === 'playground'" class="section">
+        <h3>Sandbox · Configurable Deck</h3>
+        <p>Playground is Versus with two extra knobs in Settings:</p>
+        <p>
+          <strong>Deck composition</strong> — set how many of each prompt type are in the deck (0 to 42 per prompt, Free has a 7-card floor).<br />
+          <strong>Hand size</strong> — 3 to 14 starting cards per player.
+        </p>
+        <p>All other Versus rules still apply.</p>
       </section>
     </div>
 
