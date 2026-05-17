@@ -921,13 +921,17 @@ function onPauseOverlayTap() {
   pointer-events: none;
   box-shadow: 0 4px 10px rgba(0, 0, 0, 0.28);
   transform-origin: top center;
-  /* Two-stage animation: a one-shot pop-in for entry (drops in from above with a small
-   * overshoot so the eye locks onto the new pill), then the steady opacity throb takes
-   * over to keep drawing attention while idle. The 520ms delay on the throb lines up
-   * with the entrance duration so the two never compete. */
+  /* Three-stage animation system:
+   *  1. solo-start-hint-in   — one-shot pop-in for entry (transform + opacity).
+   *  2. solo-start-hint-pulse — infinite opacity throb (no transform contention).
+   *  3. solo-start-hint-emphasis — every 5s, a quick wiggle nudges the eye back to the
+   *     hint if the player still hasn't slammed. Delayed 5s so the first emphasis fires
+   *     5s after the entrance; the keyframes are calm for ~90% of each cycle and only
+   *     the last 10% does the wiggle, keeping the rest of the time visually quiet. */
   animation:
     solo-start-hint-in 520ms cubic-bezier(.2, .8, .2, 1.2) both,
-    solo-start-hint-pulse 2.4s ease-in-out 520ms infinite;
+    solo-start-hint-pulse 2.4s ease-in-out 520ms infinite,
+    solo-start-hint-emphasis 5s ease-in-out 5s infinite;
 }
 @media (min-width: 768px) {
   .solo-start-hint {
@@ -953,6 +957,16 @@ function onPauseOverlayTap() {
 @keyframes solo-start-hint-pulse {
   0%, 100% { opacity: 0.92; }
   50%      { opacity: 1; }
+}
+/* Periodic emphasis: most of the 5s cycle stays at scale(1), then a quick three-beat
+ * wobble at the END nudges the eye back to the pill. Because the animation has a 5s
+ * delay AND a 5s duration, the wobble lands at t=5s, t=10s, t=15s ... — once for every
+ * 5s the player has been idle. */
+@keyframes solo-start-hint-emphasis {
+  0%, 88%, 100% { transform: scale(1); }
+  91%           { transform: scale(1.12) rotate(-2.5deg); }
+  94%           { transform: scale(0.96) rotate(2deg); }
+  97%           { transform: scale(1.06) rotate(-1deg); }
 }
 @media (prefers-reduced-motion: reduce) {
   .solo-start-hint {
