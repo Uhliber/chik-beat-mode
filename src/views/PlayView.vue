@@ -593,6 +593,16 @@ function onPauseOverlayTap() {
           :next-pos="chantVirtualPos"
         />
       </div>
+      <!-- Solo "slam Halo-Halo to start" hint. Sits in the HUD column right below the
+           chant ticker so it doesn't fight the table for legibility. The Halo-Halo card
+           itself carries the visual call to action via its heartbeat glow; this pill is
+           just the verbal cue. -->
+      <div
+        v-if="!isTutorial && !winnerId && state.status === 'idle'"
+        class="solo-start-hint"
+      >
+        <span>Slam your Halo-Halo Chik to start</span>
+      </div>
     </div>
 
     <main class="absolute inset-0 isolate" :style="{ paddingTop: isMobile ? '116px' : '0' }">
@@ -640,19 +650,6 @@ function onPauseOverlayTap() {
       </button>
     </div>
 
-    <!-- Solo "play Halo-Halo to start" prompt. Solo auto-starts on the first slam, so
-         there's no Start button — the player just plays the pulsing Halo-Halo from the
-         hand. Text floats centred above the deck; pointer-events:none so it never
-         intercepts the drag-aim gesture beneath it. -->
-    <div
-      v-if="!isTutorial && caps.isTimeAttack && !winnerId && state.status === 'idle'"
-      class="absolute inset-0 z-20 flex items-center justify-center pointer-events-none px-6"
-    >
-      <div class="solo-start-hint">
-        <div class="solo-start-hint-line-1">Slam your Halo-Halo Chik</div>
-        <div class="solo-start-hint-line-2">to start the round</div>
-      </div>
-    </div>
 
     <aside v-if="!isMobile && eventLogEnabled" class="absolute bottom-3 right-3 w-70 max-w-[80vw] z-20">
       <EventLog :events="state.events" />
@@ -904,35 +901,37 @@ function onPauseOverlayTap() {
   }
 }
 
-/* Solo's "play your Halo-Halo Chik to start" hint. Floats centred above the table; the
- * Halo-Halo card in the human's hand provides the actual call to action via its
- * heartbeat glow (see CardFan .halo-pulse). Two stacked lines keep the message
- * readable at any viewport without competing with the deck visually. */
+/* Solo's "Slam your Halo-Halo Chik to start" pill. Sits inside the HUD column under
+ * the chant ticker; the Halo-Halo card in hand carries the visual emphasis (heartbeat
+ * + cream/coral glow). Darker coral fill so it stands out against the regular coral
+ * background but still feels part of the Halohalo palette. Subtle opacity throb in
+ * lockstep with the card's heartbeat invites the eye downward to the hand. */
 .solo-start-hint {
-  text-align: center;
+  margin-top: 2px;
+  padding: 6px 14px;
+  border-radius: 9999px;
+  background: var(--color-coral-deep);
   color: var(--color-cream-soft);
-  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.55);
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: center;
   pointer-events: none;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.28);
   animation: solo-start-hint-pulse 2.4s ease-in-out infinite;
 }
-.solo-start-hint-line-1 {
-  font-family: Quiapo, var(--font-display);
-  font-size: clamp(1.4rem, 4.4vw, 2.2rem);
-  letter-spacing: 0.04em;
-  line-height: 1.05;
-}
-.solo-start-hint-line-2 {
-  margin-top: 4px;
-  font-family: var(--font-body);
-  font-weight: 600;
-  font-size: clamp(0.85rem, 2.4vw, 1rem);
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  opacity: 0.88;
+@media (min-width: 768px) {
+  .solo-start-hint {
+    font-size: 0.72rem;
+    padding: 5px 12px;
+    letter-spacing: 0.1em;
+  }
 }
 @keyframes solo-start-hint-pulse {
-  0%, 100% { opacity: 0.92; transform: translateY(0); }
-  50%      { opacity: 1;    transform: translateY(-3px); }
+  0%, 100% { opacity: 0.92; }
+  50%      { opacity: 1; }
 }
 
 .toast-root {
