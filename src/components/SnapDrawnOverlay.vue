@@ -36,63 +36,85 @@ const emit = defineEmits<{
   (e: 'click-target', seatIndex: number): void;
 }>();
 
-/** Local-coordinate (parent = GameTable) position of the deck centre. Recomputed on
- *  every show + window resize, since the deck moves with viewport changes. */
-const deckCentre = ref<{ x: number; y: number } | null>(null);
+/** Local-coordinate (parent = GameTable) anchor points. Recomputed on every show +
+ *  window resize, since the deck and seat elements move with viewport changes. */
+interface Anchors {
+  deck: { x: number; y: number };
+  seats: Record<number, { x: number; y: number }>;
+}
+const anchors = ref<Anchors | null>(null);
 const overlayEl = ref<HTMLElement | null>(null);
 
-function computeDeckCentre(): void {
+function computeAnchors(): void {
   if (!overlayEl.value) return;
   const deck = document.querySelector<HTMLElement>('[data-base-id="deck"]');
   const parent = overlayEl.value.offsetParent as HTMLElement | null;
   if (!deck || !parent) return;
-  const deckRect = deck.getBoundingClientRect();
   const parentRect = parent.getBoundingClientRect();
-  deckCentre.value = {
+  const deckRect = deck.getBoundingClientRect();
+  const deckCentre = {
     x: deckRect.left + deckRect.width / 2 - parentRect.left,
     y: deckRect.top + deckRect.height / 2 - parentRect.top,
   };
+  const seats: Record<number, { x: number; y: number }> = {};
+  for (const target of props.legalTargets) {
+    const el = document.querySelector<HTMLElement>(`[data-seat-index="${target}"]`);
+    if (!el) continue;
+    const r = el.getBoundingClientRect();
+    seats[target] = {
+      x: r.left + r.width / 2 - parentRect.left,
+      y: r.top + r.height / 2 - parentRect.top,
+    };
+  }
+  anchors.value = { deck: deckCentre, seats };
 }
 
 let resizeObs: ResizeObserver | null = null;
 onMounted(() => {
-  computeDeckCentre();
-  resizeObs = new ResizeObserver(() => computeDeckCentre());
+  computeAnchors();
+  resizeObs = new ResizeObserver(() => computeAnchors());
   resizeObs.observe(document.body);
 });
 onBeforeUnmount(() => {
   if (resizeObs) resizeObs.disconnect();
 });
-watch(() => props.card, (c) => { if (c) requestAnimationFrame(computeDeckCentre); });
-watch(() => props.holderSeatIndex, () => requestAnimationFrame(computeDeckCentre));
+watch(() => props.card, (c) => { if (c) requestAnimationFrame(computeAnchors); });
+watch(() => props.holderSeatIndex, () => requestAnimationFrame(computeAnchors));
+watch(() => props.legalTargets, () => requestAnimationFrame(computeAnchors));
 
-/** Position each target chip around the deck on a circle. With strict mode there can
- *  be 5 chips at once (6-player game), so spread them across a full ring. With just 2
- *  (left/right neighbours), use a narrow horizontal spread. */
+/** Place each chip on the ray from the deck centre toward the target seat's actual
+ *  DOM position, at a fixed radius. So the "P4" chip appears in the direction P4
+ *  is sitting — left chip ↔ left seat, regardless of legalTargets[] ordering. If a
+ *  seat anchor isn't yet measurable, the chip falls back to an even fan around the deck. */
 const chipPositions = computed(() => {
-  if (!deckCentre.value || props.legalTargets.length === 0) return [];
+  if (!anchors.value || props.legalTargets.length === 0) return [];
+  const a = anchors.value;
   const radius = 120;
   const n = props.legalTargets.length;
-  const positions = props.legalTargets.map((seat, i) => {
-    let angle: number;
-    if (n === 2) {
-      // Neighbours-only: place chips left and right of the deck on a flat axis.
-      angle = i === 0 ? Math.PI : 0; // 180° (left) or 0° (right)
-      // Map to original "left = first legal" assumption: order chips by seat layout
-      // so left = first target in `legalTargets` if that's the left neighbour.
+  return props.legalTargets.map((seat, i) => {
+    const seatAnchor = a.seats[seat];
+    let dx: number;
+    let dy: number;
+    if (seatAnchor) {
+      const vx = seatAnchor.x - a.deck.x;
+      const vy = seatAnchor.y - a.deck.y;
+      const len = Math.hypot(vx, vy) || 1;
+      dx = (vx / len) * radius;
+      dy = (vy / len) * radius;
     } else {
-      // Multi-target (strict mode): spread evenly around the deck.
-      angle = (i / n) * Math.PI * 2 - Math.PI / 2;
+      // Fallback: even fan around the deck if a seat element isn't measurable yet.
+      const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
+      dx = Math.cos(angle) * radius;
+      dy = Math.sin(angle) * radius;
     }
     return {
       seat,
-      x: deckCentre.value!.x + Math.cos(angle) * radius,
-      y: deckCentre.value!.y + Math.sin(angle) * radius,
+      x: a.deck.x + dx,
+      y: a.deck.y + dy,
       label: props.players[seat]?.id?.toUpperCase() ?? `P${seat + 1}`,
       isAiPick: props.aiPickedTarget === seat,
     };
   });
-  return positions;
 });
 
 /** Card sits about 60px above the deck centre so it's not occluded by the deck face. */
@@ -106,14 +128,14 @@ const cardOffset = 60;
     class="snap-overlay"
     aria-hidden="true"
   >
-    <div v-if="deckCentre" class="snap-stage">
+    <div v-if="anchors" class="snap-stage">
       <!-- Flipped-up snap card, offset above the deck. Pulses gently to telegraph
            "this needs attention". -->
       <div
         class="snap-card-wrap"
         :style="{
-          left: deckCentre.x + 'px',
-          top: (deckCentre.y - cardOffset) + 'px',
+          left: anchors.deck.x + 'px',
+          top: (anchors.deck.y - cardOffset) + 'px',
         }"
       >
         <div class="snap-card-inner">

@@ -1,12 +1,12 @@
 import type { Game } from './Game';
 import type { Card } from './Card';
-import type { CardPrompt, PlayerId, VersusAction } from './types';
+import type { CardPrompt, GameMode, PlayerId, VersusAction } from './types';
+import { modeCaps } from './modes';
 
 export type SimStatus = 'idle' | 'opening' | 'running' | 'paused' | 'ended';
-/** Playground plays identically to Versus from the controller's POV — only the deck
- *  composition and hand size differ at setup time. AI scheduling, snap-pending
- *  resolution, mistake rolls, and turn rotation all behave the same. */
-export type SimMode = 'solo' | 'versus' | 'playground';
+/** SimMode is just GameMode — the controller dispatches based on capability flags
+ *  (hasAIOpponents), not on identity, so any turn-based mode is supported automatically. */
+export type SimMode = GameMode;
 
 /**
  * AI skill rungs (Versus). Each level is a (mistakeRate, strategyDepth) pair.
@@ -123,7 +123,7 @@ export class SimulationController {
   start(): void {
     if (this.status === 'ended') return;
     this.setStatus('running');
-    if (this.mode === 'versus') this.scheduleNext(this.delay() * 0.6);
+    if (modeCaps(this.mode).hasAIOpponents) this.scheduleNext(this.delay() * 0.6);
   }
 
   pause(): void {
@@ -137,7 +137,7 @@ export class SimulationController {
   resume(): void {
     if (this.status !== 'paused') return;
     this.setStatus('running');
-    if (this.mode === 'versus') this.scheduleNext();
+    if (modeCaps(this.mode).hasAIOpponents) this.scheduleNext();
   }
 
   stop(): void {
@@ -182,7 +182,7 @@ export class SimulationController {
   private scheduleNext(ms?: number): void {
     if (this.timer !== null) clearTimeout(this.timer);
     if (this.status !== 'running') return;
-    if (this.mode !== 'versus') return;
+    if (!modeCaps(this.mode).hasAIOpponents) return;
     this.timer = window.setTimeout(() => {
       this.timer = null;
       this.tick();

@@ -377,4 +377,110 @@ describe('Game (Playground) — sandbox setup', () => {
       }),
     ).toThrow();
   });
+
+  // Drawn-Snap targeting: rulebook says L/R neighbour only. Standard mode rejects
+  // non-neighbour targets silently. Strict mode lets the attempt through but applies
+  // a +1 penalty draw (matching how strict mode treats other illegal plays).
+  it('drawn-Snap on non-neighbour rejects silently in standard mode', () => {
+    const g = new Game(seededRng(110));
+    g.setupVersus(4);
+    // Open + plant a pending Snap-drawn for seat 0 (the human), with an across-table
+    // target (seat 2). Easiest path: directly mutate the pending state + put a Snap
+    // card matching the current beat in seat 0's hand.
+    (g as unknown as { opened: boolean }).opened = true;
+    const snapCard = { id: 'snap-test-1', word: 'chik', prompt: 'snap', isHaloHalo: false, matchesBeat: () => true } as never;
+    g.players[0].hand.push(snapCard);
+    (g as unknown as { pendingSnapDraw: { playerId: string; cardId: string } }).pendingSnapDraw = {
+      playerId: g.players[0].id,
+      cardId: 'snap-test-1',
+    };
+    (g as unknown as { activeSeatIndex: number }).activeSeatIndex = 0;
+    const handBefore = g.players[0].cardCount;
+    const r = g.submitVersusAction(g.players[0].id, { type: 'snap-play', targetSeatIndex: 2 });
+    expect(r.type).toBe('rejected');
+    if (r.type === 'rejected') expect(r.reason).toBe('illegal-target');
+    // Snap stays in hand, no penalty draw, pending state preserved so they can retry.
+    expect(g.players[0].cardCount).toBe(handBefore);
+    expect(g.pendingSnapDraw?.cardId).toBe('snap-test-1');
+  });
+
+  it('drawn-Snap on non-neighbour in strict mode applies a +1 penalty draw', () => {
+    const g = new Game(seededRng(111));
+    g.setupVersus(4);
+    g.setStrictPromptsEnabled(true);
+    (g as unknown as { opened: boolean }).opened = true;
+    const snapCard = { id: 'snap-test-2', word: 'chik', prompt: 'snap', isHaloHalo: false, matchesBeat: () => true } as never;
+    g.players[0].hand.push(snapCard);
+    (g as unknown as { pendingSnapDraw: { playerId: string; cardId: string } }).pendingSnapDraw = {
+      playerId: g.players[0].id,
+      cardId: 'snap-test-2',
+    };
+    (g as unknown as { activeSeatIndex: number }).activeSeatIndex = 0;
+    const handBefore = g.players[0].cardCount;
+    const pileBefore = g.drawPile.length;
+    const r = g.submitVersusAction(g.players[0].id, { type: 'snap-play', targetSeatIndex: 2 });
+    // Strict penalty surfaces as a rejection with reason illegal-target, but it pulled
+    // a card from the pile and the pending snap was cleared.
+    expect(r.type === 'rejected' || r.type === 'winner').toBe(true);
+    expect(g.players[0].cardCount).toBe(handBefore + 1); // snap kept + penalty card
+    expect(g.drawPile.length).toBe(pileBefore - 1);
+    expect(g.pendingSnapDraw).toBeNull();
+    // Snap card itself never moved to a prompt stack.
+    for (const p of g.players) {
+      expect(p.promptStack.some((c) => c.id === 'snap-test-2')).toBe(false);
+    }
+  });
+
+  // Regression: when the draw pile is empty and the player's top prompt is Fetch, the
+  // forced draw must still drain from the Fetch owner's hand (not silently pass).
+  it('Fetch prompt drains from owner hand even when draw pile is empty', () => {
+    const g = new Game(seededRng(101));
+    g.setupVersus(3);
+    // Open the game.
+    const opener = g.players[g.activeSeatIndex];
+    const halo = opener.hand.find((c) => c.isHaloHalo)!;
+    const target = (g.activeSeatIndex + 1) % g.players.length;
+    g.submitVersusAction(opener.id, { type: 'play', cardId: halo.id, targetSeatIndex: target });
+
+    // Force the scenario directly: drain the draw pile and place a Fetch prompt in front
+    // of seat 0, owned by seat 1.
+    g.drawPile.length = 0;
+    const fetchStub = { id: 'fetch-test-stub', word: 'chik', prompt: 'fetch', isHaloHalo: false } as never;
+    g.players[0].promptStack.push(fetchStub);
+    (g as unknown as { fetchOwners: Map<string, number> }).fetchOwners.set('fetch-test-stub', 1);
+    const ownerHandSizeBefore = g.players[1].cardCount;
+    const drawerHandSizeBefore = g.players[0].cardCount;
+
+    // Force seat 0 to be active, then have them draw.
+    (g as unknown as { activeSeatIndex: number }).activeSeatIndex = 0;
+    const r = g.submitVersusAction(g.players[0].id, { type: 'draw' });
+
+    expect(r.type === 'drew' || r.type === 'winner').toBe(true);
+    expect(g.players[1].cardCount).toBe(ownerHandSizeBefore - 1);
+    expect(g.players[0].cardCount).toBe(drawerHandSizeBefore + 1);
+    if (r.type === 'drew') expect(r.from).toBe('hand');
+  });
+
+  // Regression: submitVersusAction must accept actions in Playground mode. Previously
+  // gated on `mode === 'versus'`, which silently rejected every Playground play.
+  it('submitVersusAction accepts plays in Playground mode (no versus-only mode guard)', () => {
+    const g = new Game(seededRng(94));
+    g.setupPlayground({
+      playerCount: 3,
+      handSize: 7,
+      composition: { right: 14, left: 14, free: 7, stop: 7, snap: 7, fetch: 7 },
+    });
+    const opener = g.players[g.activeSeatIndex];
+    const halo = opener.hand.find((c) => c.isHaloHalo);
+    expect(halo).toBeTruthy();
+    const targetSeat = (g.activeSeatIndex + 1) % g.players.length;
+    const result = g.submitVersusAction(opener.id, {
+      type: 'play',
+      cardId: halo!.id,
+      targetSeatIndex: targetSeat,
+    });
+    expect(result.type).toBe('played');
+    expect(g.opened).toBe(true);
+    expect(g.activeSeatIndex).toBe(targetSeat);
+  });
 });
