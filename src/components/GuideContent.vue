@@ -3,7 +3,17 @@
  * Rendered "How to Play" body — used inside the desktop flip-card and the mobile modal.
  * Container queries scale text by card width via .guide-front in GuideCard.vue.
  */
-defineProps<{ mode?: 'solo' | 'versus' | 'playground' }>();
+defineProps<{
+  mode?: 'solo' | 'versus' | 'playground';
+  /** When true, render a "Start tutorial" CTA at the top of the body. */
+  supportsTutorial?: boolean;
+  /** When true, the CTA flips to "Replay tutorial". */
+  tutorialCompleted?: boolean;
+}>();
+
+defineEmits<{
+  (e: 'start-tutorial'): void;
+}>();
 </script>
 
 <template>
@@ -11,6 +21,16 @@ defineProps<{ mode?: 'solo' | 'versus' | 'playground' }>();
   <div v-if="mode === 'solo'" class="guide-grid">
     <div class="left-col">
       <h2 class="guide-title">Solo · Time Attack</h2>
+      <button
+        v-if="supportsTutorial"
+        type="button"
+        class="tutorial-cta"
+        :class="{ 'is-completed': tutorialCompleted }"
+        @click.stop="$emit('start-tutorial')"
+      >
+        <span class="tutorial-cta-label">{{ tutorialCompleted ? 'Replay tutorial' : 'Start tutorial' }}</span>
+        <span v-if="tutorialCompleted" class="tutorial-cta-check" aria-hidden="true">✓</span>
+      </button>
 
       <section class="section">
         <h3>Goal</h3>
@@ -89,6 +109,16 @@ defineProps<{ mode?: 'solo' | 'versus' | 'playground' }>();
       <h2 class="guide-title">
         {{ mode === 'playground' ? 'Playground · Sandbox' : 'Versus · Turn-based' }}
       </h2>
+      <button
+        v-if="supportsTutorial"
+        type="button"
+        class="tutorial-cta"
+        :class="{ 'is-completed': tutorialCompleted }"
+        @click.stop="$emit('start-tutorial')"
+      >
+        <span class="tutorial-cta-label">{{ tutorialCompleted ? 'Replay tutorial' : 'Start tutorial' }}</span>
+        <span v-if="tutorialCompleted" class="tutorial-cta-check" aria-hidden="true">✓</span>
+      </button>
 
       <section class="section">
         <h3>Goal</h3>

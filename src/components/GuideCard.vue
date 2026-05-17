@@ -14,7 +14,20 @@ import GuideContent from './GuideContent.vue';
 defineProps<{
   mobile?: boolean;
   mode?: 'solo' | 'versus' | 'playground';
+  /** When true, the GuideContent renders a "Start tutorial" CTA at the top of the body. */
+  supportsTutorial?: boolean;
+  /** When true, the tutorial CTA flips to "Replay tutorial" with a check. */
+  tutorialCompleted?: boolean;
 }>();
+
+const emit = defineEmits<{
+  (e: 'start-tutorial'): void;
+}>();
+
+function onStartTutorial() {
+  open.value = false;        // close the guide so the route change isn't masked
+  emit('start-tutorial');
+}
 
 const BACK = '/guides/guides-back.png';
 
@@ -79,7 +92,12 @@ const cardStyle = computed(() => {
           class="absolute inset-0 backface-hidden rounded-lg shadow-xl ring-1 ring-black/15 guide-front"
           style="transform: rotateY(180deg);"
         >
-          <GuideContent :mode="mode" />
+          <GuideContent
+            :mode="mode"
+            :supports-tutorial="supportsTutorial"
+            :tutorial-completed="tutorialCompleted"
+            @start-tutorial="onStartTutorial"
+          />
         </div>
       </div>
     </button>
@@ -163,7 +181,12 @@ const cardStyle = computed(() => {
             :style="{ width: 'min(100%, 480px)', height: 'min(88dvh, 720px)' }"
             @click.stop
           >
-            <GuideContent :mode="mode" />
+            <GuideContent
+            :mode="mode"
+            :supports-tutorial="supportsTutorial"
+            :tutorial-completed="tutorialCompleted"
+            @start-tutorial="onStartTutorial"
+          />
             <button
               type="button"
               class="absolute -top-8 right-2 z-10 px-3 py-1 rounded-full text-xs font-extrabold uppercase tracking-widest text-cream-soft"
@@ -348,5 +371,49 @@ const cardStyle = computed(() => {
   font-size: 2.5cqw;
   color: rgba(60, 40, 30, 0.45);
   font-style: italic;
+}
+
+/* Tutorial CTA — pinned at the top of the guide body, prominent enough to act as a
+ * "primary action" pill but visually distinct from the rules sections. Tap pushes a
+ * route change to ?tutorial=1. */
+:deep(.tutorial-cta) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1cqw;
+  width: 100%;
+  margin: 0 0 2.5cqw;
+  padding: 1.8cqw 2.5cqw;
+  border: 0;
+  border-radius: 9999px;
+  background: var(--color-coral);
+  color: var(--color-cream-soft);
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 3cqw;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: 0 1cqw 2cqw rgba(231, 89, 61, 0.3);
+  transition: transform 120ms ease, background-color 120ms ease;
+}
+:deep(.tutorial-cta:hover) { background: var(--color-coral-deep); }
+:deep(.tutorial-cta:active) { transform: scale(0.97); }
+:deep(.tutorial-cta.is-completed) {
+  background: rgba(231, 89, 61, 0.14);
+  color: var(--color-coral-deep);
+  box-shadow: none;
+}
+:deep(.tutorial-cta-check) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 3.6cqw;
+  height: 3.6cqw;
+  border-radius: 9999px;
+  background: var(--color-coral);
+  color: var(--color-cream-soft);
+  font-size: 2.4cqw;
+  font-weight: 800;
 }
 </style>

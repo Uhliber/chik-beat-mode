@@ -52,17 +52,13 @@ function openSettings() {
         class="menu-btn menu-btn-primary menu-stagger"
         style="--stagger-delay: 320ms;"
         @click="startSolo"
-      >
-        Solo
-      </button>
+      >Solo</button>
       <button
         type="button"
         class="menu-btn menu-btn-primary menu-stagger"
         style="--stagger-delay: 420ms;"
         @click="startVersus"
-      >
-        Versus
-      </button>
+      >Versus</button>
       <button
         type="button"
         class="menu-btn menu-btn-primary menu-stagger"
@@ -137,6 +133,7 @@ function openSettings() {
   opacity: 0.55;
   cursor: not-allowed;
 }
+
 
 /* Stagger entrance: each .menu-stagger fades + slides up a beat after the previous one
    via its own `--stagger-delay` inline style. The disabled Login button keeps its 0.55

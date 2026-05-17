@@ -151,6 +151,7 @@ watch(
             : '0 2px 8px rgba(0,0,0,0.2)',
       }"
       :data-seat-index="player.seatIndex"
+      :data-tutorial-target="`seat-${player.seatIndex}`"
     >
       <span>{{ player.id.toUpperCase() }}</span>
       <span class="ml-1 px-1.5 rounded-full bg-black/25 text-[10px] font-mono">

@@ -14,10 +14,13 @@ import SidePanel from '@/components/SidePanel.vue';
 import SettingsPanel from '@/components/SettingsPanel.vue';
 import SnapDrawnOverlay from '@/components/SnapDrawnOverlay.vue';
 import PauseOverlay from '@/components/PauseOverlay.vue';
+import TutorialOverlay from '@/components/TutorialOverlay.vue';
 import IconVolume from '@/components/icons/IconVolume.vue';
 import { useGame } from '@/composables/useGame';
 import { useBeatAudio } from '@/composables/useBeatAudio';
 import { useResponsive } from '@/composables/useResponsive';
+import { useTutorial } from '@/composables/useTutorial';
+import { loadTutorialCompletion } from '@/tutorial/persistence';
 
 const route = useRoute();
 const router = useRouter();
@@ -73,6 +76,48 @@ const {
   submitSoloAction,
   submitVersusAction,
 } = useGame({ initialMode });
+
+// Tutorial mode: ?tutorial=1 query flips this on. Solo and Versus each have their own
+// scripted walk-through. Playground is a tutorial-less sandbox. When active, the
+// SimulationController is paused on every step that expects player input; the overlay
+// drives the lifecycle.
+const isTutorial = computed(() => {
+  if (route.query.tutorial !== '1') return false;
+  return initialMode === 'solo' || initialMode === 'versus';
+});
+
+const tutorial = isTutorial.value
+  ? useTutorial({
+      mode: initialMode as 'solo' | 'versus',
+      game,
+      controller,
+      pendingFlights,
+    })
+  : null;
+
+// Tutorial completion flags — surfaced into the in-game GuideCard so the "Start
+// tutorial" button can flip to "Replay tutorial" once done.
+const tutorialCompletion = ref({ solo: false, versus: false });
+void loadTutorialCompletion().then((c) => { tutorialCompletion.value = c; });
+
+function onStartTutorialFromGuide() {
+  // Re-route into PlayView with tutorial=1; the route guard re-runs setup.
+  router.push({ name: 'play', query: { mode: initialMode, tutorial: '1' } });
+}
+
+// Tutorial completion: we used to auto-route on phase === 'done', but that gave the
+// user no time to see the "You're ready" celebration. Now phase='done' freezes the
+// overlay on the final step (with a "Back to menu" CTA); routing only happens when the
+// user clicks that button via the `finish` emit.
+
+function onTutorialQuit() {
+  tutorial?.quit();
+  router.push({ name: 'menu' });
+}
+function onTutorialFinish() {
+  tutorial?.quit();
+  router.push({ name: 'menu' });
+}
 
 // Reactive snap-card + drawer + legal targets for the SnapDrawnOverlay. Both human
 // and AI's pending snaps surface the overlay — for the AI the chips are read-only and
@@ -449,7 +494,14 @@ function onPauseOverlayTap() {
       />
     </div>
 
-    <GuideCard v-if="isMobile" mobile :mode="mode" />
+    <GuideCard
+      v-if="isMobile && !isTutorial"
+      mobile
+      :mode="mode"
+      :tutorial-completed="mode === 'solo' ? tutorialCompletion.solo : mode === 'versus' ? tutorialCompletion.versus : false"
+      :supports-tutorial="mode === 'solo' || mode === 'versus'"
+      @start-tutorial="onStartTutorialFromGuide"
+    />
     <button
       v-if="isMobile"
       type="button"
@@ -461,11 +513,16 @@ function onPauseOverlayTap() {
     </button>
 
     <aside
-      v-if="!isMobile"
+      v-if="!isMobile && !isTutorial"
       class="absolute top-20 sm:top-23 left-3 sm:left-4 flex flex-col gap-5"
     >
       <div class="relative z-30">
-        <GuideCard :mode="mode" />
+        <GuideCard
+          :mode="mode"
+          :tutorial-completed="mode === 'solo' ? tutorialCompletion.solo : mode === 'versus' ? tutorialCompletion.versus : false"
+          :supports-tutorial="mode === 'solo' || mode === 'versus'"
+          @start-tutorial="onStartTutorialFromGuide"
+        />
       </div>
     </aside>
 
@@ -523,7 +580,7 @@ function onPauseOverlayTap() {
     </main>
 
     <PauseOverlay
-      v-if="state.status === 'paused'"
+      v-if="state.status === 'paused' && !isTutorial"
       @resume="onPauseOverlayTap"
     />
 
@@ -531,7 +588,7 @@ function onPauseOverlayTap() {
          flight, so it never covers the deck/cards mid-game. The small header button
          stays available too; this one is the prominent "begin" affordance. -->
     <div
-      v-if="caps.isTurnBased && !winnerId && (state.status === 'idle' || state.status === 'ended')"
+      v-if="!isTutorial && caps.isTurnBased && !winnerId && (state.status === 'idle' || state.status === 'ended')"
       class="absolute inset-0 z-30 flex items-center justify-center pointer-events-none font-subtitle"
     >
       <button
@@ -633,6 +690,25 @@ function onPauseOverlayTap() {
 
     <!-- Snap-drawn surfaces inline on the deck via SnapDrawnOverlay (mounted INSIDE
          GameTable above) — replaces the previous modal chooser. -->
+
+    <!-- Tutorial overlay — bottom speech card + spotlight backdrop. Only mounts when
+         ?tutorial=1 is in the route. Collapses while the SnapDrawnOverlay is up so the
+         chooser chips stay reachable. -->
+    <TutorialOverlay
+      v-if="tutorial"
+      :step="tutorial.currentStep.value"
+      :index="tutorial.currentStepIndex.value"
+      :total="tutorial.total"
+      :phase="tutorial.phase.value"
+      :spotlight-selector="tutorial.spotlightSelector.value"
+      :card-position="tutorial.cardPosition.value"
+      :hint-visible="tutorial.hintVisible.value"
+      :collapsed="!!pendingSnapCard"
+      @next="tutorial.nextNarrative"
+      @skip-step="tutorial.skipStep"
+      @quit="onTutorialQuit"
+      @finish="onTutorialFinish"
+    />
 
     <!-- Toast: floating pill at the bottom of the viewport. Currently used only for the
          "restart to apply new config" nudge; auto-dismisses after a few seconds. -->

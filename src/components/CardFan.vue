@@ -173,6 +173,7 @@ const circleBoxSize = computed(() => (circleRadius.value + cardW.value * 1.6) * 
         transition: 'transform 240ms cubic-bezier(.2,.7,.2,1)',
       }"
       :data-card-id="layout.card.id"
+      :data-tutorial-target="`card-${layout.card.id}`"
     >
       <button
         v-if="interactive && (!cardInteractive || cardInteractive(layout.card.id))"
@@ -216,6 +217,7 @@ const circleBoxSize = computed(() => (circleRadius.value + cardW.value * 1.6) * 
         transition: 'transform 220ms cubic-bezier(.2,.7,.2,1)',
       }"
       :data-card-id="layout.card.id"
+      :data-tutorial-target="`card-${layout.card.id}`"
     >
       <button
         v-if="interactive"
