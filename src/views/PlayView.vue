@@ -175,12 +175,18 @@ const { fx } = useBeatAudio();
  *  either way from Settings > Display > "Guide on table". */
 const guideOnTable = computed(() => guideOnTablePref.value ?? !isMobile.value);
 
-/** Pre-open emphasis flag for the Halo-Halo Chik. True while nothing has opened the
- *  game yet — Solo's `idle` (player slams Halo-Halo to begin) and Versus's `idle` +
- *  `opening` (after Start tap, before Halo-Halo lands). Threaded into GameTable, which
- *  only applies the pulse to a Halo-Halo actually IN the human's hand, so Versus seats
- *  that didn't draw the opener stay quiet. */
-const pulseHaloHalo = computed(() => state.status === 'idle' || state.status === 'opening');
+/** Pre-open emphasis flag for the Halo-Halo Chik. True until the game has actually
+ *  been opened (= the Halo-Halo has been played for the first time). This covers Solo
+ *  before the first slam, and Versus both before AND after pressing Start — so the
+ *  card keeps glowing once the round begins, right up until the player plays it.
+ *
+ *  `game.opened` is a plain (non-reactive) field on the engine; touching `state.version`
+ *  inside the computed re-runs us whenever useGame bumps the version after a play. */
+const pulseHaloHalo = computed(() => {
+  if (state.status === 'ended' || state.status === 'paused') return false;
+  void state.version;
+  return !game.value.opened;
+});
 
 /** When the user picks "How to play" from Settings, we close the settings sheet and
  *  surface the rules in a modal overlay. Independent of guideOnTable so the user can
