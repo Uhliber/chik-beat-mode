@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router';
 import { useBeatAudio } from '@/composables/useBeatAudio';
+import { FLAGS } from '@/config/flags';
 
 const router = useRouter();
 const { fx } = useBeatAudio();
@@ -60,6 +61,7 @@ function openSettings() {
         @click="startVersus"
       >Versus</button>
       <button
+        v-if="FLAGS.playgroundEnabled"
         type="button"
         class="menu-btn menu-btn-primary menu-stagger"
         style="--stagger-delay: 520ms;"

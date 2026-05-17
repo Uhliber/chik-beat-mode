@@ -19,6 +19,7 @@ import IconVolume from '@/components/icons/IconVolume.vue';
 import { useGame } from '@/composables/useGame';
 import { useBeatAudio } from '@/composables/useBeatAudio';
 import { useResponsive } from '@/composables/useResponsive';
+import { FLAGS } from '@/config/flags';
 import { useTutorial } from '@/composables/useTutorial';
 import { loadTutorialCompletion } from '@/tutorial/persistence';
 
@@ -28,7 +29,10 @@ const router = useRouter();
 function readModeFromRoute(): SimMode {
   const raw = Array.isArray(route.query.mode) ? route.query.mode[0] : route.query.mode;
   if (raw === 'solo') return 'solo';
-  if (raw === 'playground') return 'playground';
+  // Playground is gated behind a build-time feature flag. If a stale URL points
+  // here while the flag is off (e.g. another user opens a shared link), silently
+  // coerce to Versus so they get a sensible game rather than a broken state.
+  if (raw === 'playground' && FLAGS.playgroundEnabled) return 'playground';
   return 'versus';
 }
 
