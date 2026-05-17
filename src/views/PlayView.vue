@@ -175,6 +175,13 @@ const { fx } = useBeatAudio();
  *  either way from Settings > Display > "Guide on table". */
 const guideOnTable = computed(() => guideOnTablePref.value ?? !isMobile.value);
 
+/** Pre-open emphasis flag for the Halo-Halo Chik. True while nothing has opened the
+ *  game yet — Solo's `idle` (player slams Halo-Halo to begin) and Versus's `idle` +
+ *  `opening` (after Start tap, before Halo-Halo lands). Threaded into GameTable, which
+ *  only applies the pulse to a Halo-Halo actually IN the human's hand, so Versus seats
+ *  that didn't draw the opener stay quiet. */
+const pulseHaloHalo = computed(() => state.status === 'idle' || state.status === 'opening');
+
 /** When the user picks "How to play" from Settings, we close the settings sheet and
  *  surface the rules in a modal overlay. Independent of guideOnTable so the user can
  *  read the rules even when the floating card is hidden. */
@@ -314,21 +321,22 @@ watch(settingsOpen, (isOpen) => {
   }
 });
 
-const primaryLabel = computed(() => {
-  switch (state.status) {
-    case 'opening': return '…';
-    case 'running': return 'Pause';
-    case 'paused':  return 'Resume';
-    case 'ended':   return 'Restart';
-    default:        return 'Start';
-  }
-});
+/** Primary action used only by the centre "Start / Play Again" CTA (Versus + Playground).
+ *  Solo has no Start button — players auto-start by slamming their pulsing Halo-Halo —
+ *  so this handler is intentionally Versus-shaped. */
 function onPrimary() {
   fx('tap');
   if (state.status === 'idle') start();
-  else if (state.status === 'running') pause();
-  else if (state.status === 'paused') resume();
   else if (state.status === 'ended') onRestart();
+}
+
+/** Dedicated Pause/Resume handler for the top-header pause button. Always safe to call
+ *  even when status falls outside the running/paused window — the underlying useGame
+ *  pause/resume are no-ops otherwise — but the button is gated in the template anyway. */
+function onPauseResume() {
+  fx('tap');
+  if (state.status === 'running') pause();
+  else if (state.status === 'paused') resume();
 }
 
 function onBackToMenu() {
@@ -397,14 +405,23 @@ function onPauseOverlayTap() {
             <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
           </svg>
         </button>
+        <!-- Pause / Resume — own dedicated control. Hidden in idle / opening / ended
+             states (nothing to pause); flips icon based on whether we're running. -->
         <button
+          v-if="state.status === 'running' || state.status === 'paused'"
           type="button"
-          class="px-4 py-2 rounded-full font-extrabold uppercase tracking-wider text-cream-soft text-sm shadow-md"
-          :style="{ background: 'var(--color-coral-deep)' }"
-          :disabled="state.status === 'opening'"
-          @click="onPrimary"
+          :aria-label="state.status === 'paused' ? 'Resume' : 'Pause'"
+          :title="state.status === 'paused' ? 'Resume' : 'Pause'"
+          class="w-9 h-9 rounded-full bg-cream-soft/95 ring-1 ring-black/10 flex items-center justify-center text-coral-deep shadow-md"
+          @click="onPauseResume"
         >
-          {{ primaryLabel }}
+          <svg v-if="state.status === 'running'" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+            <rect x="6" y="5" width="4" height="14" rx="1" />
+            <rect x="14" y="5" width="4" height="14" rx="1" />
+          </svg>
+          <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+            <polygon points="6,4 6,20 20,12" />
+          </svg>
         </button>
         <button
           type="button"
@@ -436,16 +453,6 @@ function onPauseOverlayTap() {
       </button>
 
       <button
-        type="button"
-        class="px-3 py-1.5 rounded-full font-extrabold uppercase tracking-widest text-[11px] text-cream-soft shrink-0"
-        :style="{ background: 'var(--color-coral-deep)', boxShadow: '0 4px 10px rgba(0,0,0,0.25)' }"
-        :disabled="state.status === 'opening'"
-        @click="onPrimary"
-      >
-        {{ primaryLabel }}
-      </button>
-
-      <button
         v-if="state.status !== 'idle'"
         type="button"
         aria-label="Restart"
@@ -456,6 +463,23 @@ function onPauseOverlayTap() {
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="23 4 23 10 17 10" />
           <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+        </svg>
+      </button>
+
+      <button
+        v-if="state.status === 'running' || state.status === 'paused'"
+        type="button"
+        :aria-label="state.status === 'paused' ? 'Resume' : 'Pause'"
+        class="w-9 h-9 rounded-full bg-cream-soft/95 ring-1 ring-black/10 flex items-center justify-center text-coral-deep shrink-0"
+        :style="{ boxShadow: '0 4px 10px rgba(0,0,0,0.18)' }"
+        @click="onPauseResume"
+      >
+        <svg v-if="state.status === 'running'" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+          <rect x="6" y="5" width="4" height="14" rx="1" />
+          <rect x="14" y="5" width="4" height="14" rx="1" />
+        </svg>
+        <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+          <polygon points="6,4 6,20 20,12" />
         </svg>
       </button>
 
@@ -587,6 +611,7 @@ function onPauseOverlayTap() {
         :pending-snap-interactive="pendingSnapIsHuman"
         :pending-snap-ai-pick="pendingSnapAiPick"
         :prompt-size="promptSize"
+        :pulse-halo-halo="pulseHaloHalo"
         @solo-slam="onSoloSlam"
         @versus-play="onVersusPlay"
         @draw-deck-click="onDrawDeckClick"
@@ -600,8 +625,8 @@ function onPauseOverlayTap() {
     />
 
     <!-- Big central Start / Play Again CTA for Versus — only shown when nothing is in
-         flight, so it never covers the deck/cards mid-game. The small header button
-         stays available too; this one is the prominent "begin" affordance. -->
+         flight, so it never covers the deck/cards mid-game. With the top-header Start
+         button removed, this is the only "begin" affordance for Versus + Playground. -->
     <div
       v-if="!isTutorial && caps.isTurnBased && !winnerId && (state.status === 'idle' || state.status === 'ended')"
       class="absolute inset-0 z-30 flex items-center justify-center pointer-events-none font-subtitle"
@@ -613,6 +638,20 @@ function onPauseOverlayTap() {
       >
         {{ state.status === 'ended' ? 'Play Again' : 'Start' }}
       </button>
+    </div>
+
+    <!-- Solo "play Halo-Halo to start" prompt. Solo auto-starts on the first slam, so
+         there's no Start button — the player just plays the pulsing Halo-Halo from the
+         hand. Text floats centred above the deck; pointer-events:none so it never
+         intercepts the drag-aim gesture beneath it. -->
+    <div
+      v-if="!isTutorial && caps.isTimeAttack && !winnerId && state.status === 'idle'"
+      class="absolute inset-0 z-20 flex items-center justify-center pointer-events-none px-6"
+    >
+      <div class="solo-start-hint">
+        <div class="solo-start-hint-line-1">Slam your Halo-Halo Chik</div>
+        <div class="solo-start-hint-line-2">to start the round</div>
+      </div>
     </div>
 
     <aside v-if="!isMobile && eventLogEnabled" class="absolute bottom-3 right-3 w-70 max-w-[80vw] z-20">
@@ -863,6 +902,37 @@ function onPauseOverlayTap() {
       0 18px 36px rgba(0, 0, 0, 0.45),
       0 0 0 12px rgba(252, 246, 230, 0.22);
   }
+}
+
+/* Solo's "play your Halo-Halo Chik to start" hint. Floats centred above the table; the
+ * Halo-Halo card in the human's hand provides the actual call to action via its
+ * heartbeat glow (see CardFan .halo-pulse). Two stacked lines keep the message
+ * readable at any viewport without competing with the deck visually. */
+.solo-start-hint {
+  text-align: center;
+  color: var(--color-cream-soft);
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+  animation: solo-start-hint-pulse 2.4s ease-in-out infinite;
+}
+.solo-start-hint-line-1 {
+  font-family: Quiapo, var(--font-display);
+  font-size: clamp(1.4rem, 4.4vw, 2.2rem);
+  letter-spacing: 0.04em;
+  line-height: 1.05;
+}
+.solo-start-hint-line-2 {
+  margin-top: 4px;
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: clamp(0.85rem, 2.4vw, 1rem);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  opacity: 0.88;
+}
+@keyframes solo-start-hint-pulse {
+  0%, 100% { opacity: 0.92; transform: translateY(0); }
+  50%      { opacity: 1;    transform: translateY(-3px); }
 }
 
 .toast-root {

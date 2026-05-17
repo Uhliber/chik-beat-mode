@@ -223,7 +223,10 @@ const circleBoxSize = computed(() => (circleRadius.value + cardW.value * 1.6) * 
         v-if="interactive"
         type="button"
         class="block hover:-translate-y-2 transition-transform duration-200 cursor-grab active:cursor-grabbing focus:outline-none"
-        :class="{ 'is-fresh': freshIds && freshIds.has(layout.card.id) }"
+        :class="{
+          'is-fresh': freshIds && freshIds.has(layout.card.id),
+          'halo-pulse': cardPulse && cardPulse(layout.card.id),
+        }"
         :style="{ touchAction: 'none' }"
         @pointerdown.prevent="onPointerDown(layout.card, $event)"
       >
@@ -232,7 +235,10 @@ const circleBoxSize = computed(() => (circleRadius.value + cardW.value * 1.6) * 
       <div
         v-else
         class="block pointer-events-none"
-        :class="{ 'is-fresh': freshIds && freshIds.has(layout.card.id) }"
+        :class="{
+          'is-fresh': freshIds && freshIds.has(layout.card.id),
+          'halo-pulse': cardPulse && cardPulse(layout.card.id),
+        }"
       >
         <CardView :card="layout.card" :face-up="faceUp" :width="cardW" />
       </div>
@@ -287,14 +293,31 @@ const circleBoxSize = computed(() => (circleRadius.value + cardW.value * 1.6) * 
 .circle-card-btn:hover :deep(.shadow-md) {
   box-shadow: 0 8px 14px rgba(0, 0, 0, 0.28);
 }
-/* Halo-Halo gets a heartbeat pulse pre-open so the player knows where the game starts. */
+/* Halo-Halo gets a heartbeat pulse + rainbow halo glow pre-open so the player knows
+ * exactly which card starts the game. Two stacked drop-shadows (warm cream core +
+ * coral outer ring) sync with the scale so the bloom intensifies on the upbeat. */
 .halo-pulse {
   animation: halo-heartbeat 1.4s ease-in-out infinite;
-  filter: drop-shadow(0 0 12px rgba(252, 246, 230, 0.6));
+  will-change: transform, filter;
 }
 @keyframes halo-heartbeat {
-  0%, 100% { transform: scale(1); }
-  35%      { transform: scale(1.10); }
-  70%      { transform: scale(1.04); }
+  0%, 100% {
+    transform: scale(1);
+    filter:
+      drop-shadow(0 0 6px rgba(252, 246, 230, 0.55))
+      drop-shadow(0 0 14px rgba(231, 89, 61, 0.35));
+  }
+  35% {
+    transform: scale(1.12);
+    filter:
+      drop-shadow(0 0 14px rgba(252, 246, 230, 0.9))
+      drop-shadow(0 0 28px rgba(231, 89, 61, 0.7));
+  }
+  70% {
+    transform: scale(1.05);
+    filter:
+      drop-shadow(0 0 10px rgba(252, 246, 230, 0.7))
+      drop-shadow(0 0 20px rgba(231, 89, 61, 0.5));
+  }
 }
 </style>

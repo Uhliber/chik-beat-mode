@@ -42,6 +42,10 @@ const props = defineProps<{
    *  parent supplies this card only when it actually wants the clone visible (e.g. at XL
    *  promptSize). */
   extraPromptCard?: Card | null;
+  /** When true, ANY Halo-Halo Chik in this seat's hand renders with a heartbeat pulse
+   *  + glow to tell the player "this is what starts the game". The parent decides when
+   *  to flip this on (pre-open phases of Solo/Versus); the seat just decorates. */
+  pulseHaloHalo?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -96,6 +100,17 @@ const topCardOverlapPx = computed(() => {
 const onCardAimStart = (payload: { card: Card; el: HTMLElement; clientX: number; clientY: number }) => {
   emit('card-aim-start', { ...payload, player: props.player });
 };
+
+/** Card-pulse predicate for the human's hand: highlight Halo-Halo cards when the
+ *  parent has asked for pre-open emphasis. Returns false for opponents' hands so the
+ *  glow only ever appears on the player who's about to open the game. */
+const haloHaloIds = computed<Set<string>>(() => {
+  if (!props.pulseHaloHalo || !props.isHumanSeat) return new Set();
+  const ids = new Set<string>();
+  for (const c of props.player.hand) if (c.isHaloHalo) ids.add(c.id);
+  return ids;
+});
+const cardPulse = (cardId: string): boolean => haloHaloIds.value.has(cardId);
 
 // SpeechBubble visibility: track the latest shoutKey, show for ~800ms then hide.
 const showBubble = ref(false);
@@ -234,6 +249,7 @@ watch(
           :max-width="humanHandMaxWidth"
           :hidden-ids="hiddenIds"
           :fresh-ids="freshCardIds"
+          :card-pulse="cardPulse"
           @card-aim-start="onCardAimStart"
         />
       </div>
