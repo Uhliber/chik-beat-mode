@@ -11,7 +11,11 @@ function startSolo() {
 }
 function startVersus() {
   fx('tap');
-  router.push({ name: 'play', query: { mode: 'play' } });
+  router.push({ name: 'play', query: { mode: 'versus' } });
+}
+function startPlayground() {
+  fx('tap');
+  router.push({ name: 'play', query: { mode: 'playground' } });
 }
 function openSettings() {
   fx('tap');
@@ -59,24 +63,32 @@ function openSettings() {
       >
         Versus
       </button>
+      <button
+        type="button"
+        class="menu-btn menu-btn-primary menu-stagger"
+        style="--stagger-delay: 520ms;"
+        @click="startPlayground"
+      >
+        Playground
+      </button>
 
       <!-- Login is feature-flagged off in V1 (Phase 2 ships auth). Render disabled so
            the slot is reserved for the eventual button. -->
       <button
         type="button"
         class="menu-btn menu-btn-ghost menu-stagger"
-        style="--stagger-delay: 520ms;"
+        style="--stagger-delay: 620ms;"
         disabled
         aria-disabled="true"
       >
-        Login (soon)
+        Online (soon)
       </button>
     </main>
 
     <!-- Bottom: settings + version -->
     <footer
       class="flex items-center justify-between w-full px-6 pb-6 menu-stagger"
-      style="--stagger-delay: 640ms;"
+      style="--stagger-delay: 740ms;"
     >
       <button
         type="button"

@@ -1,3 +1,13 @@
+/**
+ * Chik! v1.0 core types.
+ *
+ * Two play modes share the engine:
+ *  - SOLO   : single player vs. the clock, 2 bases (Left, Right), Left/Right/Free prompts only.
+ *  - VERSUS : 3-6 players, turn-based, full v1.0 ruleset with all six prompts.
+ *
+ * The engine is framework-agnostic — no Vue, no Capacitor.
+ */
+
 export const CHANT_ORDER = ['chik', 'wally', 'hindo', 'pop', 'tambo', 'riki'] as const;
 export type ChantWord = typeof CHANT_ORDER[number];
 
@@ -10,48 +20,101 @@ export const CHANT_POINTS: Record<ChantWord, number> = {
   riki: 6,
 };
 
-export type CardKind = 'standard' | 'reverse' | 'decoy' | 'halo-halo';
+/**
+ * Prompt — what the card does when it sits in front of a player (Versus) or which base
+ * it can be slammed on (Solo, where only `right`, `left`, `free` appear in the deck).
+ */
+export type CardPrompt = 'right' | 'left' | 'free' | 'stop' | 'snap' | 'fetch';
 
-export type BaseSlot = ChantWord | 'main';
+export const CARD_PROMPTS: readonly CardPrompt[] = ['right', 'left', 'free', 'stop', 'snap', 'fetch'] as const;
+
+/** Solo physical-base side. Versus has no center bases — prompts attach to seats instead. */
+export type BaseSide = 'left' | 'right';
+
+export type GameMode = 'solo' | 'versus' | 'playground';
+
+/**
+ * Playground deck composition — total count of each prompt in the custom-built deck.
+ * Within each prompt, words are distributed with Chik weighted 2× (matches the canonical
+ * v1.0 ratio). So a multiplier-of-7 makes the math clean: at N×7, the prompt contributes
+ * 2N Chik cards plus N of each other word.
+ */
+export type PlaygroundComposition = Record<CardPrompt, number>;
+
+export interface PlaygroundSetup {
+  playerCount: number;
+  /** 3..14 cards per player at deal time. */
+  handSize: number;
+  composition: PlaygroundComposition;
+}
 
 export type PlayerId = string;
 
-export interface PlayResultBase {
-  type: 'success' | 'tie' | 'miscall';
-  playerId: PlayerId;
-  cardId: string;
-  targetBase: BaseSlot;
-}
+// ============================================================================
+// Solo action / result
+// ============================================================================
 
-export interface SuccessResult extends PlayResultBase {
-  type: 'success';
-  reverseTriggered: boolean;
-}
+export type SoloAction =
+  | { type: 'slam'; cardId: string; baseSide: BaseSide }
+  | { type: 'draw' };
 
-export interface TieResult extends PlayResultBase {
-  type: 'tie';
-  tiedWith: PlayerId[];
-}
+export type SoloPenaltyReason = 'wrong-base' | 'wrong-beat' | 'unnecessary-draw';
 
-export interface MiscallResult extends PlayResultBase {
-  type: 'miscall';
-  reason: 'wrong-word' | 'wrong-base' | 'card-not-in-hand' | 'out-of-turn';
-}
+export type SoloActionResult =
+  | { type: 'opened'; cardId: string; baseSide: BaseSide }
+  | { type: 'success'; cardId: string; baseSide: BaseSide }
+  | { type: 'drew'; cardId: string | null }
+  | { type: 'penalty'; reason: SoloPenaltyReason; cardId?: string; baseSide?: BaseSide; penaltyMs: number }
+  | { type: 'winner' };
 
-export type PlayResult = SuccessResult | TieResult | MiscallResult;
+// ============================================================================
+// Versus action / result
+// ============================================================================
+
+export type VersusAction =
+  | { type: 'play'; cardId: string; targetSeatIndex: number }
+  | { type: 'draw' }
+  | { type: 'snap-play'; targetSeatIndex: number };
+
+export type VersusRejectReason =
+  | 'not-your-turn'
+  | 'card-not-in-hand'
+  | 'wrong-beat'
+  | 'illegal-target'
+  | 'stopped'
+  | 'self-target'
+  | 'no-pending-snap';
+
+export type StrictPenaltyReason = 'wrong-beat' | 'illegal-target' | 'stopped';
+
+export type VersusActionResult =
+  | { type: 'played'; cardId: string; targetSeatIndex: number; chainTriggered: boolean }
+  | { type: 'drew'; cardId: string | null; from: 'pile' | 'hand'; snapPlayedImmediately: boolean }
+  | { type: 'rejected'; reason: VersusRejectReason }
+  | { type: 'winner'; playerId: PlayerId };
+
+// ============================================================================
+// Events emitted by the engine (subscribed by Vue layer)
+// ============================================================================
 
 export type GameEvent =
-  | { kind: 'setup'; playerCount: number }
+  | { kind: 'setup'; mode: GameMode; playerCount: number }
   | { kind: 'dealt' }
   | { kind: 'gameOpened'; openerId: PlayerId }
-  | { kind: 'slam'; playerId: PlayerId; cardId: string; targetBase: BaseSlot; shoutedWord: ChantWord; cardWord: ChantWord; cardKind: CardKind }
+  // Solo events
+  | { kind: 'soloSlam'; cardId: string; baseSide: BaseSide; cardWord: ChantWord; cardPrompt: CardPrompt }
+  | { kind: 'soloDraw'; cardId: string }
+  | { kind: 'soloPenalty'; reason: SoloPenaltyReason; cardId?: string; baseSide?: BaseSide; penaltyMs: number }
+  // Versus events
+  | { kind: 'versusPlay'; playerId: PlayerId; cardId: string; targetSeatIndex: number; cardWord: ChantWord; cardPrompt: CardPrompt }
+  | { kind: 'versusDraw'; playerId: PlayerId; cardId: string | null; from: 'pile' | 'hand'; fromPlayerId?: PlayerId }
+  | { kind: 'versusSnapDrawnAvailable'; playerId: PlayerId; cardId: string }
+  | { kind: 'versusSnapDrawnPlayed'; playerId: PlayerId; cardId: string }
+  | { kind: 'versusStrictPenalty'; playerId: PlayerId; cardId: string; reason: 'wrong-beat' | 'illegal-target' | 'stopped'; penaltyCardId: string | null }
+  | { kind: 'versusTurnChanged'; playerId: PlayerId; seatIndex: number; viaChain: boolean }
+  | { kind: 'versusChainStarted'; sourceSeatIndex: number; targetSeatIndex: number }
+  | { kind: 'versusChainEnded'; reason: 'target-played' | 'source-drew' }
+  | { kind: 'versusStopConverted' }   // draw pile emptied — Stops become Left/Right
+  // Shared
   | { kind: 'chantAdvanced'; from: ChantWord; to: ChantWord }
-  | { kind: 'chantReversed'; from: ChantWord; to: ChantWord }
-  | { kind: 'tie'; playerIds: PlayerId[]; cardIds: string[]; beat: ChantWord }
-  | { kind: 'miscall'; playerId: PlayerId; reason: MiscallResult['reason']; beat: ChantWord; cardId: string; cardWord: ChantWord; cardKind: CardKind | null; targetBase: BaseSlot; shoutedWord: ChantWord }
-  | { kind: 'penaltyTaken'; playerId: PlayerId; cardIds: string[]; fromBase: BaseSlot[] }
-  | { kind: 'beatChanged'; seatIndex: number; playerId: PlayerId }
-  | { kind: 'beatSkipped'; seatIndex: number; playerId: PlayerId; beat: ChantWord }
-  | { kind: 'soloPenalty'; playerId: PlayerId; cardId: string; cardWord: ChantWord; expectedBeat: ChantWord; penaltyMs: number }
-  | { kind: 'soloAutoFinish'; playerId: PlayerId; cardCount: number; totalPenaltyMs: number }
   | { kind: 'winner'; playerId: PlayerId };

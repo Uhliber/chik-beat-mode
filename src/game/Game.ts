@@ -1,56 +1,99 @@
 import { Card } from './Card';
 import { Player } from './Player';
 import { Chant } from './Chant';
-import { buildBaseDeck, shuffle } from './Deck';
-import {
-  CHANT_ORDER,
-  type BaseSlot,
-  type ChantWord,
-  type GameEvent,
-  type MiscallResult,
-  type PlayResult,
-  type PlayerId,
+import { buildSoloDeck, buildVersusDeck, buildPlaygroundDeck, shuffle } from './Deck';
+import { modeCaps } from './modes';
+import type {
+  BaseSide,
+  CardPrompt,
+  ChantWord,
+  GameEvent,
+  GameMode,
+  PlayerId,
+  PlaygroundSetup,
+  SoloAction,
+  SoloActionResult,
+  SoloPenaltyReason,
+  StrictPenaltyReason,
+  VersusAction,
+  VersusActionResult,
+  VersusRejectReason,
 } from './types';
-
-export interface BasePile {
-  slot: BaseSlot;
-  pile: Card[];
-  ownerId: PlayerId | null;
-}
-
-export interface PendingSlam {
-  playerId: PlayerId;
-  cardId: string;
-  targetBase: BaseSlot;
-  shoutedWord: ChantWord;
-}
 
 type Listener = (e: GameEvent) => void;
 
+const SOLO_PENALTY_MS = 2000;
+
+/** Which Solo bases are legal NEXT, given the prompt of the most-recently-slammed card.
+ *  Solo's direction gate flipped in v1.1: it's now the PREVIOUS card's prompt that
+ *  decides where the NEXT card must land — mirroring Versus where the recipient's top
+ *  prompt dictates how they can play. `null` (pre-open) means either base is fair game. */
+function allowedBasesAfter(prompt: CardPrompt | null): BaseSide[] {
+  if (prompt === 'left') return ['left'];
+  if (prompt === 'right') return ['right'];
+  return ['left', 'right'];
+}
+
 /**
- * Pure rules engine. Has no concept of time or animation.
- * Emits GameEvents that the view layer subscribes to.
+ * Pure rules engine. Has no concept of time or animation. The view layer subscribes via
+ * `on()` and reacts to `GameEvent` emissions.
+ *
+ * Two modes:
+ *  - Solo : single-player time-attack with two physical bases (Left, Right). Halo-Halo
+ *           opens, chant beat gates play, +2s penalty for wrong-base / wrong-beat /
+ *           unnecessary-draw. Win = empty hand + empty draw pile.
+ *  - Versus: 3-6 players, turn-based with prompts (Right/Left/Free/Stop/Snap/Fetch),
+ *           chain rule, no penalties. First to empty their hand wins.
  */
 export class Game {
   readonly players: Player[] = [];
-  readonly bases: Map<BaseSlot, BasePile> = new Map();
   readonly chant = new Chant();
 
-  /** True once the Halo-Halo Chik has been opened. */
+  /** Cards waiting to be drawn. Shared by both modes. */
+  drawPile: Card[] = [];
+  /** Solo only — Left and Right discard stacks. */
+  soloBases: { left: Card[]; right: Card[] } = { left: [], right: [] };
+  /** Solo only — the most-recently-slammed card. Its PROMPT (left/right/free) dictates
+   *  which base the NEXT card may be slammed on (left → left base, right → right base,
+   *  free → either). Null before the Halo-Halo opener lands, in which case Halo-Halo may
+   *  go on either base. The UI uses this id to highlight + enlarge the active prompt. */
+  soloActiveCardId: string | null = null;
+  soloActivePrompt: CardPrompt | null = null;
+  soloActiveBaseSide: BaseSide | null = null;
+
+  mode: GameMode = 'solo';
   opened = false;
   haloHaloOwnerId: PlayerId | null = null;
   winnerId: PlayerId | null = null;
+
+  // ----- Versus turn / chain state -----
+  /** Seat index of the player whose turn it is to act. Versus only. */
+  activeSeatIndex = -1;
+  /** Seat index of the player whose card most recently caused activeSeat to act. If the
+   *  active player is forced to draw, the chain source gets one bonus turn. Null when no
+   *  chain is in progress (e.g. clockwise rotation, or after a chain has ended). */
+  chainSourceSeatIndex: number | null = null;
+  /** Flips true the first time the draw pile empties. Once true, all Stops convert to
+   *  Left/Right (holder's choice) per the v1.0 rulebook. */
+  stopConverted = false;
   /**
-   * If non-null, only this player may slam — slams from anyone else are recorded as an
-   * 'out-of-turn' miscall. Set by the controller in Play (BEAT) mode; null in Simulation mode.
+   * Optional house rule: when true, the engine no longer hard-rejects illegal plays
+   * (wrong beat, wrong direction, stopped). Instead the play is rejected as a "strict
+   * penalty": the card stays in hand, the player is forced to draw 1 (respecting Fetch),
+   * and their turn ends. Lets players experiment with prompts and learn through
+   * feedback instead of being blocked by the UI. Default OFF — the canonical rulebook
+   * behaviour. Setter persists via UI/composable.
    */
-  activeBeatPlayerId: PlayerId | null = null;
+  strictPromptsEnabled = false;
   /**
-   * Game mode — set by the controller. The slam resolver branches on this for SOLO so
-   * a wrong-word slam still removes the card and emits a `soloPenalty` event (timer hit)
-   * instead of going through the normal miscall (penalty cards, etc.).
+   * Set when a player draws a Snap matching the current beat. Engine pauses until the
+   * drawer commits a direction (left/right/keep) via a `snap-direction` action. AI is
+   * auto-resolved by the controller; the human gets a UI chooser.
    */
-  mode: 'simulation' | 'play' | 'solo' = 'simulation';
+  pendingSnapDraw: { playerId: PlayerId; cardId: string } | null = null;
+  /** Records who played each Fetch card so we know whose hand to drain when its recipient
+   *  is forced to draw. Cleared on setup. */
+  private fetchOwners: Map<string, number> = new Map();
 
   private listeners: Listener[] = [];
   private rng: () => number;
@@ -70,535 +113,674 @@ export class Game {
     for (const l of this.listeners) l(e);
   }
 
-  // ---------------------------------------------------------------------------
-  // Setup
-  // ---------------------------------------------------------------------------
+  // ===========================================================================
+  // SETUP
+  // ===========================================================================
 
-  setup(playerCount: number): void {
-    if (playerCount < 1 || playerCount > 6) {
-      throw new Error('Player count must be between 1 and 6');
+  setupSolo(): void {
+    this.resetState();
+    this.mode = 'solo';
+    this.players.push(new Player('p1', 0));
+    this.players[0].isAI = false;
+
+    // Set aside Halo-Halo so it's guaranteed to be in the opening hand — otherwise the
+    // player could be forced to draw blindly until they fish the opener out of the deck,
+    // which is fiddly and not what Solo is meant to test.
+    const fullDeck = buildSoloDeck();
+    const halo = fullDeck.find((c) => c.isHaloHalo)!;
+    const rest = shuffle(fullDeck.filter((c) => !c.isHaloHalo), this.rng);
+    // Deal 13 random cards + 1 Halo-Halo = 14-card opening hand.
+    for (let i = 0; i < 13; i++) {
+      const card = rest.pop();
+      if (card) this.players[0].hand.push(card);
     }
+    this.players[0].hand.push(halo);
+    this.drawPile = rest;
+    this.haloHaloOwnerId = this.players[0].id;
 
-    // Reset state
-    this.players.length = 0;
-    this.bases.clear();
-    this.chant.current = 'chik';
-    this.opened = false;
-    this.haloHaloOwnerId = null;
-    this.winnerId = null;
-    this.activeBeatPlayerId = null;
+    this.emit({ kind: 'setup', mode: 'solo', playerCount: 1 });
+    this.emit({ kind: 'dealt' });
+  }
 
-    // Place main base
-    this.bases.set('main', { slot: 'main', pile: [], ownerId: null });
+  setupVersus(playerCount: number): void {
+    if (playerCount < 3 || playerCount > 6) {
+      throw new Error('Versus player count must be 3-6');
+    }
+    this.resetState();
+    this.mode = 'versus';
 
-    // Create players (seat 0 youngest by convention) and claim word bases clockwise.
-    // The first 6 (or fewer) seats claim their bases in chant order.
     for (let i = 0; i < playerCount; i++) {
-      const p = new Player(`p${i + 1}`, i);
-      this.players.push(p);
+      this.players.push(new Player(`p${i + 1}`, i));
     }
 
-    // Randomize which word each player claims this round.
-    // SOLO (1 player): skip claim entirely so every card lands on Main via the existing
-    // unowned-base redirect — keeps the rules engine consistent without solo-specific routing.
-    const shuffledWords = shuffle(CHANT_ORDER.slice(), this.rng);
-    const claimCount = playerCount === 1 ? 0 : playerCount;
-    for (let i = 0; i < claimCount; i++) {
-      const word = shuffledWords[i];
-      this.players[i].ownedBaseWord = word;
-      this.bases.set(word, { slot: word, pile: [], ownerId: this.players[i].id });
-    }
-    for (let i = claimCount; i < shuffledWords.length; i++) {
-      const word = shuffledWords[i];
-      this.bases.set(word, { slot: word, pile: [], ownerId: null });
+    // v1.0 setup: set aside Halo-Halo + (N-1) standard Chiks. Shuffle remainder, deal 6.
+    // Then shuffle the set-aside Chik pile and deal 1 to each player → 7 cards each.
+    const fullDeck = buildVersusDeck();
+    const halo = fullDeck.find((c) => c.isHaloHalo)!;
+    // Set aside (N-1) standard Chiks (any prompt). Free Chiks excluded so we don't
+    // double-dip into the Free prompt category beyond Halo-Halo.
+    const chikPool = fullDeck.filter((c) => c.word === 'chik' && !c.isHaloHalo);
+    const shuffledChikPool = shuffle(chikPool, this.rng);
+    const setAsideChiks = shuffledChikPool.slice(0, playerCount - 1);
+    const setAsideIds = new Set(setAsideChiks.map((c) => c.id));
+    setAsideIds.add(halo.id);
+
+    const remainder = fullDeck.filter((c) => !setAsideIds.has(c.id));
+    const shuffledRemainder = shuffle(remainder, this.rng);
+
+    // Deal 6 from the remainder to each player.
+    for (let r = 0; r < 6; r++) {
+      for (const p of this.players) {
+        const card = shuffledRemainder.pop();
+        if (card) p.hand.push(card);
+      }
     }
 
-    // Build, shuffle, and deal the deck.
-    // SOLO: drop decoys (their "any base" effect is meaningless with one base) but keep
-    // the rest of the original distribution — the Chik-heavy deck is part of the game's
-    // identity. Finishability is preserved by the safety-net rule (see applySoloChantSafetyNet):
-    // when the player has no card matching the current beat, the chant silently auto-advances.
-    let deck = buildBaseDeck();
-    if (this.mode === 'solo') deck = deck.filter((c) => c.kind !== 'decoy');
-    deck = shuffle(deck, this.rng);
-    this.dealAll(deck);
+    // Shuffle the set-aside Chik pile (incl. Halo-Halo) and deal 1 to each player.
+    const openers = shuffle([halo, ...setAsideChiks], this.rng);
+    for (let i = 0; i < playerCount; i++) {
+      const card = openers.pop();
+      if (card) this.players[i].hand.push(card);
+    }
 
-    // Find Halo-Halo owner.
+    // Sort all hands (Versus keeps hands sorted; players manually sort their own).
+    for (const p of this.players) p.sortHand();
+
+    // Remainder goes face-down as the draw pile.
+    this.drawPile = shuffledRemainder;
+
+    // Identify Halo-Halo holder.
     this.haloHaloOwnerId = this.players.find((p) =>
       p.hand.some((c) => c.isHaloHalo),
     )?.id ?? null;
 
-    this.emit({ kind: 'setup', playerCount });
+    // The Halo-Halo holder takes the first turn.
+    const haloSeat = this.players.findIndex((p) => p.id === this.haloHaloOwnerId);
+    this.activeSeatIndex = haloSeat >= 0 ? haloSeat : 0;
+
+    this.emit({ kind: 'setup', mode: 'versus', playerCount });
     this.emit({ kind: 'dealt' });
   }
 
-  private dealAll(deck: Card[]): void {
-    // Deal round-robin starting from player 0. (Rulebook's first-recipient lookup is not
-    // visually important for the simulation — random shuffle already randomizes who gets cards.)
-    let idx = 0;
-    for (const card of deck) {
-      this.players[idx % this.players.length].hand.push(card);
-      idx++;
+  /**
+   * Playground setup — Versus with sandbox knobs:
+   *  - custom deck composition (per-prompt totals, Chik-2× word ratio preserved)
+   *  - variable starting hand size (3..14, vs Versus's fixed 7)
+   *
+   * Validates inputs and that the resulting deck has enough cards. Otherwise the
+   * structure mirrors setupVersus exactly: set aside Halo-Halo + (N-1) Chiks for the
+   * guaranteed-Chik deal, draw (handSize-1) random remainder cards, then 1 from the
+   * Chik pool. Rules engine (chain, prompts, Stop/Snap/Fetch, etc.) is identical to
+   * Versus from here on — only this setup function and the deck composition differ.
+   */
+  setupPlayground(opts: PlaygroundSetup): void {
+    const { playerCount, handSize, composition } = opts;
+    if (playerCount < 3 || playerCount > 6) {
+      throw new Error('Playground player count must be 3-6');
     }
-    // SOLO: keep the deal order shuffled. A sorted halo would let the player sweep cards
-    // in chant order with no real search — the whole challenge is finding the next card.
-    if (this.mode === 'solo') return;
+    if (handSize < 3 || handSize > 14) {
+      throw new Error('Playground hand size must be 3-14');
+    }
+    if ((composition.free ?? 0) < 7) {
+      throw new Error('Playground composition: Free must be at least 7 (carries Halo-Halo + room for the chik-pool deal)');
+    }
+    const fullDeck = buildPlaygroundDeck(composition);
+    const minDeck = playerCount * handSize + 8;
+    if (fullDeck.length < minDeck) {
+      throw new Error(`Playground deck too small: have ${fullDeck.length}, need ${minDeck} for ${playerCount} × ${handSize} + 8 buffer`);
+    }
+
+    this.resetState();
+    this.mode = 'playground';
+
+    for (let i = 0; i < playerCount; i++) {
+      this.players.push(new Player(`p${i + 1}`, i));
+    }
+
+    const halo = fullDeck.find((c) => c.isHaloHalo)!;
+    const chikPool = fullDeck.filter((c) => c.word === 'chik' && !c.isHaloHalo);
+    if (chikPool.length < playerCount - 1) {
+      throw new Error(`Playground composition: not enough Chik cards (need ${playerCount - 1} non-Halo Chiks for the opener deal, have ${chikPool.length})`);
+    }
+    const shuffledChikPool = shuffle(chikPool, this.rng);
+    const setAsideChiks = shuffledChikPool.slice(0, playerCount - 1);
+    const setAsideIds = new Set(setAsideChiks.map((c) => c.id));
+    setAsideIds.add(halo.id);
+
+    const remainder = fullDeck.filter((c) => !setAsideIds.has(c.id));
+    const shuffledRemainder = shuffle(remainder, this.rng);
+
+    // Deal (handSize - 1) cards from the remainder to each player.
+    for (let r = 0; r < handSize - 1; r++) {
+      for (const p of this.players) {
+        const card = shuffledRemainder.pop();
+        if (card) p.hand.push(card);
+      }
+    }
+
+    // Then 1 chik from the set-aside pool to each player.
+    const openers = shuffle([halo, ...setAsideChiks], this.rng);
+    for (let i = 0; i < playerCount; i++) {
+      const card = openers.pop();
+      if (card) this.players[i].hand.push(card);
+    }
+
     for (const p of this.players) p.sortHand();
+    this.drawPile = shuffledRemainder;
+
+    this.haloHaloOwnerId = this.players.find((p) =>
+      p.hand.some((c) => c.isHaloHalo),
+    )?.id ?? null;
+
+    const haloSeat = this.players.findIndex((p) => p.id === this.haloHaloOwnerId);
+    this.activeSeatIndex = haloSeat >= 0 ? haloSeat : 0;
+
+    this.emit({ kind: 'setup', mode: 'playground', playerCount });
+    this.emit({ kind: 'dealt' });
   }
 
-  // ---------------------------------------------------------------------------
-  // Opening
-  // ---------------------------------------------------------------------------
+  private resetState(): void {
+    this.players.length = 0;
+    this.chant.reset();
+    this.drawPile = [];
+    this.soloBases = { left: [], right: [] };
+    this.soloActiveCardId = null;
+    this.soloActivePrompt = null;
+    this.soloActiveBaseSide = null;
+    this.opened = false;
+    this.haloHaloOwnerId = null;
+    this.winnerId = null;
+    this.activeSeatIndex = -1;
+    this.chainSourceSeatIndex = null;
+    this.stopConverted = false;
+    this.fetchOwners.clear();
+    this.pendingSnapDraw = null;
+  }
 
-  openGame(): void {
-    if (!this.haloHaloOwnerId) return;
-    const opener = this.players.find((p) => p.id === this.haloHaloOwnerId)!;
-    const halo = opener.hand.find((c) => c.isHaloHalo);
-    if (!halo) return;
+  setStrictPromptsEnabled(on: boolean): void {
+    this.strictPromptsEnabled = on;
+  }
 
-    const targetSlot: BaseSlot = this.bases.get('chik')!.ownerId ? 'chik' : 'main';
-    // Move the Halo-Halo onto the target base.
-    opener.removeCard(halo.id);
-    this.bases.get(targetSlot)!.pile.push(halo);
-    this.opened = true;
+  // ===========================================================================
+  // SOLO
+  // ===========================================================================
 
-    this.emit({ kind: 'gameOpened', openerId: opener.id });
+  submitSoloAction(action: SoloAction): SoloActionResult {
+    if (modeCaps(this.mode).isTurnBased || this.winnerId) {
+      return { type: 'penalty', reason: 'wrong-beat', penaltyMs: 0 };
+    }
+    const player = this.players[0];
+    const beat = this.chant.current;
+
+    if (action.type === 'slam') {
+      const card = player.hand.find((c) => c.id === action.cardId);
+      if (!card) return { type: 'penalty', reason: 'wrong-beat', cardId: action.cardId, penaltyMs: 0 };
+
+      // Opening gate: only Halo-Halo Chik may open the game. Halo-Halo's prompt is Free,
+      // so allowedBasesAfter(null) = either base — the opener may land on Left or Right.
+      if (!this.opened) {
+        if (!card.isHaloHalo) {
+          return this.emitSoloPenalty('wrong-beat', card.id, action.baseSide);
+        }
+        if (!allowedBasesAfter(this.soloActivePrompt).includes(action.baseSide)) {
+          return this.emitSoloPenalty('wrong-base', card.id, action.baseSide);
+        }
+        this.applySoloSlam(card, action.baseSide);
+        this.opened = true;
+        this.emit({ kind: 'gameOpened', openerId: player.id });
+        this.emit({ kind: 'soloSlam', cardId: card.id, baseSide: action.baseSide, cardWord: card.word, cardPrompt: card.prompt });
+        this.advanceChant();
+        return { type: 'opened', cardId: card.id, baseSide: action.baseSide };
+      }
+
+      // Post-open: chant beat must match.
+      if (!card.matchesBeat(beat)) {
+        return this.emitSoloPenalty('wrong-beat', card.id, action.baseSide);
+      }
+      // Base must match the PREVIOUS prompt's direction — Left → only Left base, Right →
+      // only Right base, Free → either. The card's OWN prompt is unconstrained; it
+      // becomes the new active prompt for the next turn.
+      if (!allowedBasesAfter(this.soloActivePrompt).includes(action.baseSide)) {
+        return this.emitSoloPenalty('wrong-base', card.id, action.baseSide);
+      }
+
+      // Legal slam.
+      this.applySoloSlam(card, action.baseSide);
+      this.emit({ kind: 'soloSlam', cardId: card.id, baseSide: action.baseSide, cardWord: card.word, cardPrompt: card.prompt });
+      this.advanceChant();
+
+      // Win check.
+      if (player.cardCount === 0 && this.drawPile.length === 0) {
+        this.declareWinner(player.id);
+        return { type: 'winner' };
+      }
+      return { type: 'success', cardId: card.id, baseSide: action.baseSide };
+    }
+
+    // action.type === 'draw'
+    if (this.drawPile.length === 0) {
+      // Drawing from an empty pile is harmless — just a no-op. Don't penalize.
+      return { type: 'drew', cardId: null };
+    }
+    // Unnecessary-draw penalty: only AFTER the game has opened, and only if the player
+    // holds ANY beat-matching card. (The previous prompt's direction is fixed for the turn
+    // and always permits at least one base, so beat-match alone is sufficient to play.)
+    if (this.opened) {
+      const hasLegalPlay = player.hand.some((c) => c.matchesBeat(beat));
+      if (hasLegalPlay) {
+        return this.emitSoloPenalty('unnecessary-draw', undefined, undefined);
+      }
+    } else {
+      // Pre-open: if the player is holding Halo-Halo, drawing is wasteful.
+      if (player.hand.some((c) => c.isHaloHalo)) {
+        return this.emitSoloPenalty('unnecessary-draw', undefined, undefined);
+      }
+    }
+
+    const drawn = this.drawPile.pop();
+    if (drawn) {
+      player.hand.push(drawn);
+      this.emit({ kind: 'soloDraw', cardId: drawn.id });
+    }
+
+    // Win check after draw (in case this was the last possible action — empty pile + empty hand).
+    if (player.cardCount === 0 && this.drawPile.length === 0) {
+      this.declareWinner(player.id);
+      return { type: 'winner' };
+    }
+    return { type: 'drew', cardId: drawn?.id ?? null };
+  }
+
+  private emitSoloPenalty(reason: SoloPenaltyReason, cardId?: string, baseSide?: BaseSide): SoloActionResult {
+    this.emit({ kind: 'soloPenalty', reason, cardId, baseSide, penaltyMs: SOLO_PENALTY_MS });
+    return { type: 'penalty', reason, cardId, baseSide, penaltyMs: SOLO_PENALTY_MS };
+  }
+
+  /** Commit a legal slam: move card from hand to base + record it as the new active
+   *  prompt. The card's prompt becomes the directional gate for the NEXT slam. */
+  private applySoloSlam(card: Card, baseSide: BaseSide): void {
+    this.players[0].removeCard(card.id);
+    this.soloBases[baseSide].push(card);
+    this.soloActiveCardId = card.id;
+    this.soloActivePrompt = card.prompt;
+    this.soloActiveBaseSide = baseSide;
+  }
+
+  // ===========================================================================
+  // VERSUS
+  // ===========================================================================
+
+  submitVersusAction(playerId: PlayerId, action: VersusAction): VersusActionResult {
+    if (!modeCaps(this.mode).isTurnBased || this.winnerId) {
+      return { type: 'rejected', reason: 'not-your-turn' };
+    }
+    const seatIdx = this.players.findIndex((p) => p.id === playerId);
+    if (seatIdx === -1 || seatIdx !== this.activeSeatIndex) {
+      return { type: 'rejected', reason: 'not-your-turn' };
+    }
+    const player = this.players[seatIdx];
+
+    // Pre-open: the only legal action is the Halo-Halo holder playing the Halo-Halo Chik
+    // in front of another player.
+    if (!this.opened) {
+      if (action.type !== 'play') return { type: 'rejected', reason: 'wrong-beat' };
+      const card = player.hand.find((c) => c.id === action.cardId);
+      if (!card) return { type: 'rejected', reason: 'card-not-in-hand' };
+      if (!card.isHaloHalo) return { type: 'rejected', reason: 'wrong-beat' };
+      return this.executeVersusPlay(seatIdx, card, action.targetSeatIndex);
+    }
+
+    if (action.type === 'snap-play') {
+      return this.versusSnapPlay(playerId, action.targetSeatIndex);
+    }
+    if (action.type === 'play') {
+      return this.versusPlay(seatIdx, action.cardId, action.targetSeatIndex);
+    }
+    return this.versusDraw(seatIdx);
+  }
+
+  private versusPlay(seatIdx: number, cardId: string, targetSeatIndex: number): VersusActionResult {
+    const player = this.players[seatIdx];
+    const card = player.hand.find((c) => c.id === cardId);
+    if (!card) return { type: 'rejected', reason: 'card-not-in-hand' };
+    // Self-target is always nonsensical, regardless of strict-prompts mode.
+    if (targetSeatIndex === seatIdx) return { type: 'rejected', reason: 'self-target' };
+    if (targetSeatIndex < 0 || targetSeatIndex >= this.players.length) {
+      return { type: 'rejected', reason: 'illegal-target' };
+    }
+
+    const beatOk = card.matchesBeat(this.chant.current);
+    const directionReject = beatOk ? this.validateTarget(seatIdx, card, targetSeatIndex) : null;
+
+    if (!beatOk || directionReject) {
+      const reason: StrictPenaltyReason = !beatOk
+        ? 'wrong-beat'
+        : (directionReject as StrictPenaltyReason);
+      if (this.strictPromptsEnabled) {
+        return this.applyStrictPenalty(seatIdx, card, reason);
+      }
+      return { type: 'rejected', reason };
+    }
+
+    return this.executeVersusPlay(seatIdx, card, targetSeatIndex);
+  }
+
+  /**
+   * Wrong-move penalty (strict prompts mode only). The attempted play is reverted: the
+   * card stays in the player's hand and they instead draw 1 card. Fetch still applies —
+   * if the penalty player's top prompt is a Fetch, the draw comes from the Fetch
+   * owner's hand. Turn passes clockwise; no chain bounce (the player chose this).
+   */
+  private applyStrictPenalty(seatIdx: number, card: Card, reason: StrictPenaltyReason): VersusActionResult {
+    const player = this.players[seatIdx];
+    // No card movement — the card never leaves hand. Just force a draw + advance.
+    // Reuse versusDraw for the actual mechanic (handles Fetch, empty pile, Snap-drawn).
+    // But suppress the chain bounce: we clear chainSource first so the draw's chain
+    // logic treats this as a chain-end (or no-chain) event.
+    this.chainSourceSeatIndex = null;
+    // Capture which card lands (if any) so the strict-penalty event can name it for UI.
+    let penaltyCardId: string | null = null;
+    const cardCountBefore = player.cardCount;
+    const drawResult = this.versusDraw(seatIdx);
+    if (player.cardCount > cardCountBefore) {
+      penaltyCardId = player.hand[player.hand.length - 1].id;
+    }
+    this.emit({ kind: 'versusStrictPenalty', playerId: player.id, cardId: card.id, reason, penaltyCardId });
+    // If the penalty draw cascaded into a Snap-drawn-pending or a winner, surface that
+    // result up. Otherwise report the rejection so the UI knows the play didn't land.
+    if (drawResult.type === 'winner') return drawResult;
+    return { type: 'rejected', reason };
+  }
+
+  /**
+   * Validate the target seat is legal given the player's current prompt.
+   *
+   * Direction rules:
+   *  - Left / Right prompt -> only that neighbor.
+   *  - Stop -> nothing legal (recipient must draw); once the pile drains, the Stop
+   *    converts and the holder may play to EITHER neighbor.
+   *  - Snap or Fetch as a prompt -> the holder PICKS left or right by where they drop
+   *    the card. Both neighbors are legal targets; the chosen direction is implicit
+   *    in targetSeatIndex.
+   *  - Free or no prompt (Halo-Halo opener) -> any non-self seat is legal.
+   */
+  private validateTarget(seatIdx: number, card: Card, targetSeatIndex: number): VersusRejectReason | null {
+    if (targetSeatIndex === seatIdx) return 'self-target';
+    if (targetSeatIndex < 0 || targetSeatIndex >= this.players.length) return 'illegal-target';
+
+    const player = this.players[seatIdx];
+    const promptCard = player.topPrompt;
+    const effective = this.effectivePromptDirection(promptCard);
+
+    if (effective === 'stop') return 'stopped';
+
+    if (effective === 'left') {
+      if (targetSeatIndex !== this.neighborSeat(seatIdx, 'left')) return 'illegal-target';
+    } else if (effective === 'right') {
+      if (targetSeatIndex !== this.neighborSeat(seatIdx, 'right')) return 'illegal-target';
+    } else if (effective === 'either-neighbor') {
+      const isLeftNeighbor = targetSeatIndex === this.neighborSeat(seatIdx, 'left');
+      const isRightNeighbor = targetSeatIndex === this.neighborSeat(seatIdx, 'right');
+      if (!isLeftNeighbor && !isRightNeighbor) return 'illegal-target';
+    }
+    // 'free' or null -> any non-self seat is legal.
+    return null;
+  }
+
+  /**
+   * What kind of targeting is in effect for the player whose top prompt is `promptCard`.
+   *  - 'left' / 'right' -> exactly that neighbor (directional prompt)
+   *  - 'either-neighbor' -> Snap / Fetch prompt, or a Stop after the draw pile emptied;
+   *    the holder picks by where they drop the card
+   *  - 'stop' -> blocked, must draw
+   *  - 'free' -> any non-self seat
+   *  - null  -> no prompt yet (only the Halo-Halo opener; same as 'free')
+   */
+  private effectivePromptDirection(promptCard: Card | null): 'left' | 'right' | 'free' | 'stop' | 'either-neighbor' | null {
+    if (!promptCard) return null;
+    if (promptCard.prompt === 'snap' || promptCard.prompt === 'fetch') return 'either-neighbor';
+    if (promptCard.prompt === 'stop') return this.stopConverted ? 'either-neighbor' : 'stop';
+    return promptCard.prompt;
+  }
+
+  /**
+   * The seat array advances CLOCKWISE around the table as viewed from above
+   * (south -> west -> north -> east). But each player sitting AT their seat and
+   * looking inward has their right hand pointing the OTHER way around the table
+   * — counter-clockwise from above. So "to my right" at the table is the
+   * PREVIOUS index in the seat array (mod n), and "to my left" is the next.
+   */
+  private neighborSeat(seatIdx: number, dir: 'left' | 'right'): number {
+    const n = this.players.length;
+    return dir === 'right' ? (seatIdx - 1 + n) % n : (seatIdx + 1) % n;
+  }
+
+  /** Move a card from hand to target's prompt stack; advance chant; rotate active player. */
+  private executeVersusPlay(seatIdx: number, card: Card, targetSeatIndex: number): VersusActionResult {
+    if (targetSeatIndex === seatIdx) {
+      return { type: 'rejected', reason: 'self-target' };
+    }
+    if (targetSeatIndex < 0 || targetSeatIndex >= this.players.length) {
+      return { type: 'rejected', reason: 'illegal-target' };
+    }
+    const player = this.players[seatIdx];
+    const target = this.players[targetSeatIndex];
+
+    player.removeCard(card.id);
+    target.promptStack.push(card);
+    if (card.prompt === 'fetch') this.fetchOwners.set(card.id, seatIdx);
+
+    // Opening flip.
+    if (!this.opened && card.isHaloHalo) {
+      this.opened = true;
+      this.emit({ kind: 'gameOpened', openerId: player.id });
+    }
+
     this.emit({
-      kind: 'slam',
-      playerId: opener.id,
-      cardId: halo.id,
-      targetBase: targetSlot,
-      shoutedWord: 'chik',
-      cardWord: halo.word,
-      cardKind: halo.kind,
+      kind: 'versusPlay',
+      playerId: player.id,
+      cardId: card.id,
+      targetSeatIndex,
+      cardWord: card.word,
+      cardPrompt: card.prompt,
     });
 
-    // After Halo-Halo Chik is played, chant advances (Chik → Wally).
+    this.advanceChant();
+
+    // Win check.
+    if (player.cardCount === 0) {
+      this.declareWinner(player.id);
+      return { type: 'winner', playerId: player.id };
+    }
+
+    // Chain bookkeeping: the player who just played is the new chain source. If target
+    // is forced to draw on their turn, source gets a bonus turn.
+    this.chainSourceSeatIndex = seatIdx;
+    this.setActiveSeat(targetSeatIndex, /* viaChain */ false);
+
+    return { type: 'played', cardId: card.id, targetSeatIndex, chainTriggered: false };
+  }
+
+  private versusDraw(seatIdx: number): VersusActionResult {
+    const player = this.players[seatIdx];
+
+    // Determine draw source: Fetch prompt → drain from owner's hand. Otherwise pile.
+    const top = player.topPrompt;
+    const isFetch = top?.prompt === 'fetch';
+    const fetchOwnerSeat = isFetch ? this.findFetchOwnerSeat(top!) : -1;
+    const fetchOwner = fetchOwnerSeat >= 0 ? this.players[fetchOwnerSeat] : null;
+
+    let drawnCard: Card | null = null;
+    let source: 'pile' | 'hand' = 'pile';
+
+    // Add the drawn card to the recipient's hand BEFORE emitting the versusDraw event.
+    // The animation layer (useGame.queueFlightForDraw) looks up the card in player.hand
+    // to grab its assetPath and decide whether the recipient is human (-> reveal face
+    // mid-flight). For Snap-when-drawn the card will be popped right back out by
+    // executeVersusPlay below; the brief in-hand moment is harmless to the engine and
+    // critical for the listener.
+    let ownerWonByDrain = false;
+    if (isFetch && fetchOwner && fetchOwner.cardCount > 0) {
+      const idx = Math.floor(this.rng() * fetchOwner.hand.length);
+      drawnCard = fetchOwner.hand.splice(idx, 1)[0];
+      source = 'hand';
+      ownerWonByDrain = fetchOwner.cardCount === 0;
+      player.addCard(drawnCard);
+      this.emit({ kind: 'versusDraw', playerId: player.id, cardId: drawnCard.id, from: 'hand', fromPlayerId: fetchOwner.id });
+      if (ownerWonByDrain) {
+        this.declareWinner(fetchOwner.id);
+        return { type: 'winner', playerId: fetchOwner.id };
+      }
+    } else {
+      // Pile draw.
+      if (this.drawPile.length > 0) {
+        drawnCard = this.drawPile.pop()!;
+        player.addCard(drawnCard);
+        this.emit({ kind: 'versusDraw', playerId: player.id, cardId: drawnCard.id, from: 'pile' });
+        // If that drained the pile, convert Stops (one-shot).
+        if (this.drawPile.length === 0 && !this.stopConverted) {
+          this.stopConverted = true;
+          this.emit({ kind: 'versusStopConverted' });
+        }
+      } else {
+        // Empty pile — no draw. Ensure Stops are converted.
+        if (!this.stopConverted) {
+          this.stopConverted = true;
+          this.emit({ kind: 'versusStopConverted' });
+        }
+        this.emit({ kind: 'versusDraw', playerId: player.id, cardId: null, from: 'pile' });
+      }
+    }
+
+    // Snap-when-drawn: if drawnCard is a Snap matching the current beat, PARK in a
+    // pending state and let the holder pick a target. For the human this surfaces as
+    // an inline overlay anchored to the deck; the AI controller auto-resolves it after
+    // a short delay so the player can see the AI's choice. No turn rotation here —
+    // versusSnapPlay() drives that once the choice lands.
+    if (drawnCard && drawnCard.prompt === 'snap' && drawnCard.matchesBeat(this.chant.current)) {
+      this.pendingSnapDraw = { playerId: player.id, cardId: drawnCard.id };
+      this.emit({ kind: 'versusSnapDrawnAvailable', playerId: player.id, cardId: drawnCard.id });
+      return { type: 'drew', cardId: drawnCard.id, from: source, snapPlayedImmediately: false };
+    }
+    const snapPlayedImmediately = false;
+
+    // Chain rule: if chainSource is set AND this draw was NOT Fetch-forced, bounce back to source.
+    if (this.chainSourceSeatIndex !== null && !isFetch && this.chainSourceSeatIndex !== seatIdx) {
+      const sourceSeat = this.chainSourceSeatIndex;
+      this.emit({ kind: 'versusChainStarted', sourceSeatIndex: sourceSeat, targetSeatIndex: seatIdx });
+      // chainSource takes the bonus turn next.
+      this.setActiveSeat(sourceSeat, /* viaChain */ true);
+      // chainSource STAYS the chain source — if their bonus play causes another draw, they bounce again.
+      return { type: 'drew', cardId: drawnCard?.id ?? null, from: source, snapPlayedImmediately };
+    }
+
+    // Chain ends (or never started). Play passes clockwise from the player who drew —
+    // unless the drawer IS the chain source (their own draw ends the chain; play passes
+    // clockwise from THEIR seat).
+    this.emit({ kind: 'versusChainEnded', reason: 'source-drew' });
+    this.chainSourceSeatIndex = null;
+    const next = this.nextClockwiseWithCards(seatIdx);
+    if (next === -1) {
+      this.declareWinner(player.id); // shouldn't really happen, but fall through
+      return { type: 'winner', playerId: player.id };
+    }
+    this.setActiveSeat(next, /* viaChain */ false);
+    return { type: 'drew', cardId: drawnCard?.id ?? null, from: source, snapPlayedImmediately };
+  }
+
+  /**
+   * Commit a pending snap-play. Called after versusDraw lands a Snap that matches the
+   * current beat — the engine parks via `pendingSnapDraw` and waits for this. The
+   * drawer MUST play the snap (no "keep" — that option was deliberately removed); the
+   * only choice is target seat.
+   *
+   * Validation:
+   *  - Standard mode: target must be the left or right neighbour.
+   *  - Strict-prompts mode: any non-self seat is legal.
+   */
+  private versusSnapPlay(playerId: PlayerId, targetSeatIndex: number): VersusActionResult {
+    if (!this.pendingSnapDraw || this.pendingSnapDraw.playerId !== playerId) {
+      return { type: 'rejected', reason: 'no-pending-snap' };
+    }
+    const { cardId } = this.pendingSnapDraw;
+    const seatIdx = this.players.findIndex((p) => p.id === playerId);
+    if (seatIdx === -1) return { type: 'rejected', reason: 'not-your-turn' };
+    if (targetSeatIndex === seatIdx) return { type: 'rejected', reason: 'self-target' };
+    if (targetSeatIndex < 0 || targetSeatIndex >= this.players.length) {
+      return { type: 'rejected', reason: 'illegal-target' };
+    }
+    const left = this.neighborSeat(seatIdx, 'left');
+    const right = this.neighborSeat(seatIdx, 'right');
+    const isNeighbor = targetSeatIndex === left || targetSeatIndex === right;
+    if (!isNeighbor) {
+      // Non-neighbor target. In standard mode reject silently. In strict mode treat
+      // this the same as any other illegal play attempt: snap stays in hand, player
+      // draws a penalty card, turn passes.
+      if (!this.strictPromptsEnabled) {
+        return { type: 'rejected', reason: 'illegal-target' };
+      }
+      const player = this.players[seatIdx];
+      const card = player.hand.find((c) => c.id === cardId);
+      if (!card) return { type: 'rejected', reason: 'card-not-in-hand' };
+      this.pendingSnapDraw = null;
+      this.emit({ kind: 'versusSnapDrawnPlayed', playerId, cardId });
+      return this.applyStrictPenalty(seatIdx, card, 'illegal-target');
+    }
+    const player = this.players[seatIdx];
+    const card = player.hand.find((c) => c.id === cardId);
+    if (!card) return { type: 'rejected', reason: 'card-not-in-hand' };
+
+    this.pendingSnapDraw = null;
+    this.emit({ kind: 'versusSnapDrawnPlayed', playerId, cardId });
+    const result = this.executeVersusPlay(seatIdx, card, targetSeatIndex);
+    return result.type === 'winner' ? result : { type: 'drew', cardId, from: 'pile', snapPlayedImmediately: true };
+  }
+
+  /** Seats that can legally receive the currently-pending snap. Strict mode allows any
+   *  non-self seat; standard mode allows only the left/right neighbours. */
+  pendingSnapLegalTargets(): number[] {
+    if (!this.pendingSnapDraw) return [];
+    const seatIdx = this.players.findIndex((p) => p.id === this.pendingSnapDraw!.playerId);
+    if (seatIdx === -1) return [];
+    if (this.strictPromptsEnabled) {
+      const out: number[] = [];
+      for (let i = 0; i < this.players.length; i++) if (i !== seatIdx) out.push(i);
+      return out;
+    }
+    return [this.neighborSeat(seatIdx, 'left'), this.neighborSeat(seatIdx, 'right')];
+  }
+
+  /** Find the seat that played the Fetch card currently in front of `seatIdx`. */
+  private findFetchOwnerSeat(fetchCard: Card): number {
+    return this.fetchOwners.get(fetchCard.id) ?? -1;
+  }
+
+  /** Move the active seat marker and emit. */
+  private setActiveSeat(seatIdx: number, viaChain: boolean): void {
+    this.activeSeatIndex = seatIdx;
+    const player = this.players[seatIdx];
+    if (!player) return;
+    this.emit({ kind: 'versusTurnChanged', playerId: player.id, seatIndex: seatIdx, viaChain });
+  }
+
+  /** Seat clockwise of `from` that still has cards. -1 if none. */
+  private nextClockwiseWithCards(from: number): number {
+    const n = this.players.length;
+    for (let i = 1; i <= n; i++) {
+      const idx = (from + i) % n;
+      if (this.players[idx].cardCount > 0) return idx;
+    }
+    return -1;
+  }
+
+  // ===========================================================================
+  // SHARED
+  // ===========================================================================
+
+  private advanceChant(): void {
     const from = this.chant.current;
     this.chant.advance();
     this.emit({ kind: 'chantAdvanced', from, to: this.chant.current });
-
-    if (opener.cardCount === 0) {
-      this.declareWinner(opener.id);
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Plays & resolutions
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Resolve simultaneous slams from one or more players in a single beat.
-   * Returns the list of PlayResults, in arrival order.
-   */
-  resolveSlams(slams: PendingSlam[]): PlayResult[] {
-    if (slams.length === 0) return [];
-    const beat = this.chant.current;
-
-    // Normalize: unowned word bases live in the center as display-only references — any card
-    // aimed at one is redirected to the Main base before validation. This keeps the rule
-    // "cards going to the center pile on Main" consistent for both decoys and non-decoys.
-    for (const slam of slams) {
-      if (slam.targetBase === 'main') continue;
-      const base = this.bases.get(slam.targetBase);
-      if (base && !base.ownerId) {
-        slam.targetBase = 'main';
-      }
-    }
-
-    // SOLO MODE: matching slams go through (card → main, normal applySuccess path —
-    // handles Reverse, chant advance, Halo-Halo opening, winner). Wrong-word slams
-    // are REJECTED — the card stays in the halo and a soloPenalty (+2s) is emitted.
-    // Pre-open, only Halo-Halo Chik can be played; everything else is also rejected
-    // with a penalty so misclicks during the opening still bite.
-    if (this.mode === 'solo') {
-      const results: PlayResult[] = [];
-      for (const slam of slams) {
-        const player = this.players.find((p) => p.id === slam.playerId);
-        const card = player?.hand.find((c) => c.id === slam.cardId);
-        if (!player || !card) {
-          results.push({
-            type: 'miscall',
-            playerId: slam.playerId,
-            cardId: slam.cardId,
-            targetBase: slam.targetBase,
-            reason: 'card-not-in-hand',
-          });
-          continue;
-        }
-        // Pre-open gate: only Halo-Halo opens the game, regardless of beat.
-        const blockedByOpening = !this.opened && !card.isHaloHalo;
-        if (card.matchesBeat(beat) && !blockedByOpening) {
-          this.applySuccess({ ...slam, targetBase: 'main' }, card);
-          results.push({
-            type: 'success',
-            playerId: slam.playerId,
-            cardId: card.id,
-            targetBase: 'main',
-            reverseTriggered: card.kind === 'reverse',
-          });
-        } else {
-          // Wrong word (or wrong-card-during-opening) — card stays in the halo.
-          // GameTable animates a quick bounce-toward-main-then-return on this event.
-          this.emit({
-            kind: 'soloPenalty',
-            playerId: slam.playerId,
-            cardId: card.id,
-            cardWord: card.word,
-            expectedBeat: beat,
-            penaltyMs: 2000,
-          });
-          results.push({
-            type: 'miscall',
-            playerId: slam.playerId,
-            cardId: card.id,
-            targetBase: 'main',
-            reason: blockedByOpening ? 'card-not-in-hand' : 'wrong-word',
-          });
-        }
-      }
-      this.applySoloAutoFinishIfStuck();
-      return results;
-    }
-
-    // OPENING SPECIAL CASE (Play / BEAT mode): until the Halo-Halo Chik has been played,
-    // the only valid slam is THE Halo-Halo card on its legal target (Chik base if owned,
-    // else Main). Anything else is silently dropped — NO penalty during the opening.
-    if (!this.opened && this.activeBeatPlayerId !== null) {
-      const legalTarget: BaseSlot = this.bases.get('chik')?.ownerId ? 'chik' : 'main';
-      const validHaloOpening = slams.filter((slam) => {
-        const player = this.players.find((p) => p.id === slam.playerId);
-        const card = player?.hand.find((c) => c.id === slam.cardId);
-        return !!card && card.isHaloHalo && slam.targetBase === legalTarget;
-      });
-      if (validHaloOpening.length === 0) return [];
-      slams = validHaloOpening;
-    }
-
-    // Each slam is first validated independently (miscall vs. correct).
-    const valid: { slam: PendingSlam; card: Card }[] = [];
-    const miscalls: MiscallResult[] = [];
-
-    for (const slam of slams) {
-      const player = this.players.find((p) => p.id === slam.playerId);
-      const card = player?.hand.find((c) => c.id === slam.cardId);
-      if (!player || !card) {
-        miscalls.push({
-          type: 'miscall',
-          playerId: slam.playerId,
-          cardId: slam.cardId,
-          targetBase: slam.targetBase,
-          reason: 'card-not-in-hand',
-        });
-        continue;
-      }
-      // BEAT (Play) mode: only the active-beat player may slam. Anyone else gets an
-      // 'out-of-turn' miscall (penalty cards, chant doesn't advance).
-      if (this.activeBeatPlayerId !== null && slam.playerId !== this.activeBeatPlayerId) {
-        miscalls.push({
-          type: 'miscall',
-          playerId: slam.playerId,
-          cardId: slam.cardId,
-          targetBase: slam.targetBase,
-          reason: 'out-of-turn',
-        });
-        continue;
-      }
-      // Word must match shout, shout must match beat.
-      if (slam.shoutedWord !== beat || !card.matchesBeat(beat)) {
-        miscalls.push({
-          type: 'miscall',
-          playerId: slam.playerId,
-          cardId: slam.cardId,
-          targetBase: slam.targetBase,
-          reason: 'wrong-word',
-        });
-        continue;
-      }
-      // Base must be valid given the table state:
-      //  - Decoys can be slammed on any base.
-      //  - Non-decoys: legal target = the matching word base if it's owned, else Main.
-      //    Slamming anywhere else (including Main when the matching base is owned, or
-      //    an unowned word base when it should go to Main) is a wrong-base miscall.
-      if (card.kind !== 'decoy') {
-        const legalTarget = this.resolveTargetBase(card.word);
-        if (slam.targetBase !== legalTarget) {
-          miscalls.push({
-            type: 'miscall',
-            playerId: slam.playerId,
-            cardId: slam.cardId,
-            targetBase: slam.targetBase,
-            reason: 'wrong-base',
-          });
-          continue;
-        }
-      }
-      valid.push({ slam, card });
-    }
-
-    const results: PlayResult[] = [...miscalls];
-
-    // Per Penalty Hierarchy: miscalls always penalize individually. If at least one valid
-    // slam exists alongside miscalls, the valid play(s) are not in tie with the miscallers.
-    const validPlayerIds = valid.map((v) => v.slam.playerId);
-
-    if (valid.length === 0) {
-      // Only miscalls happened. Apply miscall penalties; chant does not advance.
-      for (const m of miscalls) this.applyMiscall(m, beat);
-      return results;
-    }
-
-    if (valid.length === 1 && miscalls.length === 0) {
-      // Clean solo play.
-      const v = valid[0];
-      this.applySuccess(v.slam, v.card);
-      results.push({
-        type: 'success',
-        playerId: v.slam.playerId,
-        cardId: v.card.id,
-        targetBase: v.slam.targetBase,
-        reverseTriggered: v.card.kind === 'reverse',
-      });
-      return results;
-    }
-
-    if (valid.length === 1 && miscalls.length > 0) {
-      // Solo valid + one or more miscallers. Valid play stands; chant advances.
-      const v = valid[0];
-      this.applySuccess(v.slam, v.card);
-      results.push({
-        type: 'success',
-        playerId: v.slam.playerId,
-        cardId: v.card.id,
-        targetBase: v.slam.targetBase,
-        reverseTriggered: v.card.kind === 'reverse',
-      });
-      for (const m of miscalls) this.applyMiscall(m, beat);
-      return results;
-    }
-
-    // valid.length >= 2 — there's a tie.
-    if (miscalls.length > 0) {
-      // Per Scenario 2: miscall cancels tie for non-miscallers; their cards return to hand,
-      // chant does NOT advance. Only miscallers are penalized.
-      this.emit({ kind: 'tie', playerIds: validPlayerIds, cardIds: valid.map((v) => v.card.id), beat });
-      for (const v of valid) {
-        results.push({
-          type: 'tie',
-          playerId: v.slam.playerId,
-          cardId: v.card.id,
-          targetBase: v.slam.targetBase,
-          tiedWith: validPlayerIds.filter((id) => id !== v.slam.playerId),
-        });
-      }
-      for (const m of miscalls) this.applyMiscall(m, beat);
-      return results;
-    }
-
-    // Pure tie among valid plays.
-    this.emit({ kind: 'tie', playerIds: validPlayerIds, cardIds: valid.map((v) => v.card.id), beat });
-    const tiedPlayers = validPlayerIds
-      .map((id) => this.players.find((p) => p.id === id)!)
-      .filter(Boolean);
-    this.applyTiePenalties(tiedPlayers, beat);
-    for (const v of valid) {
-      results.push({
-        type: 'tie',
-        playerId: v.slam.playerId,
-        cardId: v.card.id,
-        targetBase: v.slam.targetBase,
-        tiedWith: validPlayerIds.filter((id) => id !== v.slam.playerId),
-      });
-    }
-    return results;
-  }
-
-  // ---------------------------------------------------------------------------
-  // Effect application
-  // ---------------------------------------------------------------------------
-
-  private applySuccess(slam: PendingSlam, card: Card): void {
-    const player = this.players.find((p) => p.id === slam.playerId)!;
-    player.removeCard(card.id);
-
-    const base = this.bases.get(slam.targetBase)!;
-    base.pile.push(card);
-
-    // The Halo-Halo Chik played via this normal slam path opens the game (Play mode flow).
-    if (card.isHaloHalo && !this.opened) {
-      this.opened = true;
-      this.emit({ kind: 'gameOpened', openerId: slam.playerId });
-    }
-
-    this.emit({
-      kind: 'slam',
-      playerId: slam.playerId,
-      cardId: card.id,
-      targetBase: slam.targetBase,
-      shoutedWord: slam.shoutedWord,
-      cardWord: card.word,
-      cardKind: card.kind,
-    });
-
-    if (player.cardCount === 0) {
-      this.declareWinner(player.id);
-      return;
-    }
-
-    if (card.kind === 'reverse') {
-      const from = this.chant.current;
-      this.chant.reverseStep();
-      this.emit({ kind: 'chantReversed', from, to: this.chant.current });
-    } else {
-      const from = this.chant.current;
-      this.chant.advance();
-      this.emit({ kind: 'chantAdvanced', from, to: this.chant.current });
-    }
-  }
-
-  private applyMiscall(m: MiscallResult, beat: ChantWord): void {
-    // Look up the card the player tried to play (may be null if 'card-not-in-hand').
-    const player = this.players.find((p) => p.id === m.playerId);
-    const card = player?.hand.find((c) => c.id === m.cardId) ?? null;
-    this.emit({
-      kind: 'miscall',
-      playerId: m.playerId,
-      reason: m.reason,
-      beat,
-      cardId: m.cardId,
-      cardWord: card ? card.word : beat,
-      cardKind: card ? card.kind : null,
-      targetBase: m.targetBase,
-      shoutedWord: beat,
-    });
-    // The miscalled card stays in the player's hand. Apply 2-card penalty.
-    this.applyPenaltyCards(m.playerId, 2, beat);
-  }
-
-  private applyTiePenalties(players: Player[], beat: ChantWord): void {
-    // Return the slammed cards back to hands first.
-    // Note: tied cards were not yet placed on bases (we never called applySuccess for them).
-    const ordered = this.computePenaltyOrder(beat, players.map((p) => p.id));
-    for (const pid of ordered) {
-      this.applyPenaltyCards(pid, 1, beat);
-    }
-  }
-
-  private applyPenaltyCards(playerId: PlayerId, count: number, _beat: ChantWord): void {
-    const player = this.players.find((p) => p.id === playerId);
-    if (!player) return;
-
-    const taken: { cardId: string; from: BaseSlot }[] = [];
-
-    for (let i = 0; i < count; i++) {
-      const pick = this.pickPenaltyCard();
-      if (!pick) break;
-      taken.push({ cardId: pick.card.id, from: pick.slot });
-      player.addCard(pick.card);
-    }
-
-    if (taken.length > 0) {
-      this.emit({
-        kind: 'penaltyTaken',
-        playerId,
-        cardIds: taken.map((t) => t.cardId),
-        fromBase: taken.map((t) => t.from),
-      });
-    }
-  }
-
-  /**
-   * Pick a single penalty card from the top of any pile, normal-card priority.
-   * Returns null if all piles are empty.
-   */
-  private pickPenaltyCard(): { card: Card; slot: BaseSlot } | null {
-    const piles = Array.from(this.bases.values()).filter((b) => b.pile.length > 0);
-    if (piles.length === 0) return null;
-
-    // Prefer non-special tops; fall back to any top.
-    const normalTops = piles.filter((b) => {
-      const top = b.pile[b.pile.length - 1];
-      return !top.isSpecial();
-    });
-    const choices = normalTops.length > 0 ? normalTops : piles;
-    const pick = choices[Math.floor(this.rng() * choices.length)];
-    const card = pick.pile.pop()!;
-    return { card, slot: pick.slot };
-  }
-
-  /**
-   * Compute selection order: count forward in chant from word AFTER `currentBeat`,
-   * the penalized player whose owned base appears earliest selects first.
-   */
-  computePenaltyOrder(currentBeat: ChantWord, playerIds: PlayerId[]): PlayerId[] {
-    const startIdx = (CHANT_ORDER.indexOf(currentBeat) + 1) % CHANT_ORDER.length;
-    const order: PlayerId[] = [];
-    const remaining = new Set(playerIds);
-
-    for (let step = 0; step < CHANT_ORDER.length && remaining.size > 0; step++) {
-      const word = CHANT_ORDER[(startIdx + step) % CHANT_ORDER.length];
-      for (const pid of remaining) {
-        const p = this.players.find((x) => x.id === pid)!;
-        if (p.ownedBaseWord === word) {
-          order.push(pid);
-          remaining.delete(pid);
-          break;
-        }
-      }
-    }
-
-    // Anyone with no base — append them (treat as "next unclaimed word") in original order.
-    for (const pid of remaining) order.push(pid);
-    return order;
-  }
-
-  /**
-   * Solo stuck-detection: when the chant lands on a beat the player has no card for
-   * (and the hand is non-empty), the deck is structurally jammed — the original 49-card
-   * deck has 14 Chik cards but only ~8 reachable Chik visits per cycle, so 6 Chik cards
-   * always strand in some games. Instead of skipping the chant invisibly, we just END
-   * the game: every remaining card auto-slams onto Main with a +1s penalty per card.
-   * The player's "score" reflects how cleanly they navigated.
-   */
-  private applySoloAutoFinishIfStuck(): void {
-    if (this.mode !== 'solo') return;
-    const player = this.players[0];
-    if (!player || player.cardCount === 0) return;
-    const beat = this.chant.current;
-    if (player.hand.some((c) => c.matchesBeat(beat))) return;
-
-    const remaining = player.hand.slice();
-    const totalPenaltyMs = remaining.length * 1000;
-    // Announce first so the view can prep staggered animations + a "stuck!" message.
-    this.emit({
-      kind: 'soloAutoFinish',
-      playerId: player.id,
-      cardCount: remaining.length,
-      totalPenaltyMs,
-    });
-    for (const card of remaining) {
-      player.removeCard(card.id);
-      this.bases.get('main')!.pile.push(card);
-      this.emit({
-        kind: 'slam',
-        playerId: player.id,
-        cardId: card.id,
-        targetBase: 'main',
-        shoutedWord: beat,
-        cardWord: card.word,
-        cardKind: card.kind,
-      });
-    }
-    // Single consolidated penalty (cardCount × +1s) so the timer bubble doesn't spam.
-    this.emit({
-      kind: 'soloPenalty',
-      playerId: player.id,
-      cardId: '',
-      cardWord: beat,
-      expectedBeat: beat,
-      penaltyMs: totalPenaltyMs,
-    });
-    this.declareWinner(player.id);
   }
 
   private declareWinner(playerId: PlayerId): void {
@@ -606,22 +788,48 @@ export class Game {
     this.emit({ kind: 'winner', playerId });
   }
 
-  // ---------------------------------------------------------------------------
+  // ===========================================================================
   // Convenience
-  // ---------------------------------------------------------------------------
+  // ===========================================================================
 
   getRequiredBeat(): ChantWord {
     return this.chant.current;
   }
 
-  getBase(slot: BaseSlot): BasePile {
-    return this.bases.get(slot)!;
-  }
-
-  /** Where a card matching `word` should be played (owned base or main). */
-  resolveTargetBase(word: ChantWord): BaseSlot {
-    const wordBase = this.bases.get(word);
-    if (wordBase && wordBase.ownerId) return word;
-    return 'main';
+  /**
+   * Which seats can the player at `seatIdx` target right now?
+   *  - Pre-open Halo-Halo opening: any non-self seat.
+   *  - Strict-prompts mode ON: any non-self seat — illegal targets / wrong beat will
+   *    be allowed by the engine and converted to a penalty draw. The UI's wheel widens
+   *    accordingly; the human learns through feedback instead of being blocked.
+   *  - Strict-prompts mode OFF (default): standard rulebook gating — beat must match
+   *    and direction must obey the prompt.
+   *
+   * `ignoreStrictMode = true` always computes rulebook-legal targets regardless of the
+   * strictPromptsEnabled flag. The AI uses this to make smart non-penalty plays even
+   * when the toggle is on; the UI passes the default (false) so the wheel widens in
+   * strict mode.
+   */
+  legalTargetSeats(seatIdx: number, card: Card, ignoreStrictMode = false): number[] {
+    if (seatIdx < 0 || seatIdx >= this.players.length) return [];
+    if (!this.opened) {
+      if (!card.isHaloHalo) return [];
+      const out: number[] = [];
+      for (let i = 0; i < this.players.length; i++) if (i !== seatIdx) out.push(i);
+      return out;
+    }
+    if (this.strictPromptsEnabled && !ignoreStrictMode) {
+      const out: number[] = [];
+      for (let i = 0; i < this.players.length; i++) if (i !== seatIdx) out.push(i);
+      return out;
+    }
+    if (!card.matchesBeat(this.chant.current)) return [];
+    const all: number[] = [];
+    for (let i = 0; i < this.players.length; i++) {
+      if (i === seatIdx) continue;
+      const reject = this.validateTarget(seatIdx, card, i);
+      if (!reject) all.push(i);
+    }
+    return all;
   }
 }

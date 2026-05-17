@@ -1,10 +1,60 @@
 <script setup lang="ts">
+/**
+ * Standalone settings route reached from the main menu. Renders the same SettingsPanel
+ * used in-game so there's a single source of truth for what "settings" looks like.
+ *
+ * We don't have an active game here, so player count / speed / restart / back-to-menu
+ * are hidden — only Audio, Display (turn indicator), and About remain meaningful.
+ */
+import { ref } from 'vue';
 import { useRouter } from 'vue-router';
+import { Preferences } from '@capacitor/preferences';
+import SettingsPanel from '@/components/SettingsPanel.vue';
 import { useBeatAudio } from '@/composables/useBeatAudio';
-import IconVolume from '@/components/icons/IconVolume.vue';
 
 const router = useRouter();
 const { audioMuted, setMuted } = useBeatAudio();
+
+// Mirror useGame's wisp + strict-prompts persistence (without spinning up a Game) so the
+// toggles are the same keys, surveyed from this view too.
+const WISP_KEY = 'chik-wisp-enabled';
+const STRICT_KEY = 'chik-strict-prompts';
+const SKILL_KEY = 'chik-ai-skill';
+const PROMPT_SIZE_KEY = 'chik-prompt-size';
+type PromptSize = 'small' | 'medium' | 'large' | 'xl';
+const wispEnabled = ref(true);
+const strictPrompts = ref(false);
+const aiSkill = ref<1 | 2 | 3 | 4>(3);
+const promptSize = ref<PromptSize>('medium');
+void Preferences.get({ key: WISP_KEY }).then(({ value }) => {
+  wispEnabled.value = value === null || value === undefined ? true : (value === '1' || value === 'true');
+}).catch(() => undefined);
+void Preferences.get({ key: STRICT_KEY }).then(({ value }) => {
+  strictPrompts.value = value === '1' || value === 'true';
+}).catch(() => undefined);
+void Preferences.get({ key: SKILL_KEY }).then(({ value }) => {
+  const n = Number(value);
+  if (n === 1 || n === 2 || n === 3 || n === 4) aiSkill.value = n;
+}).catch(() => undefined);
+void Preferences.get({ key: PROMPT_SIZE_KEY }).then(({ value }) => {
+  if (value === 'small' || value === 'medium' || value === 'large' || value === 'xl') promptSize.value = value;
+}).catch(() => undefined);
+function setWispEnabled(v: boolean) {
+  wispEnabled.value = v;
+  void Preferences.set({ key: WISP_KEY, value: v ? '1' : '0' }).catch(() => undefined);
+}
+function setStrictPrompts(v: boolean) {
+  strictPrompts.value = v;
+  void Preferences.set({ key: STRICT_KEY, value: v ? '1' : '0' }).catch(() => undefined);
+}
+function setAiSkill(v: 1 | 2 | 3 | 4) {
+  aiSkill.value = v;
+  void Preferences.set({ key: SKILL_KEY, value: String(v) }).catch(() => undefined);
+}
+function setPromptSize(v: PromptSize) {
+  promptSize.value = v;
+  void Preferences.set({ key: PROMPT_SIZE_KEY, value: v }).catch(() => undefined);
+}
 
 function back() {
   if (window.history.length > 1) router.back();
@@ -34,53 +84,27 @@ function back() {
     </header>
 
     <main class="flex-1 px-4 pb-6 overflow-auto">
-      <section class="rounded-2xl bg-cream-soft ring-1 ring-black/5 p-4 space-y-3">
-        <h2 class="text-xs font-extrabold uppercase tracking-widest text-stone-500">Audio</h2>
-        <label class="flex items-center justify-between gap-3 py-1">
-          <span class="flex items-center gap-2 text-stone-800">
-            <IconVolume :muted="audioMuted" :size="20" />
-            <span class="font-semibold">Sound effects</span>
-          </span>
-          <button
-            type="button"
-            role="switch"
-            :aria-checked="!audioMuted"
-            class="settings-switch"
-            :class="{ 'is-on': !audioMuted }"
-            @click="setMuted(!audioMuted)"
-          >
-            <span class="settings-switch-thumb" />
-          </button>
-        </label>
-      </section>
+      <SettingsPanel
+        mode="versus"
+        :audio-muted="audioMuted"
+        :wisp-enabled="wispEnabled"
+        :strict-prompts="strictPrompts"
+        :ai-skill="aiSkill"
+        :player-count="4"
+        :speed="1"
+        :prompt-size="promptSize"
+        hide-game-section
+        hide-round-actions
+        @update:audio-muted="setMuted"
+        @update:wisp-enabled="setWispEnabled"
+        @update:prompt-size="setPromptSize"
+        @update:strict-prompts="setStrictPrompts"
+        @update:ai-skill="setAiSkill"
+        @update:player-count="() => undefined"
+        @update:speed="() => undefined"
+        @restart="() => undefined"
+        @back-to-menu="back"
+      />
     </main>
   </div>
 </template>
-
-<style scoped>
-.settings-switch {
-  position: relative;
-  width: 48px;
-  height: 28px;
-  border-radius: 9999px;
-  background: #d6cfb8;
-  transition: background-color 160ms ease;
-}
-.settings-switch.is-on {
-  background: var(--color-coral);
-}
-.settings-switch-thumb {
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 22px;
-  height: 22px;
-  border-radius: 9999px;
-  background: var(--color-cream-soft);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
-  transition: transform 160ms cubic-bezier(.2, .8, .2, 1);
-}
-.settings-switch.is-on .settings-switch-thumb {
-  transform: translateX(20px);
-}
-</style>

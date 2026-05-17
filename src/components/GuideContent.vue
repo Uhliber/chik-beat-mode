@@ -1,56 +1,64 @@
 <script setup lang="ts">
 /**
- * The Vue-rendered "How to Play" body. Used inside both the desktop GuideCard's flip-front
- * (where container queries scale text by card width) and the mobile full-screen modal.
- *
- * Container queries are scoped via `container-type: inline-size` on `.guide-front` in
- * GuideCard.vue's style block — so this component just emits semantic markup.
+ * Rendered "How to Play" body — used inside the desktop flip-card and the mobile modal.
+ * Container queries scale text by card width via .guide-front in GuideCard.vue.
  */
-defineProps<{ mode?: 'simulation' | 'play' | 'solo' }>();
+defineProps<{ mode?: 'solo' | 'versus' | 'playground' }>();
 </script>
 
 <template>
-  <!-- ============== SOLO RULES ==============
-       Different game shape: no chant enforcement, single base, +2s on wrong slams,
-       persisted best time. We use the same .guide-grid skeleton so styling is shared. -->
+  <!-- ============== SOLO RULES ============== -->
   <div v-if="mode === 'solo'" class="guide-grid">
     <div class="left-col">
       <h2 class="guide-title">Solo · Time Attack</h2>
 
       <section class="section">
         <h3>Goal</h3>
-        <p>Empty the entire 55-card halo as fast as you can. Best time is saved on this device.</p>
+        <p>Empty your hand AND the draw pile as fast as possible. Best time persists on this device.</p>
+      </section>
+
+      <section class="section">
+        <h3>The Prompt</h3>
+        <p>Two physical bases sit in the centre: <strong>Left</strong> and <strong>Right</strong>. The most recently slammed card sits on top of one of them — that's the <strong class="hi-high">Prompt</strong> (marked with a "PROMPT" label and a glowing ring). Its direction decides where your NEXT card may land.</p>
       </section>
 
       <section class="section">
         <h3>How to Play</h3>
-        <p><strong>Click or drag</strong> a card → it slams onto the central base.<br />
-           A correct card (matches the chant beat) clears from the halo.</p>
+        <p>Each turn, in order:</p>
+        <p>
+          <strong>1.</strong> Find a card in your hand whose word matches the current <em>chant beat</em>.<br />
+          <strong>2.</strong> Drag it onto the base allowed by the current Prompt:
+        </p>
+        <ul class="cards-list">
+          <li>
+            <img src="/cards/chik-left.png" alt="Left prompt" class="mini-card" />
+            <p>Prompt is <strong>Left</strong> → slam on the Left base.</p>
+          </li>
+          <li>
+            <img src="/cards/chik-right.png" alt="Right prompt" class="mini-card" />
+            <p>Prompt is <strong>Right</strong> → slam on the Right base.</p>
+          </li>
+          <li>
+            <img src="/cards/chik-free.png" alt="Free prompt" class="mini-card" />
+            <p>Prompt is <strong>Free</strong> → either base works.</p>
+          </li>
+        </ul>
+        <p><strong>3.</strong> Drag back to centre to cancel a slam in progress. If no beat-matching card is in hand, <strong>click the deck</strong> to draw.</p>
+        <p>The card you just played becomes the new Prompt — its own type (Left/Right/Free) sets the next direction.</p>
       </section>
 
       <section class="section">
-        <h3>Wrong Slams</h3>
-        <p>Wrong word → <strong>+2 seconds</strong> on the timer; the card stays in the halo. The chant doesn't move on a miss.</p>
+        <h3>Penalties (+2s each)</h3>
+        <p>
+          <strong>Wrong base</strong> — slamming on a base the current Prompt doesn't allow.<br />
+          <strong>Wrong beat</strong> — the card's word doesn't match the current beat.<br />
+          <strong>Unnecessary draw</strong> — clicking the deck while a beat-matching card is in your hand.
+        </p>
       </section>
 
       <section class="section">
         <h3>Opening</h3>
-        <p>The pulsing <strong class="hi-high">Halo-Halo Chik</strong> opens the game. Pre-open, any click slams it for you.</p>
-      </section>
-
-      <section class="section">
-        <h3>Special Cards</h3>
-        <ul class="cards-list">
-          <li>
-            <img src="/cards/halohalo-chik.png" alt="Halo-Halo Chik" class="mini-card" />
-            <p><strong class="card-name word-chik">Halo-Halo Chik</strong> — opens the run on the first Chik beat.</p>
-          </li>
-          <li>
-            <img src="/cards/chik-reverse.png" alt="Reverse" class="mini-card" />
-            <p><strong>Reverse</strong> — steps the chant <em>back</em> one word.</p>
-          </li>
-        </ul>
-        <p style="margin-top: 1cqw; opacity: 0.75;"><em>Decoys are removed in Solo.</em></p>
+        <p>The <strong class="hi-high">Halo-Halo Chik</strong> opens the game on the first Chik beat. It's Free, so it can land on either base. Until you slam it, no other card is legal.</p>
       </section>
     </div>
 
@@ -75,67 +83,76 @@ defineProps<{ mode?: 'simulation' | 'play' | 'solo' }>();
     </div>
   </div>
 
+  <!-- ============== VERSUS / PLAYGROUND RULES ============== -->
   <div v-else class="guide-grid">
-    <!-- Left column — instructions -->
     <div class="left-col">
-      <h2 class="guide-title">How to Play</h2>
+      <h2 class="guide-title">
+        {{ mode === 'playground' ? 'Playground · Sandbox' : 'Versus · Turn-based' }}
+      </h2>
 
       <section class="section">
         <h3>Goal</h3>
-        <p>Be the first to empty your hand by slamming the right card on the right beat.</p>
+        <p>Be the first to empty your hand. Every card you play sits in front of an opponent — its <strong>prompt</strong> dictates how they must respond on their turn.</p>
       </section>
 
       <section class="section">
-        <h3>Modes</h3>
-        <p><strong>Simulate</strong> — watch AI play.<br />
-           <strong>Play</strong> — you take P1 (the bottom seat).</p>
+        <h3>How to Play</h3>
+        <p>On your turn, in order:</p>
+        <p>
+          <strong>1.</strong> Check your prompt — the card stacked in front of you. Its type (Left / Right / Free / Stop / Snap / Fetch) dictates which opponents are legal targets.<br />
+          <strong>2.</strong> Drag a beat-matching card onto a legal seat (legal seats glow). Drag back to centre to cancel.<br />
+          <strong>3.</strong> If no legal play exists, click the deck to draw — your turn ends.
+        </p>
+        <p>Whatever card you play becomes the recipient's new prompt.</p>
       </section>
 
       <section class="section">
-        <h3>The Beat (Play)</h3>
-        <p>A metronome rotates clockwise — your seat's pie wedge lights up on your turn. Slam during YOUR beat only; slamming during another's = miscall. You can slam <strong>multiple cards in one beat</strong> to chain a combo. Listen for the
-          <strong class="hi-high">high DING</strong> — the next beat is yours.</p>
-      </section>
-
-      <section class="section">
-        <h3>How to Slam</h3>
-        <p><strong>Tap</strong> a card → slam on Main base.<br />
-           <strong>Drag</strong> toward a base chip → slam on that base.<br />
-           <strong>Drag back</strong> to the center ring → cancel.<br />
-           <strong>Esc</strong> → cancel.</p>
-      </section>
-
-      <section class="section">
-        <h3>Special Cards</h3>
+        <h3>Prompts</h3>
         <ul class="cards-list">
           <li>
-            <img src="/cards/halohalo-chik.png" alt="Halo-Halo Chik" class="mini-card" />
-            <p><strong class="card-name word-chik">Halo-Halo Chik</strong> — opens the game on the first Chik beat.</p>
+            <img src="/cards/chik-left.png" alt="Left" class="mini-card" />
+            <p><strong>Left / Right</strong> — recipient must play their next card to that neighbour.</p>
           </li>
           <li>
-            <img src="/cards/chik-reverse.png" alt="Reverse" class="mini-card" />
-            <p><strong>Reverse</strong> — steps the chant <em>back</em> one word.</p>
+            <img src="/cards/chik-free.png" alt="Free" class="mini-card" />
+            <p><strong>Free</strong> — recipient may play in front of anyone.</p>
           </li>
           <li>
-            <img src="/cards/chik-decoy.png" alt="Decoy" class="mini-card" />
-            <p><strong>Decoy</strong> — matches its word but can be slammed on ANY base.</p>
+            <img src="/cards/chik-block.png" alt="Stop" class="mini-card" />
+            <p><strong>Stop</strong> — recipient skips their turn and draws.</p>
+          </li>
+          <li>
+            <img src="/cards/chik-snap.png" alt="Snap" class="mini-card" />
+            <p><strong>Snap</strong> — if you DRAW this on a matching beat, play it immediately on your left or right neighbour (overrides Stop).</p>
+          </li>
+          <li>
+            <img src="/cards/chik-off-deck.png" alt="Fetch" class="mini-card" />
+            <p><strong>Fetch</strong> — when the recipient must draw, they pull from the Fetch player's hand instead of the deck. Draining that hand to zero is an instant win for the Fetch player.</p>
           </li>
         </ul>
       </section>
 
       <section class="section">
-        <h3>Penalties</h3>
-        <p>Tie = pick 1 card from any pile.<br />
-           Miscall = pick 2 cards.</p>
+        <h3>The Chain</h3>
+        <p>If your card forces the target to draw, you get an <strong>immediate bonus turn</strong>. The chain ends when a target plays successfully OR you draw.</p>
       </section>
 
       <section class="section">
-        <h3>Controls</h3>
-        <p>Top of the screen — Mode · Players · Failure · Speed · Beats · Mute.</p>
+        <h3>Strict Prompts (optional)</h3>
+        <p>Toggle on in Settings to attempt any play — illegal moves still land, but you draw a +1 penalty card. Lets you experiment instead of being blocked.</p>
+      </section>
+
+      <section v-if="mode === 'playground'" class="section">
+        <h3>Sandbox · Configurable Deck</h3>
+        <p>Playground is Versus with two extra knobs in Settings:</p>
+        <p>
+          <strong>Deck composition</strong> — set how many of each prompt type are in the deck (0 to 42 per prompt, Free has a 7-card floor).<br />
+          <strong>Hand size</strong> — 3 to 14 starting cards per player.
+        </p>
+        <p>All other Versus rules still apply.</p>
       </section>
     </div>
 
-    <!-- Right column — THE CHANT -->
     <div class="right-col">
       <h2 class="chant-title">The Chant</h2>
       <div class="chant-list">

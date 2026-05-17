@@ -1,57 +1,58 @@
-import type { Game, PendingSlam } from './Game';
+import type { Game } from './Game';
 import type { Card } from './Card';
-import { CHANT_ORDER, type BaseSlot, type ChantWord, type PlayerId } from './types';
+import type { CardPrompt, GameMode, PlayerId, VersusAction } from './types';
+import { modeCaps } from './modes';
 
 export type SimStatus = 'idle' | 'opening' | 'running' | 'paused' | 'ended';
-export type SimMode = 'simulation' | 'play' | 'solo';
+/** SimMode is just GameMode — the controller dispatches based on capability flags
+ *  (hasAIOpponents), not on identity, so any turn-based mode is supported automatically. */
+export type SimMode = GameMode;
+
+/**
+ * AI skill rungs (Versus). Each level is a (mistakeRate, strategyDepth) pair.
+ *  - mistakeRate is the probability that an AI player attempts an ILLEGAL play
+ *    (wrong direction / wrong beat) on their turn. Only meaningful when strict
+ *    prompts is enabled — otherwise illegal plays are hard-rejected by the engine.
+ *  - strategyDepth controls how much thought goes into target/card selection,
+ *    irrespective of strict mode.
+ */
+export type AiSkillLevel = 1 | 2 | 3 | 4;
+
+/** Mistake rate per skill level (only meaningful with strict prompts on). */
+const MISTAKE_RATE: Record<AiSkillLevel, number> = {
+  1: 0.30,
+  2: 0.15,
+  3: 0.05,
+  4: 0.01,
+};
+
+/** Probability that a low-skill AI draws even when they have a legal play. */
+const VOLUNTARY_DRAW_RATE: Record<AiSkillLevel, number> = {
+  1: 0.10,
+  2: 0.03,
+  3: 0,
+  4: 0,
+};
 
 export interface SimOptions {
-  speed: number;             // 0.25 .. 4
-  failureRate: number;       // 0 .. 1
-  baseDelayMs: number;       // base inter-beat delay (e.g. 1100) — Simulation mode
-  beatTickMs: number;        // metronome tick (Play mode) — fixed 500 ms by spec
-  beatsPerPlayer: number;    // metronome ticks per player turn (slider, 2..10)
-  jitter: number;            // 0..1 — fraction of randomized variation around the delay
+  speed: number;       // 0.25 .. 4 — multiplier on AI think delays
+  baseDelayMs: number; // base AI think delay (Versus)
+  jitter: number;      // 0..1 — fraction of randomized variation around the delay
 }
 
 const DEFAULT_OPTS: SimOptions = {
   speed: 1,
-  failureRate: 0,
   baseDelayMs: 1100,
-  beatTickMs: 500,
-  beatsPerPlayer: 5,
   jitter: 0.35,
 };
 
-/** Pitch of the audio cue accompanying a metronome tick. */
-export type DingKind = 'middle' | 'high' | 'low';
-
 /**
- * Play-mode hook: called once per metronome tick. The view layer uses this for audio
- * and for any per-tick visuals (e.g. a beat-counter on the active seat).
- */
-export type BeatChangeHook = (info: {
-  seatIndex: number;
-  playerId: PlayerId;
-  isHumanSeat: boolean;
-  /** 0..totalTicks-1 — index of the tick we're playing right now. */
-  tickIndex: number;
-  /** beatsPerPlayer captured at the start of this player's turn. */
-  totalTicks: number;
-  /** True when this is the LAST tick of the active player's turn — pitched HIGH/LOW. */
-  isFinal: boolean;
-  /** Audio pitch to play for this tick. */
-  dingKind: DingKind;
-  /** True only the first tick of a new player's turn (so UI can flash a transition). */
-  isTurnStart: boolean;
-}) => void;
-
-/**
- * Drives the Game forward in real time. Picks an AI player, schedules the next slam,
- * occasionally produces ties or miscalls based on `failureRate`.
+ * Versus-only orchestrator: schedules AI turns, calls submitVersusAction on the Game,
+ * waits, repeats. Solo mode bypasses this entirely (player drives every action).
  *
- * Players can be "taken over" by the user — those players' AI logic is skipped, and
- * the UI is expected to call submitHumanSlam() on their behalf.
+ * The controller is unaware of the chain rule and prompt resolution — it just polls
+ * `game.activeSeatIndex` each tick. If the active seat is a human, it parks. If it's
+ * AI, it picks a legal action and calls submitVersusAction.
  */
 export class SimulationController {
   private game: Game;
@@ -60,52 +61,52 @@ export class SimulationController {
   private rng: () => number;
   private status: SimStatus = 'idle';
   private statusListeners: ((s: SimStatus) => void)[] = [];
-  private pendingHumanSlams: PendingSlam[] = [];
+  private mode: SimMode = 'versus';
+  /** AI skill level. 3 (Hard) is the default — feels competent without being unfair. */
+  private aiSkill: AiSkillLevel = 3;
+  /** Timer for the deliberate delay before an AI commits a pending snap, so the UI
+   *  can show the snap card popping up + the chosen target highlighting. */
+  private pendingSnapResolveTimer: number | null = null;
+  /** When an AI has picked its snap target but not yet committed, the UI reads this
+   *  to highlight the chosen chip during the resolve delay. -1 / null otherwise. */
+  pendingSnapPickedTarget: number | null = null;
 
-  // ---- Mode + Beat state (Play mode only) ----
-  private mode: SimMode = 'simulation';
-  /** -1 until game opens. In Play mode, indexes the active player in `game.players`. */
-  private activeBeatSeatIndex = -1;
-  private beatChangeHook: BeatChangeHook | null = null;
+  /**
+   * Pick which seat an AI player should snap-play onto. Strict mode allows any non-self
+   * target — use skill to pick strategically (leader = fewest cards). Standard mode is
+   * left-or-right; high skill picks the neighbour with the fewest cards.
+   */
+  private chooseSnapTarget(seatIdx: number): number {
+    const legal = this.game.pendingSnapLegalTargets();
+    if (legal.length === 0) return seatIdx; // fallback (shouldn't happen)
+    if (this.aiSkill >= 3) {
+      // Pick the seat with the fewest cards in hand.
+      return legal.reduce((best, t) => {
+        return this.game.players[t].cardCount < this.game.players[best].cardCount ? t : best;
+      }, legal[0]);
+    }
+    return legal[Math.floor(this.rng() * legal.length)];
+  }
 
   constructor(game: Game, rng: () => number = Math.random) {
     this.game = game;
     this.rng = rng;
   }
 
-  // ---------- Public controls ----------
-
   setOptions(opts: Partial<SimOptions>): void {
     this.opts = { ...this.opts, ...opts };
   }
 
-  getOptions(): SimOptions {
-    return { ...this.opts };
+  setAiSkill(level: AiSkillLevel): void {
+    this.aiSkill = level;
+  }
+
+  getAiSkill(): AiSkillLevel {
+    return this.aiSkill;
   }
 
   setMode(mode: SimMode): void {
     this.mode = mode;
-    // Forward to Game so its slam-resolution logic can branch on mode (Solo treats every
-    // slam as successful + emits soloPenalty on a chant mismatch).
-    this.game.mode = mode;
-    if (mode !== 'play') {
-      // Simulation and Solo both run without the beat metronome.
-      this.game.activeBeatPlayerId = null;
-      this.activeBeatSeatIndex = -1;
-    }
-  }
-
-  getMode(): SimMode {
-    return this.mode;
-  }
-
-  /** Receive a callback whenever the active beat changes (used to ding the synth). */
-  setBeatChangeHook(hook: BeatChangeHook | null): void {
-    this.beatChangeHook = hook;
-  }
-
-  getActiveBeatSeatIndex(): number {
-    return this.activeBeatSeatIndex;
   }
 
   getStatus(): SimStatus {
@@ -121,22 +122,8 @@ export class SimulationController {
 
   start(): void {
     if (this.status === 'ended') return;
-    if (this.mode === 'solo') {
-      // Solo is purely event-driven — every player slam is processed synchronously in
-      // submitHumanSlam. No ticks, no auto-open: the Halo-Halo Chik sits in the player's
-      // hand and they click it like any other card. Just flip status to 'running' so the
-      // view layer's timer starts.
-      this.setStatus('running');
-      return;
-    }
-    if (!this.game.opened) {
-      // Open with the Halo-Halo holder, then start ticking.
-      this.setStatus('opening');
-      this.scheduleNext(this.delay() * 0.6);
-    } else {
-      this.setStatus('running');
-      this.scheduleNext();
-    }
+    this.setStatus('running');
+    if (modeCaps(this.mode).hasAIOpponents) this.scheduleNext(this.delay() * 0.6);
   }
 
   pause(): void {
@@ -150,10 +137,7 @@ export class SimulationController {
   resume(): void {
     if (this.status !== 'paused') return;
     this.setStatus('running');
-    // Solo is purely event-driven (player clicks). Scheduling a tick here would kick the
-    // simulation/play loop and start auto-playing cards on the player's behalf.
-    if (this.mode === 'solo') return;
-    this.scheduleNext();
+    if (modeCaps(this.mode).hasAIOpponents) this.scheduleNext();
   }
 
   stop(): void {
@@ -161,81 +145,28 @@ export class SimulationController {
       clearTimeout(this.timer);
       this.timer = null;
     }
+    if (this.pendingSnapResolveTimer !== null) {
+      clearTimeout(this.pendingSnapResolveTimer);
+      this.pendingSnapResolveTimer = null;
+      this.pendingSnapPickedTarget = null;
+    }
     this.setStatus('ended');
   }
 
-  /**
-   * Submit a slam from a human-controlled seat.
-   *  - Simulation mode: queued and drained on the next tick (matches the simultaneous model).
-   *  - Play (BEAT) mode: resolved synchronously so the human's input is never lagged by
-   *    the metronome interval. Game.activeBeatPlayerId already enforces out-of-turn rules.
-   *
-   * Special case: if this slam was the Halo-Halo opening (game.opened was false and
-   * becomes true), we ALSO (a) play one indication ding, pitched for who's up next,
-   * and (b) kickstart the metronome on the next clockwise seat.
-   */
-  submitHumanSlam(slam: PendingSlam): void {
-    if (this.mode === 'solo') {
-      // Solo is fully event-driven: process synchronously, no metronome to wake.
-      this.game.resolveSlams([slam]);
-      if (this.game.winnerId) this.setStatus('ended');
-      return;
-    }
-    if (this.mode === 'play') {
-      const wasOpened = this.game.opened;
-      this.game.resolveSlams([slam]);
-      if (this.game.winnerId) { this.setStatus('ended'); return; }
-      if (!wasOpened && this.game.opened) {
-        const haloIdx = this.game.players.findIndex((p) => p.id === this.game.haloHaloOwnerId);
-        const { dingKind, nextSeat } = this.dingForOpening(haloIdx);
-        if (nextSeat < 0) { this.endByTiebreak(); return; }
-        // Indication ding for the Halo-Halo slam.
-        const halo = haloIdx >= 0 ? this.game.players[haloIdx] : null;
-        this.beatChangeHook?.({
-          seatIndex: haloIdx,
-          playerId: halo ? halo.id : slam.playerId,
-          isHumanSeat: halo ? !halo.isAI : true,
-          tickIndex: -1,
-          totalTicks: this.opts.beatsPerPlayer,
-          isFinal: true,
-          dingKind,
-          isTurnStart: false,
-        });
-        this.startTurn(nextSeat);
-        this.scheduleNext(this.beatTickInterval());
-      }
-      return;
-    }
-    this.pendingHumanSlams.push(slam);
-  }
-
-  /** Toggle a single player between AI and human. */
   setPlayerHuman(playerId: PlayerId, isHuman: boolean): void {
     const p = this.game.players.find((pl) => pl.id === playerId);
     if (p) p.isAI = !isHuman;
   }
 
-  // ---------- AI helpers ----------
-
-  /**
-   * Pick the base an AI player will slam onto for a given card.
-   *  - Non-decoy: the legal target (matching word base if owned, else Main).
-   *  - Decoy: a random base from the set of OWNED word bases plus Main. Unowned word bases
-   *    live in the center as display-only references — anything aimed there piles on Main —
-   *    so AI shouldn't bother targeting them.
-   */
-  private aiTargetForCard(card: Card): BaseSlot {
-    if (card.kind === 'decoy') {
-      const slots: BaseSlot[] = [];
-      for (const [slot, base] of this.game.bases) {
-        if (slot === 'main' || base.ownerId) slots.push(slot);
-      }
-      return slots[Math.floor(this.rng() * slots.length)];
-    }
-    return this.game.resolveTargetBase(card.word);
+  /** Solo: the view layer calls submitSoloAction directly on the game; this is a pass-through. */
+  /** Versus: submit a human play immediately. If the action progresses to an AI turn, the
+   *  next tick will fire after the regular delay. */
+  submitVersusHumanAction(playerId: PlayerId, action: VersusAction): void {
+    this.game.submitVersusAction(playerId, action);
+    if (this.game.winnerId) { this.setStatus('ended'); return; }
+    // After a human action, the active seat may now be AI — schedule a tick to handle it.
+    this.scheduleNext();
   }
-
-  // ---------- Internal loop ----------
 
   private setStatus(s: SimStatus): void {
     this.status = s;
@@ -245,390 +176,185 @@ export class SimulationController {
   private delay(): number {
     const base = this.opts.baseDelayMs / Math.max(0.1, this.opts.speed);
     const j = (this.rng() * 2 - 1) * this.opts.jitter;
-    return Math.max(80, base * (1 + j));
+    return Math.max(180, base * (1 + j));
   }
 
   private scheduleNext(ms?: number): void {
     if (this.timer !== null) clearTimeout(this.timer);
-    const delay = ms ?? (this.mode === 'play' ? this.beatTickInterval() : this.delay());
+    if (this.status !== 'running') return;
+    if (!modeCaps(this.mode).hasAIOpponents) return;
     this.timer = window.setTimeout(() => {
       this.timer = null;
       this.tick();
-    }, delay);
-  }
-
-  /** Single metronome tick interval (Play mode). 500 ms by spec; clamped for safety. */
-  private beatTickInterval(): number {
-    return Math.max(120, this.opts.beatTickMs);
+    }, ms ?? this.delay());
   }
 
   private tick(): void {
-    if (this.status === 'paused' || this.status === 'ended') return;
-    if (this.game.winnerId) {
-      this.setStatus('ended');
-      return;
-    }
+    if (this.status !== 'running' || this.game.winnerId) return;
 
-    if (this.mode === 'play') {
-      this.tickBeat();
-      return;
-    }
-
-    // ---- Simulation mode (original simultaneous logic) ----
-
-    // Open the game if not yet opened.
-    if (!this.game.opened) {
-      this.game.openGame();
-      this.setStatus('running');
-      this.scheduleNext();
-      return;
-    }
-
-    // Decide what to do this beat.
-    const beat = this.game.getRequiredBeat();
-    const slams: PendingSlam[] = [];
-
-    // 1) Drain any pending human slams.
-    if (this.pendingHumanSlams.length > 0) {
-      slams.push(...this.pendingHumanSlams);
-      this.pendingHumanSlams = [];
-    } else {
-      // 2) AI decision. Find candidates among AI players who hold the required card.
-      const aiPlayers = this.game.players.filter((p) => p.isAI && p.cardCount > 0);
-      const candidates = aiPlayers.filter((p) => p.hasCardForBeat(beat) !== null);
-
-      if (candidates.length === 0) {
-        // No AI player can play. If a human seat exists, give them more time.
-        const anyHuman = this.game.players.some((p) => !p.isAI && p.cardCount > 0);
-        if (anyHuman) {
-          this.scheduleNext(this.delay() * 1.2);
-          return;
-        }
-        // Stalled — nobody can play. End by tiebreak.
-        this.endByTiebreak();
+    // Pending snap-draw: surface the SnapDrawnOverlay (visible to the human regardless
+    // of who's drawing) and resolve. Humans submit via the UI; AI picks strategically
+    // after a deliberate delay so the player can SEE the AI's snap before it lands.
+    const pending = this.game.pendingSnapDraw;
+    if (pending) {
+      const holder = this.game.players.find((p) => p.id === pending.playerId);
+      if (holder && holder.isAI) {
+        if (this.pendingSnapResolveTimer !== null) return; // already scheduled
+        const seat = this.game.players.findIndex((p) => p.id === holder.id);
+        const targetSeatIndex = this.chooseSnapTarget(seat);
+        this.pendingSnapPickedTarget = targetSeatIndex;
+        this.pendingSnapResolveTimer = window.setTimeout(() => {
+          this.pendingSnapResolveTimer = null;
+          this.pendingSnapPickedTarget = null;
+          this.game.submitVersusAction(holder.id, { type: 'snap-play', targetSeatIndex });
+          if (this.game.winnerId) { this.setStatus('ended'); return; }
+          this.scheduleNext();
+        }, 900);
         return;
       }
-
-      const r = this.rng();
-      if (r < this.opts.failureRate) {
-        // Error scenario.
-        if (this.rng() < 0.5 && candidates.length >= 2) {
-          // Tie — two candidates slam simultaneously.
-          const shuffled = candidates.slice().sort(() => this.rng() - 0.5);
-          const [a, b] = [shuffled[0], shuffled[1]];
-          for (const p of [a, b]) {
-            const card = p.hasCardForBeat(beat)!;
-            slams.push({
-              playerId: p.id,
-              cardId: card.id,
-              targetBase: this.aiTargetForCard(card),
-              shoutedWord: beat,
-            });
-          }
-        } else {
-          // Miscall — primary slams a wrong card or correct card on wrong base.
-          const primary = candidates[Math.floor(this.rng() * candidates.length)];
-          const wrongCards = primary.hand.filter((c) => !c.matchesBeat(beat) && c.kind !== 'decoy');
-          if (wrongCards.length > 0 && this.rng() < 0.7) {
-            const wrong = wrongCards[Math.floor(this.rng() * wrongCards.length)];
-            slams.push({
-              playerId: primary.id,
-              cardId: wrong.id,
-              targetBase: this.aiTargetForCard(wrong),
-              shoutedWord: beat,
-            });
-          } else {
-            // Slam correct card on a wrong base (only meaningful for non-decoy).
-            const card = primary.hasCardForBeat(beat)!;
-            const wrongSlots = Array.from(this.game.bases.keys()).filter(
-              (s) => s !== card.word && s !== 'main',
-            );
-            const targetBase = card.kind !== 'decoy' && wrongSlots.length > 0
-              ? wrongSlots[Math.floor(this.rng() * wrongSlots.length)]
-              : this.game.resolveTargetBase(card.word);
-            slams.push({
-              playerId: primary.id,
-              cardId: card.id,
-              targetBase,
-              shoutedWord: beat,
-            });
-          }
-        }
-      } else {
-        // Clean play — fastest player wins.
-        const primary = candidates[Math.floor(this.rng() * candidates.length)];
-        const card = primary.hasCardForBeat(beat)!;
-        slams.push({
-          playerId: primary.id,
-          cardId: card.id,
-          targetBase: this.aiTargetForCard(card),
-          shoutedWord: beat,
-        });
-      }
-    }
-
-    // Resolve slams.
-    this.game.resolveSlams(slams);
-
-    if (this.game.winnerId) {
-      this.setStatus('ended');
+      // Human's pending — park and wait for the UI to submit.
       return;
     }
 
+    const seat = this.game.activeSeatIndex;
+    if (seat < 0 || seat >= this.game.players.length) return;
+    const player = this.game.players[seat];
+
+    // Human seat — just park. Their action via submitVersusHumanAction will re-kick.
+    if (!player.isAI) return;
+
+    // AI decision: try to play; otherwise draw.
+    const action = this.chooseAIAction(player.id, seat);
+    this.game.submitVersusAction(player.id, action);
+
+    if (this.game.winnerId) { this.setStatus('ended'); return; }
     this.scheduleNext();
   }
 
-  // ---------- Play / BEAT mode ----------
-
-  /** Find the seat clockwise of `from` that still has cards. Returns -1 if none. */
-  private nextActiveSeat(from: number): number {
-    const n = this.game.players.length;
-    for (let i = 1; i <= n; i++) {
-      const idx = (from + i) % n;
-      if (this.game.players[idx].cardCount > 0) return idx;
-    }
-    return -1;
-  }
-
-  // ---------- Beat metronome state ----------
-
-  /** Tick index within the current player's turn (0 .. beatsPerPlayer-1). */
-  private beatTickIndex = 0;
-  /** Total ticks captured at the start of this turn (so a mid-game slider change is harmless). */
-  private currentTurnTotalTicks = 5;
-  /** Which tick (0..total-1) the AI plans to slam on this turn — set per turn. -1 = skip. */
-  private aiSlamTick = -1;
-  /** Card the AI committed to play (chosen at the start of its turn). */
-  private aiSlamCardId: string | null = null;
-
   /**
-   * Begin a new player's turn. Writes activeBeatPlayerId on the Game (for out-of-turn
-   * enforcement), resets the tick counter, and rolls the AI's plan for this turn.
-   * Does NOT fire a tick or audio — the next call to tickBeat() will play tick 0.
+   * AI policy. Skill-tiered (1 = Easy, 4 = Master). Two paths:
+   *  - Mistake path (only meaningful with strict prompts on): the AI intentionally
+   *    attempts an illegal play, which the engine converts to a +1 penalty draw.
+   *    Mistake probability is `MISTAKE_RATE[skill]`.
+   *  - Strategic path: rank candidate (card, target) pairs by tier and skill-dependent
+   *    target scoring. Low-skill = random; high-skill = prefer non-specials, target
+   *    leader with specials, hold Snap unless near win.
    */
-  private startTurn(seatIndex: number): void {
-    this.activeBeatSeatIndex = seatIndex;
-    this.beatTickIndex = -1; // will become 0 on the first metronome firing
-    this.currentTurnTotalTicks = Math.max(2, Math.min(10, Math.round(this.opts.beatsPerPlayer)));
-    if (seatIndex < 0 || seatIndex >= this.game.players.length) {
-      this.game.activeBeatPlayerId = null;
-      this.aiSlamTick = -1;
-      this.aiSlamCardId = null;
-      return;
-    }
-    const p = this.game.players[seatIndex];
-    this.game.activeBeatPlayerId = p.id;
-    this.game['emit']({ kind: 'beatChanged', seatIndex, playerId: p.id });
+  private chooseAIAction(playerId: PlayerId, seat: number): VersusAction {
+    const player = this.game.players.find((p) => p.id === playerId)!;
 
-    const beat = this.game.getRequiredBeat();
-    const matching = p.hasCardForBeat(beat);
-
-    // If this player has nothing playable for the current beat, snap their turn to a
-    // short window (max 2 ticks) so the metronome doesn't drag — there's nothing they
-    // can do anyway, so quickly hand the BEAT to the next clockwise player.
-    if (!matching) {
-      this.currentTurnTotalTicks = Math.min(2, this.currentTurnTotalTicks);
-    }
-
-    // Decide AI plan once at the start of the turn so timing stays stable across ticks.
-    if (p.isAI) {
-      const r = this.rng();
-      // Failure roll: occasionally the AI just skips the whole turn.
-      if (r < this.opts.failureRate * 0.4 || !matching) {
-        this.aiSlamTick = -1;
-        this.aiSlamCardId = null;
-      } else {
-        // Decide which card (correct, or wrong as a miscall).
-        const wrongCards = p.hand.filter((c) => !c.matchesBeat(beat));
-        const playWrong = r < this.opts.failureRate && wrongCards.length > 0;
-        const card = playWrong
-          ? wrongCards[Math.floor(this.rng() * wrongCards.length)]
-          : matching;
-        this.aiSlamCardId = card.id;
-        // Pick a tick somewhere in the middle of the window — never the final tick,
-        // and avoid tick 0 so the cadence feels musical (slam between dings).
-        const lastIdx = this.currentTurnTotalTicks - 1;
-        const min = Math.min(1, lastIdx);
-        const span = Math.max(0, lastIdx - 1 - min); // ticks 1..lastIdx-1 inclusive
-        this.aiSlamTick = min + Math.floor(this.rng() * (span + 1));
-      }
-    } else {
-      this.aiSlamTick = -1;
-      this.aiSlamCardId = null;
-    }
-  }
-
-  /** Returns true when no remaining player has a card matching the current chant beat. */
-  private isProgressImpossible(): boolean {
-    if (!this.game.opened) return false;
-    const beat = this.game.getRequiredBeat();
-    return !this.game.players.some(
-      (p) => p.cardCount > 0 && p.hasCardForBeat(beat) !== null,
-    );
-  }
-
-  /**
-   * Pitch of the "card was played to open the round" ding — same rule as a final-tick
-   * DING: HIGH if the next clockwise active player is human, LOW otherwise.
-   * Used both for AI auto-open and the human Halo-Halo slam (via submitHumanSlam).
-   */
-  private dingForOpening(haloIdx: number): { dingKind: DingKind; nextSeat: number } {
-    const nextSeat = this.nextActiveSeat(haloIdx >= 0 ? haloIdx : -1);
-    const next = nextSeat >= 0 ? this.game.players[nextSeat] : null;
-    return { dingKind: next && !next.isAI ? 'high' : 'low', nextSeat };
-  }
-
-  /**
-   * Continuous BEAT metronome. Fires every `beatTickMs` (default 500 ms) regardless of
-   * whether the active player slammed. Each tick:
-   *  1. Plays a ding (middle / high / low pitch — final tick of a turn is high if your
-   *     seat owns the beat, low otherwise).
-   *  2. Fires the AI's planned slam if this is the tick they chose.
-   *  3. After the LAST tick, rotates the active seat clockwise and resets the counter.
-   *
-   * Player slams (human) are processed synchronously in submitHumanSlam, not here — the
-   * metronome is decoupled from gameplay so it never lags or skips for any reason.
-   */
-  private tickBeat(): void {
-    // ----- Opening (game not yet opened) -----
-    // If the Halo-Halo holder is AI: auto-open and start the first turn clockwise.
-    // If the holder is HUMAN: pause the metronome and let them play it themselves.
-    //   The wait state is exited by submitHumanSlam → kickstart on game.opened flip.
+    // Pre-open: only Halo-Halo is legal. (Mistake path can't trigger here — wrong
+    // moves pre-open are silently rejected by the engine regardless of strict mode.)
     if (!this.game.opened) {
-      const haloIdx = this.game.players.findIndex((p) => p.id === this.game.haloHaloOwnerId);
-      const holder = haloIdx >= 0 ? this.game.players[haloIdx] : null;
-      this.setStatus('running');
-
-      if (!holder || holder.isAI) {
-        // AI auto-opens.
-        this.game.openGame();
-        if (this.game.winnerId) { this.setStatus('ended'); return; }
-        const { dingKind, nextSeat } = this.dingForOpening(haloIdx);
-        if (nextSeat < 0) { this.endByTiebreak(); return; }
-        // Single ding marking the open, pitched for the next-up player (matches the
-        // user's request: "play only the last beat" indication when the Halo-Halo lands).
-        this.beatChangeHook?.({
-          seatIndex: haloIdx,
-          playerId: holder ? holder.id : this.game.players[nextSeat].id,
-          isHumanSeat: holder ? !holder.isAI : false,
-          tickIndex: -1,
-          totalTicks: this.opts.beatsPerPlayer,
-          isFinal: true,
-          dingKind,
-          isTurnStart: false,
-        });
-        this.startTurn(nextSeat);
-        this.scheduleNext(this.beatTickInterval());
-        return;
-      }
-
-      // Human holds Halo-Halo: park the metronome on this seat and wait for their slam.
-      // We mark them as the active beat so the pie wedge lights up, but no metronome
-      // ticks (and no audio) play until they actually drop the card.
-      if (this.activeBeatSeatIndex !== haloIdx) {
-        this.activeBeatSeatIndex = haloIdx;
-        this.beatTickIndex = -1;
-        this.game.activeBeatPlayerId = holder.id;
-        this.game['emit']({ kind: 'beatChanged', seatIndex: haloIdx, playerId: holder.id });
-      }
-      // Intentionally NO scheduleNext — submitHumanSlam will resume the metronome.
-      return;
+      const halo = player.hand.find((c) => c.isHaloHalo);
+      if (!halo) return { type: 'draw' };
+      const targets: number[] = [];
+      for (let i = 0; i < this.game.players.length; i++) if (i !== seat) targets.push(i);
+      const target = targets[Math.floor(this.rng() * targets.length)];
+      return { type: 'play', cardId: halo.id, targetSeatIndex: target };
     }
 
-    // ----- Stuck check -----
-    // If NO remaining player has a card for the current chant beat, no slam can ever
-    // succeed — end the round now via the rulebook's tiebreak (fewest cards / fewest
-    // combined points / share). Avoids the metronome ticking forever on a dead game.
-    if (this.isProgressImpossible()) {
-      this.endByTiebreak();
-      return;
+    const skill = this.aiSkill;
+
+    // Mistake roll. Only meaningful with strict prompts on — otherwise the engine
+    // hard-rejects illegal plays and the AI's turn would be wasted to no effect.
+    if (this.game.strictPromptsEnabled && this.rng() < MISTAKE_RATE[skill]) {
+      const mistake = this.chooseMistakeAction(player, seat);
+      if (mistake) return mistake;
+      // Fall through to strategic if no illegal play exists (rare).
     }
 
-    // Advance to the next tick.
-    this.beatTickIndex++;
-    const total = this.currentTurnTotalTicks;
-    const tickIndex = this.beatTickIndex;
-    const isFinal = tickIndex >= total - 1;
-    const seat = this.activeBeatSeatIndex;
-    const active = seat >= 0 ? this.game.players[seat] : null;
-
-    // If the active seat somehow became invalid (e.g. they emptied their hand by slamming),
-    // skip ahead to the next live seat without burning ticks.
-    if (!active || active.cardCount === 0) {
-      const nextSeat = this.nextActiveSeat(seat);
-      if (nextSeat < 0) { this.endByTiebreak(); return; }
-      this.startTurn(nextSeat);
-      this.scheduleNext(this.beatTickInterval());
-      return;
-    }
-
-    // Audio + visual hook for this tick. The FINAL tick's pitch is based on who's UP NEXT
-    // (clockwise neighbour with cards), so the human hears the HIGH DING on the previous
-    // player's final tick — a heads-up that the BEAT is rotating to them.
-    let dingKind: DingKind = 'middle';
-    if (isFinal) {
-      const nextSeatPreview = this.nextActiveSeat(seat);
-      const nextPlayer = nextSeatPreview >= 0 ? this.game.players[nextSeatPreview] : null;
-      dingKind = nextPlayer && !nextPlayer.isAI ? 'high' : 'low';
-    }
-    this.beatChangeHook?.({
-      seatIndex: seat,
-      playerId: active.id,
-      isHumanSeat: !active.isAI,
-      tickIndex,
-      totalTicks: total,
-      isFinal,
-      dingKind,
-      isTurnStart: tickIndex === 0,
-    });
-
-    // AI's planned slam fires on its chosen tick.
-    if (active.isAI && this.aiSlamCardId !== null && tickIndex === this.aiSlamTick) {
-      const card = active.hand.find((c) => c.id === this.aiSlamCardId);
-      if (card) {
-        this.game.resolveSlams([{
-          playerId: active.id,
-          cardId: card.id,
-          targetBase: this.aiTargetForCard(card),
-          shoutedWord: this.game.getRequiredBeat(),
-        }]);
-        if (this.game.winnerId) { this.setStatus('ended'); return; }
-      }
-      // Don't slam again this turn even if there are remaining ticks.
-      this.aiSlamTick = -1;
-      this.aiSlamCardId = null;
-    }
-
-    // After the final tick of this turn, rotate clockwise.
-    if (isFinal) {
-      const nextSeat = this.nextActiveSeat(seat);
-      if (nextSeat < 0) { this.endByTiebreak(); return; }
-      this.startTurn(nextSeat);
-    }
-
-    this.scheduleNext(this.beatTickInterval());
+    return this.chooseStrategicAction(player, seat, skill);
   }
 
-  private endByTiebreak(): void {
-    // Fewest cards wins; tie → fewest combined points; tie → first by seat index.
-    const ranked = this.game.players
-      .filter((p) => p.cardCount > 0)
-      .slice()
-      .sort((a, b) => {
-        if (a.cardCount !== b.cardCount) return a.cardCount - b.cardCount;
-        const ap = a.hand.reduce((sum, c) => sum + CHANT_ORDER.indexOf(c.word) + 1, 0);
-        const bp = b.hand.reduce((sum, c) => sum + CHANT_ORDER.indexOf(c.word) + 1, 0);
-        if (ap !== bp) return ap - bp;
-        return a.seatIndex - b.seatIndex;
-      });
-    if (ranked.length > 0) {
-      this.game['declareWinner'](ranked[0].id);
+  /**
+   * Pick an intentionally illegal play: any card paired with a target that violates
+   * either the beat or the prompt direction. Returns null only if every (card, target)
+   * combination is rulebook-legal (very rare — e.g. Free prompt + multiple beat-matching
+   * cards in hand).
+   */
+  private chooseMistakeAction(player: import('./Player').Player, seat: number): VersusAction | null {
+    const beat = this.game.getRequiredBeat();
+    const illegal: { cardId: string; target: number }[] = [];
+    for (const card of player.hand) {
+      const beatOk = card.matchesBeat(beat);
+      // Strict-rulebook-legal target set for this card (ignore strict-mode widening).
+      const legalSet = beatOk ? new Set(this.game.legalTargetSeats(seat, card, true)) : new Set<number>();
+      for (let t = 0; t < this.game.players.length; t++) {
+        if (t === seat) continue;
+        if (!beatOk || !legalSet.has(t)) illegal.push({ cardId: card.id, target: t });
+      }
     }
-    this.setStatus('ended');
+    if (illegal.length === 0) return null;
+    const pick = illegal[Math.floor(this.rng() * illegal.length)];
+    return { type: 'play', cardId: pick.cardId, targetSeatIndex: pick.target };
   }
 
-  /** Read-only chant beat helper for the UI. */
-  getRequiredBeat(): ChantWord {
-    return this.game.getRequiredBeat();
+  /**
+   * Pick the best legal play available given the AI's skill. Strategy depth ranges
+   * from "first matching card on a random legal seat" (Easy) to "tier-sorted,
+   * leader-targeting, Snap-holding" (Master).
+   */
+  private chooseStrategicAction(player: import('./Player').Player, seat: number, skill: AiSkillLevel): VersusAction {
+    const beat = this.game.getRequiredBeat();
+    type Candidate = { card: Card; target: number; tier: number; score: number };
+    const candidates: Candidate[] = [];
+
+    for (const card of player.hand) {
+      if (!card.matchesBeat(beat)) continue;
+      // Always use rulebook-legal targets for the AI's smart path — strict mode's
+      // widening is for the human's wheel, not for AI strategy.
+      const legalTargets = this.game.legalTargetSeats(seat, card, true);
+      if (legalTargets.length === 0) continue;
+      const tier = (['right', 'left', 'free'] as CardPrompt[]).includes(card.prompt) ? 0 : 1;
+
+      for (const t of legalTargets) {
+        const target = this.game.players[t];
+        // Score: higher is better. Specials (tier 1) want to hit the leader; non-specials
+        // care less. Lower skill mixes in randomness so target choice feels less optimal.
+        let score: number;
+        if (tier === 1) {
+          if (skill >= 3) score = -target.cardCount;
+          else if (skill === 2) score = -target.cardCount * 0.5 + this.rng();
+          else score = this.rng();
+        } else {
+          if (skill >= 3) score = -target.cardCount * 0.3 + this.rng() * 0.2;
+          else score = this.rng();
+        }
+        candidates.push({ card, target: t, tier, score });
+      }
+    }
+
+    if (candidates.length === 0) return { type: 'draw' };
+
+    // Easy AI sometimes draws even when a legal play exists.
+    if (this.rng() < VOLUNTARY_DRAW_RATE[skill]) return { type: 'draw' };
+
+    // Easy: ignore tier entirely, just pick any candidate at random.
+    if (skill === 1) {
+      const pick = candidates[Math.floor(this.rng() * candidates.length)];
+      return { type: 'play', cardId: pick.card.id, targetSeatIndex: pick.target };
+    }
+
+    // Skill 2+: sort by tier first (non-specials preferred), then by score (higher first).
+    candidates.sort((a, b) => a.tier - b.tier || b.score - a.score);
+
+    // Normal: pick from the top two so the AI is good but not deterministic.
+    if (skill === 2) {
+      const top2 = candidates.slice(0, 2);
+      const pick = top2[Math.floor(this.rng() * top2.length)];
+      return { type: 'play', cardId: pick.card.id, targetSeatIndex: pick.target };
+    }
+
+    let top = candidates[0];
+
+    // Master: hold Snap unless near victory (≤ 2 cards). Snap-when-drawn is more
+    // powerful than Snap-as-prompt, so a smart player hangs on to Snap cards.
+    if (skill === 4 && top.card.prompt === 'snap' && player.cardCount > 2) {
+      const nonSnap = candidates.find((c) => c.card.prompt !== 'snap');
+      if (nonSnap) top = nonSnap;
+    }
+
+    return { type: 'play', cardId: top.card.id, targetSeatIndex: top.target };
   }
 }

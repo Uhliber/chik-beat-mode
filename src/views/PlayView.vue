@@ -1,49 +1,44 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import type { GameEvent } from '@/game/types';
+import type { GameEvent, BaseSide, CardPrompt, PlaygroundComposition } from '@/game/types';
 import type { SimMode } from '@/game/SimulationController';
-import ControlPanel from '@/components/ControlPanel.vue';
+import { modeCaps } from '@/game/modes';
 import GameTable from '@/components/GameTable.vue';
 import EventLog from '@/components/EventLog.vue';
 import WinnerOverlay from '@/components/WinnerOverlay.vue';
 import GuideCard from '@/components/GuideCard.vue';
 import ChantTicker from '@/components/ChantTicker.vue';
 import MobileBottomSheet from '@/components/MobileBottomSheet.vue';
+import SidePanel from '@/components/SidePanel.vue';
+import SettingsPanel from '@/components/SettingsPanel.vue';
+import SnapDrawnOverlay from '@/components/SnapDrawnOverlay.vue';
 import PauseOverlay from '@/components/PauseOverlay.vue';
 import IconVolume from '@/components/icons/IconVolume.vue';
 import { useGame } from '@/composables/useGame';
 import { useBeatAudio } from '@/composables/useBeatAudio';
 import { useResponsive } from '@/composables/useResponsive';
-import type { Card } from '@/game/Card';
-import type { Player } from '@/game/Player';
-import type { BaseSlot } from '@/game/types';
 
 const route = useRoute();
 const router = useRouter();
 
-// Mode is selected by the menu via the `?mode=` query param. Default to 'play' (Versus)
-// so an unparameterised /play visit doesn't strand the user on Simulation. The
-// ControlPanel (debug/dev) can still flip modes after mount.
 function readModeFromRoute(): SimMode {
   const raw = Array.isArray(route.query.mode) ? route.query.mode[0] : route.query.mode;
-  if (raw === 'solo' || raw === 'play' || raw === 'simulation') return raw;
-  return 'play';
+  if (raw === 'solo') return 'solo';
+  if (raw === 'playground') return 'playground';
+  return 'versus';
 }
 
 const initialMode = readModeFromRoute();
 
 const {
   game,
+  controller,
   state,
   playerCount,
-  failureRate,
   speed,
   mode,
-  beatsPerPlayer,
-  activeBeatSeatIndex,
-  activeBeatTickIndex,
-  activeBeatTotalTicks,
+  activeSeatIndex,
   audioMuted,
   chantVirtualPos,
   lastPlayedVirtualPos,
@@ -52,32 +47,79 @@ const {
   soloBestTimeMs,
   soloLastFinalMs,
   soloIsNewBest,
+  pendingFlights,
+  wispEnabled,
+  setWispEnabled,
+  strictPrompts,
+  setStrictPrompts,
+  aiSkill,
+  setAiSkill,
+  playgroundComposition,
+  setPlaygroundPromptCount,
+  playgroundHandSize,
+  setPlaygroundHandSize,
+  resetPlaygroundDefaults,
+  promptSize,
+  setPromptSize,
+  pendingSnapDraw,
+  submitSnapPlay,
   initGame,
   start,
   pause,
   resume,
   setSpeed,
-  setFailureRate,
   setPlayerCount,
-  setBeatsPerPlayer,
   setAudioMuted,
-  setPlayerHuman,
-  canSeatBeHuman,
-  submitHumanSlam,
+  submitSoloAction,
+  submitVersusAction,
 } = useGame({ initialMode });
+
+// Reactive snap-card + drawer + legal targets for the SnapDrawnOverlay. Both human
+// and AI's pending snaps surface the overlay — for the AI the chips are read-only and
+// the engine's `pendingSnapPickedTarget` indicates which one the AI is about to commit.
+const pendingSnapCard = computed(() => {
+  const p = pendingSnapDraw.value;
+  if (!p) return null;
+  const player = game.value.players.find((pl) => pl.id === p.playerId);
+  return player?.hand.find((c) => c.id === p.cardId) ?? null;
+});
+const pendingSnapHolderSeat = computed(() => {
+  const p = pendingSnapDraw.value;
+  if (!p) return -1;
+  return game.value.players.findIndex((pl) => pl.id === p.playerId);
+});
+const pendingSnapIsHuman = computed(() => {
+  const idx = pendingSnapHolderSeat.value;
+  if (idx < 0) return false;
+  return !game.value.players[idx].isAI;
+});
+/** Legal target seat indices for the pending snap. Recomputed reactively via state.version
+ *  (which bumps on every game event) so the overlay refreshes when strict mode flips. */
+const pendingSnapLegalTargets = computed<number[]>(() => {
+  void state.version;
+  return pendingSnapDraw.value ? game.value.pendingSnapLegalTargets() : [];
+});
+/** For an AI's pending snap, the controller exposes which seat the AI is about to pick.
+ *  The overlay glows that chip so the player sees the AI's decision land. */
+const pendingSnapAiPick = computed<number | null>(() => {
+  void state.version;
+  if (pendingSnapIsHuman.value) return null;
+  return controller.value?.pendingSnapPickedTarget ?? null;
+});
+function onSnapChooseTarget(targetSeatIndex: number) {
+  const p = pendingSnapDraw.value;
+  if (!p) return;
+  submitSnapPlay(p.playerId, targetSeatIndex);
+}
 
 const { isMobile } = useResponsive();
 const { fx } = useBeatAudio();
-
-// Mode is now route-driven — the only way to switch modes is to navigate back to the
-// menu. Solo gets a stripped-down HUD (mute + Start/Restart only); Versus / Simulation
-// keep the ControlPanel for tuning speed, players, failure rate, etc. but no longer
-// expose a mode toggle.
-const showControlPanel = computed(() => mode.value !== 'solo');
+/** Mode capability flags — branch on these instead of `mode === 'versus'` etc. so
+ *  adding a new mode is a one-row edit to MODE_CAPS rather than a hunt across files. */
+const caps = computed(() => modeCaps(mode.value));
 
 const winnerId = computed(() => game.value.winnerId);
 
-/** Format ms as m:ss.cc (centiseconds, two digits). */
 function formatSoloTime(ms: number): string {
   const totalCs = Math.floor(ms / 10);
   const m = Math.floor(totalCs / 6000);
@@ -92,15 +134,13 @@ const soloBestDisplay = computed(() =>
   soloBestTimeMs.value === null ? '—' : formatSoloTime(soloBestTimeMs.value),
 );
 
-// Floating "+Ns" bubbles — one per soloPenalty event. They animate upward and fade out
-// via CSS, then auto-prune from this list after 1.4s. The auto-finish case emits a single
-// consolidated penalty so the bubble label can read e.g. "+12s" without 12 stacked pops.
+// Floating "+Ns" bubbles — one per soloPenalty event.
 const penaltyBubbles = ref<{ id: number; label: string }[]>([]);
 let penaltyBubbleId = 0;
 watch(
   () => state.events.length,
   (n, prev) => {
-    if (mode.value !== 'solo' || n <= (prev ?? 0)) return;
+    if (!caps.value.isTimeAttack || n <= (prev ?? 0)) return;
     const ev = state.events[state.events.length - 1] as GameEvent | undefined;
     if (ev?.kind !== 'soloPenalty') return;
     const id = ++penaltyBubbleId;
@@ -111,36 +151,100 @@ watch(
   },
 );
 
-// If player count changes while idle, rebuild the game.
 watch(playerCount, () => {
   if (state.status === 'idle') initGame();
 });
 
 const onRestart = () => { fx('tap'); initGame(); };
 
-const onSlamFromHuman = ({ card, player, targetBase }: { card: Card; player: Player; targetBase: BaseSlot }) => {
-  submitHumanSlam({
-    playerId: player.id,
-    cardId: card.id,
-    targetBase,
-    shoutedWord: game.value.getRequiredBeat(),
-  });
+const onSoloSlam = (payload: { cardId: string; baseSide: BaseSide }) => {
+  submitSoloAction({ type: 'slam', cardId: payload.cardId, baseSide: payload.baseSide });
 };
 
-const onToggleHuman = (playerId: string) => {
-  const p = game.value.players.find((x) => x.id === playerId);
-  if (!p) return;
-  // In Play (BEAT) mode, only seat 0 (P1) is allowed to be human. Ignore other toggles.
-  if (!canSeatBeHuman(playerId)) return;
-  setPlayerHuman(playerId, p.isAI); // toggle: was AI -> become human
+const onVersusPlay = (payload: { cardId: string; targetSeatIndex: number }) => {
+  const human = game.value.players.find((p) => !p.isAI);
+  if (!human) return;
+  submitVersusAction(human.id, { type: 'play', cardId: payload.cardId, targetSeatIndex: payload.targetSeatIndex });
 };
 
-// ---- Mobile-only state: bottom-sheet visibility ----
+const onDrawDeckClick = () => {
+  if (!caps.value.isTurnBased) {
+    submitSoloAction({ type: 'draw' });
+  } else {
+    const human = game.value.players.find((p) => !p.isAI);
+    if (!human) return;
+    submitVersusAction(human.id, { type: 'draw' });
+  }
+};
+
+// Mobile bottom sheets + desktop side panel both flow through these openSheet/closeSheet
+// helpers — the 'controls' sheet is the new SettingsPanel (replaces the old ControlPanel).
 const sheetOpen = ref<'none' | 'log' | 'controls'>('none');
 function openSheet(which: 'log' | 'controls') { sheetOpen.value = which; }
 function closeSheet() { sheetOpen.value = 'none'; }
 
-// Primary action label/handler — mirrors the header button.
+// Desktop right-side panel reuses the same 'controls' state so we can have one source of
+// truth for "is settings open" without juggling two refs.
+const settingsOpen = computed({
+  get: () => sheetOpen.value === 'controls',
+  set: (v) => { sheetOpen.value = v ? 'controls' : 'none'; },
+});
+function onSettingsBackToMenu() {
+  closeSheet();
+  router.push({ name: 'menu' });
+}
+function onSettingsRestart() {
+  closeSheet();
+  onRestart();
+}
+
+// Toast for "settings change won't apply until next round". Some settings — player count
+// and the Playground deck knobs — only take effect on initGame(); the engine auto-runs
+// initGame() when the round is idle (see useGame: rebuildIfCustomDeckActive + the
+// playerCount watch below), so during idle there's nothing to nag about. For running or
+// paused rounds, we snapshot these on settings open and show a toast on close if any
+// changed.
+const toastMessage = ref<string | null>(null);
+let toastTimer: number | null = null;
+function showToast(msg: string, durationMs = 3500) {
+  toastMessage.value = msg;
+  if (toastTimer !== null) clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => {
+    toastMessage.value = null;
+    toastTimer = null;
+  }, durationMs);
+}
+
+interface RestartSnapshot {
+  playerCount: number;
+  handSize: number;
+  composition: PlaygroundComposition;
+}
+let settingsSnapshot: RestartSnapshot | null = null;
+const COMPOSITION_KEYS: CardPrompt[] = ['right', 'left', 'free', 'stop', 'snap', 'fetch'];
+watch(settingsOpen, (isOpen) => {
+  if (isOpen) {
+    settingsSnapshot = {
+      playerCount: playerCount.value,
+      handSize: playgroundHandSize.value,
+      composition: { ...playgroundComposition.value },
+    };
+    return;
+  }
+  // Closing the panel — diff against the snapshot.
+  if (!settingsSnapshot) return;
+  const snap = settingsSnapshot;
+  settingsSnapshot = null;
+  if (state.status === 'idle' || state.status === 'ended') return; // auto-applies, no nag
+  const changed =
+    playerCount.value !== snap.playerCount ||
+    playgroundHandSize.value !== snap.handSize ||
+    COMPOSITION_KEYS.some((k) => playgroundComposition.value[k] !== snap.composition[k]);
+  if (changed) {
+    showToast('Restart the round to apply the new configuration.');
+  }
+});
+
 const primaryLabel = computed(() => {
   switch (state.status) {
     case 'opening': return '…';
@@ -174,7 +278,6 @@ function onPauseOverlayTap() {
     class="relative w-screen overflow-hidden"
     style="height: 100dvh;"
   >
-
     <!-- ===================== DESKTOP HEADER ===================== -->
     <header
       v-if="!isMobile"
@@ -195,33 +298,14 @@ function onPauseOverlayTap() {
             class="h-9 sm:h-11 w-auto"
           />
           <div class="font-subtitle text-cream-soft/85 text-xs sm:text-sm font-medium">
-            Visual Simulation · v0.1
+            by Halohalo Games
           </div>
         </div>
       </div>
-      <ControlPanel
-        v-if="showControlPanel"
-        :player-count="playerCount"
-        :failure-rate="failureRate"
-        :speed="speed"
-        :status="state.status"
-        :mode="mode"
-        :audio-muted="audioMuted"
-        :beats-per-player="beatsPerPlayer"
-        @update:player-count="setPlayerCount"
-        @update:failure-rate="setFailureRate"
-        @update:speed="setSpeed"
-        @update:audio-muted="setAudioMuted"
-        @update:beats-per-player="setBeatsPerPlayer"
-        @start="start"
-        @pause="pause"
-        @resume="resume"
-        @restart="onRestart"
-      />
-
-      <!-- Solo desktop minimal cluster — no ControlPanel, just the essentials the user
-           asked for: mute toggle + Start/Restart primary + a Restart icon mid-run. -->
-      <div v-else class="flex items-center gap-2">
+      <!-- Right-side header actions: mute / restart / primary / settings-cog.
+           Replaces the old inline ControlPanel pill — players + speed now live in
+           the dedicated SettingsPanel reachable via the cog. -->
+      <div class="flex items-center gap-2">
         <button
           type="button"
           :title="audioMuted ? 'Unmute' : 'Mute'"
@@ -253,6 +337,18 @@ function onPauseOverlayTap() {
         >
           {{ primaryLabel }}
         </button>
+        <button
+          type="button"
+          aria-label="Settings"
+          title="Settings"
+          class="w-9 h-9 rounded-full bg-cream-soft/95 ring-1 ring-black/10 flex items-center justify-center text-coral-deep shadow-md"
+          @click="openSheet('controls')"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </svg>
+        </button>
       </div>
     </header>
 
@@ -261,7 +357,6 @@ function onPauseOverlayTap() {
       v-else
       class="absolute top-0 left-0 right-0 z-40 flex items-center gap-2 px-3 py-2.5"
     >
-      <!-- Logo doubles as back-to-menu tap target on mobile. -->
       <button
         type="button"
         aria-label="Menu"
@@ -271,7 +366,6 @@ function onPauseOverlayTap() {
         <img src="/logo-white.svg" alt="Chik!" class="h-7 w-auto" />
       </button>
 
-      <!-- Primary action — Start / Pause / Resume / Restart -->
       <button
         type="button"
         class="px-3 py-1.5 rounded-full font-extrabold uppercase tracking-widest text-[11px] text-cream-soft shrink-0"
@@ -282,7 +376,6 @@ function onPauseOverlayTap() {
         {{ primaryLabel }}
       </button>
 
-      <!-- Restart icon (mobile header) — only visible mid-run. -->
       <button
         v-if="state.status !== 'idle'"
         type="button"
@@ -297,14 +390,11 @@ function onPauseOverlayTap() {
         </svg>
       </button>
 
-      <!-- Spacer pushes the icon buttons to the right edge. -->
       <div class="flex-1" />
 
-      <!-- Right-side icon buttons: Log + Controls. Both are tied to the ControlPanel
-           surface — Solo strips them out (the user wanted just mute + Start/Restart),
-           so they only render when the ControlPanel is shown. -->
-      <div v-if="showControlPanel" class="flex items-center gap-1 shrink-0">
+      <div class="flex items-center gap-1 shrink-0">
         <button
+          v-if="caps.isTurnBased"
           type="button"
           aria-label="Event log"
           class="w-9 h-9 rounded-full bg-cream-soft/95 ring-1 ring-black/10 flex items-center justify-center text-coral-deep"
@@ -318,9 +408,19 @@ function onPauseOverlayTap() {
         </button>
         <button
           type="button"
-          aria-label="Controls"
+          aria-label="Settings"
           class="w-9 h-9 rounded-full bg-cream-soft/95 ring-1 ring-black/10 flex items-center justify-center text-coral-deep"
           @click="openSheet('controls')"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </svg>
+        </button>
+        <button
+          v-if="false"
+          type="button"
+          class="w-9 h-9 rounded-full bg-cream-soft/95 ring-1 ring-black/10 flex items-center justify-center text-coral-deep"
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
             <line x1="4" y1="7" x2="14" y2="7" />
@@ -334,13 +434,14 @@ function onPauseOverlayTap() {
       </div>
     </header>
 
-    <!-- Floating ChantTicker, just below the mobile header. z-[20] keeps it below the
-         pause overlay (z-[25]) — the ticker is information-only, no reason to peek out
-         while the run is paused. -->
+    <!-- Versus / Playground chant ticker — top-centre on both mobile and desktop. Solo
+         has its own ticker inline with the timer (see below). The vertical offset is
+         taller on desktop (sits below the header) and shorter on mobile (where the
+         header is more compact). -->
     <div
-      v-if="isMobile && mode !== 'solo'"
+      v-if="!caps.isSingleSeat"
       class="absolute left-1/2 -translate-x-1/2 z-[20] pointer-events-none"
-      style="top: 56px;"
+      :style="{ top: isMobile ? '56px' : '20px' }"
     >
       <ChantTicker
         :last-played-pos="lastPlayedVirtualPos"
@@ -348,9 +449,6 @@ function onPauseOverlayTap() {
       />
     </div>
 
-    <!-- Mobile-only Guide tab + Mute toggle. Same layout regardless of mode — mute pinned
-         bottom-left (44px tap target), Guide peeking from the bottom-right edge at full
-         image-button size (sized inside GuideCard). -->
     <GuideCard v-if="isMobile" mobile :mode="mode" />
     <button
       v-if="isMobile"
@@ -362,10 +460,6 @@ function onPauseOverlayTap() {
       <IconVolume :muted="audioMuted" :size="22" />
     </button>
 
-    <!-- ============== DESKTOP UPPER-LEFT (guide + ticker) ==============
-         The aside itself has no z-index so it doesn't create a stacking context — that
-         lets the two children sit at independent z-indexes (guide above pause, ticker
-         below) while still laying out as a flex column. -->
     <aside
       v-if="!isMobile"
       class="absolute top-20 sm:top-23 left-3 sm:left-4 flex flex-col gap-5"
@@ -373,25 +467,19 @@ function onPauseOverlayTap() {
       <div class="relative z-30">
         <GuideCard :mode="mode" />
       </div>
-      <div v-if="mode !== 'solo'" class="relative z-[20] pointer-events-none">
-        <ChantTicker
-          :last-played-pos="lastPlayedVirtualPos"
-          :next-pos="chantVirtualPos"
-        />
-      </div>
     </aside>
 
-    <!-- =============== SOLO TIMER HUD =============== -->
+    <!-- Solo timer HUD -->
     <div
-      v-if="mode === 'solo'"
+      v-if="caps.isTimeAttack"
       class="absolute left-1/2 -translate-x-1/2 z-[20] flex flex-col items-center gap-2 pointer-events-none"
       :style="{ top: isMobile ? '120px' : '20px' }"
     >
       <div
-        class="relative flex items-baseline gap-3 px-5 py-2 rounded-2xl bg-cream-soft/95 shadow-lg ring-1 ring-black/10"
+        class="relative flex items-center gap-3 px-5 py-2 rounded-2xl bg-cream-soft/95 shadow-lg ring-1 ring-black/10"
       >
-        <span class="solo-timer text-coral-deep">{{ soloDisplay }}</span>
-        <span class="flex flex-col items-start leading-tight">
+        <span class="solo-timer text-coral-deep leading-none">{{ soloDisplay }}</span>
+        <span class="flex flex-col items-start justify-center leading-tight">
           <span class="text-[10px] font-bold uppercase tracking-widest text-stone-500">Best</span>
           <span class="solo-best text-stone-700">{{ soloBestDisplay }}</span>
         </span>
@@ -411,10 +499,6 @@ function onPauseOverlayTap() {
       </div>
     </div>
 
-    <!-- ===================== TABLE =====================
-         `isolate` creates a new stacking context for the whole table — GameTable's
-         internal absolute-positioned cards / piles / hands all stack within this box,
-         so they can't escape above the pause overlay (sibling at z-[25]) when paused. -->
     <main class="absolute inset-0 isolate" :style="{ paddingTop: isMobile ? '116px' : '0' }">
       <GameTable
         :game="game"
@@ -422,75 +506,143 @@ function onPauseOverlayTap() {
         :speed="speed"
         :version="state.version"
         :mode="mode"
-        :active-beat-seat-index="activeBeatSeatIndex"
-        :active-beat-tick-index="activeBeatTickIndex"
-        :active-beat-total-ticks="activeBeatTotalTicks"
-        @slam-from-human="onSlamFromHuman"
-        @toggle-human="onToggleHuman"
+        :active-seat-index="activeSeatIndex"
+        :pending-flights="pendingFlights"
+        :wisp-enabled="wispEnabled"
+        :pending-snap-card="pendingSnapCard"
+        :pending-snap-holder-seat="pendingSnapHolderSeat"
+        :pending-snap-legal-targets="pendingSnapLegalTargets"
+        :pending-snap-interactive="pendingSnapIsHuman"
+        :pending-snap-ai-pick="pendingSnapAiPick"
+        :prompt-size="promptSize"
+        @solo-slam="onSoloSlam"
+        @versus-play="onVersusPlay"
+        @draw-deck-click="onDrawDeckClick"
+        @snap-target="onSnapChooseTarget"
       />
     </main>
 
-    <!-- =================== PAUSE OVERLAY ===================
-         Renders only while paused. The shield captures clicks across the table area to
-         block accidental slams while the timer is frozen, and tapping anywhere on it
-         resumes the run. Headers and the mute button sit at higher z-index, so back-to-
-         menu and mute remain reachable from the paused state. -->
     <PauseOverlay
       v-if="state.status === 'paused'"
       @resume="onPauseOverlayTap"
     />
 
-    <!-- =================== DESKTOP EVENT LOG =================== -->
+    <!-- Big central Start / Play Again CTA for Versus — only shown when nothing is in
+         flight, so it never covers the deck/cards mid-game. The small header button
+         stays available too; this one is the prominent "begin" affordance. -->
+    <div
+      v-if="caps.isTurnBased && !winnerId && (state.status === 'idle' || state.status === 'ended')"
+      class="absolute inset-0 z-30 flex items-center justify-center pointer-events-none font-subtitle"
+    >
+      <button
+        type="button"
+        class="center-cta pointer-events-auto"
+        @click="onPrimary"
+      >
+        {{ state.status === 'ended' ? 'Play Again' : 'Start' }}
+      </button>
+    </div>
+
     <aside v-if="!isMobile" class="absolute bottom-3 right-3 w-70 max-w-[80vw] z-20">
       <EventLog :events="state.events" />
     </aside>
 
-    <!-- =================== MOBILE BOTTOM SHEETS =================== -->
     <MobileBottomSheet
       v-if="isMobile"
       :open="sheetOpen === 'log'"
       title="Event Log"
       @close="closeSheet"
     >
-      <EventLog :events="state.events" />
+      <EventLog :events="state.events" hide-title />
     </MobileBottomSheet>
 
+    <!-- Mobile: settings live in a bottom sheet, opened by the cog button in the header. -->
     <MobileBottomSheet
-      v-if="isMobile && showControlPanel"
+      v-if="isMobile"
       :open="sheetOpen === 'controls'"
-      title="Controls"
+      title="Settings"
       @close="closeSheet"
     >
-      <ControlPanel
-        compact
-        :player-count="playerCount"
-        :failure-rate="failureRate"
-        :speed="speed"
-        :status="state.status"
+      <SettingsPanel
         :mode="mode"
         :audio-muted="audioMuted"
-        :beats-per-player="beatsPerPlayer"
-        @update:player-count="setPlayerCount"
-        @update:failure-rate="setFailureRate"
-        @update:speed="setSpeed"
+        :wisp-enabled="wispEnabled"
+        :prompt-size="promptSize"
+        :strict-prompts="strictPrompts"
+        :ai-skill="aiSkill"
+        :player-count="playerCount"
+        :speed="speed"
+        :playground-composition="playgroundComposition"
+        :playground-hand-size="playgroundHandSize"
         @update:audio-muted="setAudioMuted"
-        @update:beats-per-player="setBeatsPerPlayer"
-        @start="start"
-        @pause="pause"
-        @resume="resume"
-        @restart="onRestart"
+        @update:wisp-enabled="setWispEnabled"
+        @update:prompt-size="setPromptSize"
+        @update:strict-prompts="setStrictPrompts"
+        @update:ai-skill="setAiSkill"
+        @update:player-count="setPlayerCount"
+        @update:speed="setSpeed"
+        @update:playground-prompt-count="(p) => setPlaygroundPromptCount(p.prompt, p.count)"
+        @update:playground-hand-size="setPlaygroundHandSize"
+        @reset-playground-defaults="resetPlaygroundDefaults"
+        @restart="onSettingsRestart"
+        @back-to-menu="onSettingsBackToMenu"
       />
     </MobileBottomSheet>
 
-    <!-- Winner -->
+    <!-- Desktop: same settings body, slides in from the right side. -->
+    <SidePanel
+      v-if="!isMobile"
+      :open="settingsOpen"
+      title="Settings"
+      @close="closeSheet"
+    >
+      <SettingsPanel
+        :mode="mode"
+        :audio-muted="audioMuted"
+        :wisp-enabled="wispEnabled"
+        :prompt-size="promptSize"
+        :strict-prompts="strictPrompts"
+        :ai-skill="aiSkill"
+        :player-count="playerCount"
+        :speed="speed"
+        :playground-composition="playgroundComposition"
+        :playground-hand-size="playgroundHandSize"
+        @update:audio-muted="setAudioMuted"
+        @update:wisp-enabled="setWispEnabled"
+        @update:prompt-size="setPromptSize"
+        @update:strict-prompts="setStrictPrompts"
+        @update:ai-skill="setAiSkill"
+        @update:player-count="setPlayerCount"
+        @update:speed="setSpeed"
+        @update:playground-prompt-count="(p) => setPlaygroundPromptCount(p.prompt, p.count)"
+        @update:playground-hand-size="setPlaygroundHandSize"
+        @reset-playground-defaults="resetPlaygroundDefaults"
+        @restart="onSettingsRestart"
+        @back-to-menu="onSettingsBackToMenu"
+      />
+    </SidePanel>
+
     <WinnerOverlay
       :winner-id="winnerId"
-      :title="mode === 'solo' ? 'Cleared!' : undefined"
-      :headline="mode === 'solo' && soloLastFinalMs !== null ? formatSoloTime(soloLastFinalMs) : undefined"
-      :subtitle="mode === 'solo' ? (soloIsNewBest ? 'New best!' : `Best ${soloBestDisplay}`) : undefined"
+      :title="caps.isTimeAttack ? 'Cleared!' : undefined"
+      :headline="caps.isTimeAttack && soloLastFinalMs !== null ? formatSoloTime(soloLastFinalMs) : undefined"
+      :subtitle="caps.isTimeAttack ? (soloIsNewBest ? 'New best!' : `Best ${soloBestDisplay}`) : undefined"
       :subtitle-tone="soloIsNewBest ? 'celebrate' : 'info'"
       @restart="onRestart"
     />
+
+    <!-- Snap-drawn surfaces inline on the deck via SnapDrawnOverlay (mounted INSIDE
+         GameTable above) — replaces the previous modal chooser. -->
+
+    <!-- Toast: floating pill at the bottom of the viewport. Currently used only for the
+         "restart to apply new config" nudge; auto-dismisses after a few seconds. -->
+    <Teleport to="body">
+      <Transition name="toast">
+        <div v-if="toastMessage" class="toast-root" role="status" aria-live="polite">
+          {{ toastMessage }}
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
@@ -540,5 +692,76 @@ function onPauseOverlayTap() {
   18%  { opacity: 1; transform: translate(0, -2px) scale(1.08); }
   40%  { transform: translate(0, -10px) scale(1); }
   100% { opacity: 0; transform: translate(0, -42px) scale(0.95); }
+}
+
+/**
+ * Central "Start / Play Again" CTA shown on the Versus table when idle or after the
+ * round ends. Big enough to read at a glance with a slow cream-soft halo pulse to draw
+ * the eye. Hidden during play so it never sits over the deck or active cards.
+ */
+.center-cta {
+  background: var(--color-coral-deep);
+  color: var(--color-cream-soft);
+  border: 0;
+  padding: 12px 40px;
+  border-radius: 9999px;
+  font-family: Quiapo;
+  font-weight: 700;
+  font-size: 2rem;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  box-shadow:
+    0 18px 36px rgba(0, 0, 0, 0.45),
+    0 0 0 5px rgba(252, 246, 230, 0.55);
+  transition: transform 160ms cubic-bezier(.2, .7, .2, 1), box-shadow 160ms ease;
+  animation: center-cta-pulse 2.4s ease-in-out infinite;
+}
+.center-cta:hover {
+  transform: scale(1.04);
+}
+.center-cta:active {
+  transform: scale(0.97);
+}
+@keyframes center-cta-pulse {
+  0%, 100% {
+    box-shadow:
+      0 18px 36px rgba(0, 0, 0, 0.45),
+      0 0 0 5px rgba(252, 246, 230, 0.55);
+  }
+  50% {
+    box-shadow:
+      0 18px 36px rgba(0, 0, 0, 0.45),
+      0 0 0 12px rgba(252, 246, 230, 0.22);
+  }
+}
+
+.toast-root {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  z-index: 200;
+  max-width: calc(100vw - 32px);
+  padding: 12px 20px;
+  border-radius: 9999px;
+  background: rgba(36, 22, 18, 0.92);
+  color: var(--color-cream-soft);
+  font-weight: 600;
+  font-size: 0.9rem;
+  letter-spacing: 0.01em;
+  text-align: center;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  pointer-events: none;
+}
+.toast-enter-active,
+.toast-leave-active {
+  transition: opacity 220ms ease, transform 260ms cubic-bezier(.2, .7, .2, 1);
+}
+.toast-enter-from,
+.toast-leave-to {
+  opacity: 0;
+  transform: translate(-50%, 16px);
 }
 </style>
