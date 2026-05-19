@@ -53,6 +53,7 @@ const emit = defineEmits<{
   (e: 'update:playground-prompt-count', payload: { prompt: CardPrompt; count: number }): void;
   (e: 'update:playground-hand-size', n: number): void;
   (e: 'reset-playground-defaults'): void;
+  (e: 'reset-general-defaults'): void;
   (e: 'update:prompt-size', v: 'small' | 'medium' | 'large' | 'xl'): void;
   (e: 'restart'): void;
   (e: 'back-to-menu'): void;
@@ -306,6 +307,19 @@ const deckSufficient = computed(() => deckTotal.value >= minDeckNeeded.value);
           </svg>
         </template>
         <template #label>How to play</template>
+      </SettingsRow>
+      <SettingsRow
+        as-button
+        description="Restores Sound, Game, and Display to defaults. Playground deck has its own reset above."
+        @click="emit('reset-general-defaults')"
+      >
+        <template #icon>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="1 4 1 10 7 10" />
+            <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+          </svg>
+        </template>
+        <template #label>Reset to defaults</template>
       </SettingsRow>
     </SettingsGroup>
 

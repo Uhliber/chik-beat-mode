@@ -71,6 +71,7 @@ const {
   playgroundHandSize,
   setPlaygroundHandSize,
   resetPlaygroundDefaults,
+  resetGeneralDefaults,
   promptSize,
   setPromptSize,
   pendingSnapDraw,
@@ -703,6 +704,7 @@ function onPauseOverlayTap() {
         @update:playground-prompt-count="(p) => setPlaygroundPromptCount(p.prompt, p.count)"
         @update:playground-hand-size="setPlaygroundHandSize"
         @reset-playground-defaults="resetPlaygroundDefaults"
+        @reset-general-defaults="resetGeneralDefaults"
         @restart="onSettingsRestart"
         @back-to-menu="onSettingsBackToMenu"
       />
@@ -741,6 +743,7 @@ function onPauseOverlayTap() {
         @update:playground-prompt-count="(p) => setPlaygroundPromptCount(p.prompt, p.count)"
         @update:playground-hand-size="setPlaygroundHandSize"
         @reset-playground-defaults="resetPlaygroundDefaults"
+        @reset-general-defaults="resetGeneralDefaults"
         @restart="onSettingsRestart"
         @back-to-menu="onSettingsBackToMenu"
       />
