@@ -1,12 +1,47 @@
 import { onUnmounted, reactive, ref, shallowRef, triggerRef } from 'vue';
 import { App as CapApp } from '@capacitor/app';
-import { Preferences } from '@capacitor/preferences';
 import type { Card } from '@/game/Card';
 import { Game } from '@/game/Game';
 import { SimulationController, type SimStatus, type SimMode, type AiSkillLevel } from '@/game/SimulationController';
 import type { BaseSide, CardPrompt, ChantWord, GameEvent, PlayerId, PlaygroundComposition, SoloAction, VersusAction } from '@/game/types';
 import { modeCaps } from '@/game/modes';
 import { useBeatAudio } from './useBeatAudio';
+import {
+  DEFAULT_AI_SKILL,
+  DEFAULT_AUDIO_MUTED,
+  DEFAULT_EVENT_LOG_ENABLED,
+  DEFAULT_GUIDE_ON_TABLE_PREF,
+  DEFAULT_PLAYER_COUNT_TURN_BASED,
+  DEFAULT_PLAYGROUND_COMPOSITION,
+  DEFAULT_PLAYGROUND_HAND_SIZE,
+  DEFAULT_PROMPT_SIZE,
+  DEFAULT_SPEED,
+  DEFAULT_STRICT_PROMPTS,
+  DEFAULT_WISP_ENABLED,
+  clearGuideOnTable,
+  loadAiSkill,
+  loadEventLogEnabled,
+  loadGuideOnTable,
+  loadPlaygroundComposition,
+  loadPlaygroundHandSize,
+  loadPromptSize,
+  loadSoloBestTime,
+  loadStrictPrompts,
+  loadWispEnabled,
+  saveAiSkill,
+  saveEventLogEnabled,
+  saveGuideOnTable,
+  savePlaygroundComposition,
+  savePlaygroundHandSize,
+  savePromptSize,
+  saveSoloBestTime,
+  saveStrictPrompts,
+  saveWispEnabled,
+  type PromptSize,
+} from './userPreferences';
+/** Re-exported for downstream callers that historically imported `PromptSize` from
+ *  `useGame`. New code should import directly from `userPreferences`. */
+export type { PromptSize };
 
 /**
  * A queued card-flight, snapshotted at event-emission time. Carries pre-captured DOM
@@ -29,129 +64,7 @@ export interface FlightSpec {
   baseSide?: BaseSide;
 }
 
-const SOLO_BEST_KEY = 'chik-solo-best-time-ms';
-const WISP_ENABLED_KEY = 'chik-wisp-enabled';
-const STRICT_PROMPTS_KEY = 'chik-strict-prompts';
-const AI_SKILL_KEY = 'chik-ai-skill';
-const PLAYGROUND_COMPOSITION_KEY = 'chik-playground-composition';
-const PLAYGROUND_HAND_SIZE_KEY = 'chik-playground-hand-size';
-const PROMPT_SIZE_KEY = 'chik-prompt-size';
-
-/** Visible-size preset for the ACTIVE prompt card (Solo's last-played card, and each
- *  Versus seat's top promptStack card). Medium is the canonical default; Extra Large
- *  crops the bottom half of the card with a soft mask so it dominates the table without
- *  overflowing layouts. */
-export type PromptSize = 'small' | 'medium' | 'large' | 'xl';
-const DEFAULT_PROMPT_SIZE: PromptSize = 'medium';
-const PROMPT_SIZE_VALUES: readonly PromptSize[] = ['small', 'medium', 'large', 'xl'] as const;
-
-const DEFAULT_PLAYGROUND_COMPOSITION: PlaygroundComposition = {
-  right: 14, left: 14, free: 7, stop: 7, snap: 7, fetch: 7,
-};
-const DEFAULT_PLAYGROUND_HAND_SIZE = 7;
-
-async function loadSoloBestTime(): Promise<number | null> {
-  try {
-    const { value } = await Preferences.get({ key: SOLO_BEST_KEY });
-    if (!value) return null;
-    const n = Number(value);
-    return Number.isFinite(n) && n > 0 ? n : null;
-  } catch {
-    return null;
-  }
-}
-
-function saveSoloBestTime(ms: number): void {
-  void Preferences.set({ key: SOLO_BEST_KEY, value: String(Math.round(ms)) }).catch(() => undefined);
-}
-
-async function loadWispEnabled(): Promise<boolean> {
-  try {
-    const { value } = await Preferences.get({ key: WISP_ENABLED_KEY });
-    if (value === null || value === undefined) return true; // default on
-    return value === '1' || value === 'true';
-  } catch {
-    return true;
-  }
-}
-
-function saveWispEnabled(on: boolean): void {
-  void Preferences.set({ key: WISP_ENABLED_KEY, value: on ? '1' : '0' }).catch(() => undefined);
-}
-
-async function loadStrictPrompts(): Promise<boolean> {
-  try {
-    const { value } = await Preferences.get({ key: STRICT_PROMPTS_KEY });
-    if (value === null || value === undefined) return false; // default OFF
-    return value === '1' || value === 'true';
-  } catch {
-    return false;
-  }
-}
-
-function saveStrictPrompts(on: boolean): void {
-  void Preferences.set({ key: STRICT_PROMPTS_KEY, value: on ? '1' : '0' }).catch(() => undefined);
-}
-
-async function loadAiSkill(): Promise<AiSkillLevel> {
-  try {
-    const { value } = await Preferences.get({ key: AI_SKILL_KEY });
-    const n = Number(value);
-    if (n === 1 || n === 2 || n === 3 || n === 4) return n;
-    return 3; // default: Hard
-  } catch {
-    return 3;
-  }
-}
-
-function saveAiSkill(level: AiSkillLevel): void {
-  void Preferences.set({ key: AI_SKILL_KEY, value: String(level) }).catch(() => undefined);
-}
-
-async function loadPlaygroundComposition(): Promise<PlaygroundComposition> {
-  try {
-    const { value } = await Preferences.get({ key: PLAYGROUND_COMPOSITION_KEY });
-    if (!value) return { ...DEFAULT_PLAYGROUND_COMPOSITION };
-    const parsed = JSON.parse(value) as Partial<PlaygroundComposition>;
-    return { ...DEFAULT_PLAYGROUND_COMPOSITION, ...parsed };
-  } catch {
-    return { ...DEFAULT_PLAYGROUND_COMPOSITION };
-  }
-}
-
-function savePlaygroundComposition(comp: PlaygroundComposition): void {
-  void Preferences.set({ key: PLAYGROUND_COMPOSITION_KEY, value: JSON.stringify(comp) }).catch(() => undefined);
-}
-
-async function loadPlaygroundHandSize(): Promise<number> {
-  try {
-    const { value } = await Preferences.get({ key: PLAYGROUND_HAND_SIZE_KEY });
-    const n = Number(value);
-    if (Number.isFinite(n) && n >= 3 && n <= 14) return Math.round(n);
-    return DEFAULT_PLAYGROUND_HAND_SIZE;
-  } catch {
-    return DEFAULT_PLAYGROUND_HAND_SIZE;
-  }
-}
-
-function savePlaygroundHandSize(n: number): void {
-  void Preferences.set({ key: PLAYGROUND_HAND_SIZE_KEY, value: String(n) }).catch(() => undefined);
-}
-
-async function loadPromptSize(): Promise<PromptSize> {
-  try {
-    const { value } = await Preferences.get({ key: PROMPT_SIZE_KEY });
-    if (value && (PROMPT_SIZE_VALUES as readonly string[]).includes(value)) {
-      return value as PromptSize;
-    }
-    return DEFAULT_PROMPT_SIZE;
-  } catch {
-    return DEFAULT_PROMPT_SIZE;
-  }
-}
-function savePromptSize(v: PromptSize): void {
-  void Preferences.set({ key: PROMPT_SIZE_KEY, value: v }).catch(() => undefined);
-}
+/** Re-exported for callers that imported `PromptSize` from this module historically. */
 
 export interface UseGameOptions {
   initialMode?: SimMode;
@@ -178,8 +91,8 @@ export function useGame(opts: UseGameOptions = {}) {
   });
 
   // Versus defaults to 4 players; Solo is implicitly 1.
-  const playerCount = ref(initialMode === 'solo' ? 1 : 4);
-  const speed = ref(1);
+  const playerCount = ref(initialMode === 'solo' ? 1 : DEFAULT_PLAYER_COUNT_TURN_BASED);
+  const speed = ref(DEFAULT_SPEED);
   const mode = ref<SimMode>(initialMode);
   const beatAudio = useBeatAudio();
 
@@ -195,15 +108,33 @@ export function useGame(opts: UseGameOptions = {}) {
   });
 
   // Turn-indicator wisp (Versus only). Persisted, default ON.
-  const wispEnabled = ref(true);
+  const wispEnabled = ref(DEFAULT_WISP_ENABLED);
   void loadWispEnabled().then((on) => { wispEnabled.value = on; });
   const setWispEnabled = (on: boolean) => {
     wispEnabled.value = on;
     saveWispEnabled(on);
   };
 
+  // Event log visibility (desktop sidebar + mobile sheet). Persisted, default ON.
+  const eventLogEnabled = ref(DEFAULT_EVENT_LOG_ENABLED);
+  void loadEventLogEnabled().then((on) => { eventLogEnabled.value = on; });
+  const setEventLogEnabled = (on: boolean) => {
+    eventLogEnabled.value = on;
+    saveEventLogEnabled(on);
+  };
+
+  // Guide-on-table preference (null = use platform default in the consumer). The view
+  // layer resolves null → !isMobile so desktop sees the floating guide by default and
+  // mobile keeps the table clean; an explicit user toggle overrides either way.
+  const guideOnTablePref = ref<boolean | null>(null);
+  void loadGuideOnTable().then((v) => { guideOnTablePref.value = v; });
+  const setGuideOnTable = (on: boolean) => {
+    guideOnTablePref.value = on;
+    saveGuideOnTable(on);
+  };
+
   // Strict-prompts house rule (Versus only). Persisted, default OFF.
-  const strictPrompts = ref(false);
+  const strictPrompts = ref(DEFAULT_STRICT_PROMPTS);
   void loadStrictPrompts().then((on) => {
     strictPrompts.value = on;
     if (game.value) game.value.setStrictPromptsEnabled(on);
@@ -215,7 +146,7 @@ export function useGame(opts: UseGameOptions = {}) {
   };
 
   // AI skill (Versus only). Persisted, default 3 (Hard).
-  const aiSkill = ref<AiSkillLevel>(3);
+  const aiSkill = ref<AiSkillLevel>(DEFAULT_AI_SKILL);
   void loadAiSkill().then((level) => {
     aiSkill.value = level;
     if (controller.value) controller.value.setAiSkill(level);
@@ -277,6 +208,41 @@ export function useGame(opts: UseGameOptions = {}) {
     savePlaygroundComposition(defaultComp);
     savePlaygroundHandSize(DEFAULT_PLAYGROUND_HAND_SIZE);
     rebuildIfCustomDeckActive();
+  };
+
+  /** Reset every Sound + Game + Display preference back to its canonical default.
+   *  Intentionally leaves the playground deck (composition + hand size) alone — that
+   *  has its own dedicated reset, so a user who built a custom deck doesn't lose it
+   *  when they reach for "Reset to defaults" to undo a stray display tweak.
+   *
+   *  Player count only resets in turn-based modes; solo is locked to 1 by setMode and
+   *  the Game group is hidden for non-turn-based modes anyway. */
+  const resetGeneralDefaults = () => {
+    // Sound
+    beatAudio.setMuted(DEFAULT_AUDIO_MUTED);
+    // Game (turn-based only — leave solo's seat count alone)
+    if (modeCaps(mode.value).isTurnBased) {
+      playerCount.value = DEFAULT_PLAYER_COUNT_TURN_BASED;
+    }
+    speed.value = DEFAULT_SPEED;
+    controller.value.setOptions({ speed: DEFAULT_SPEED });
+    strictPrompts.value = DEFAULT_STRICT_PROMPTS;
+    saveStrictPrompts(DEFAULT_STRICT_PROMPTS);
+    if (game.value) game.value.setStrictPromptsEnabled(DEFAULT_STRICT_PROMPTS);
+    aiSkill.value = DEFAULT_AI_SKILL;
+    saveAiSkill(DEFAULT_AI_SKILL);
+    if (controller.value) controller.value.setAiSkill(DEFAULT_AI_SKILL);
+    // Display
+    wispEnabled.value = DEFAULT_WISP_ENABLED;
+    saveWispEnabled(DEFAULT_WISP_ENABLED);
+    eventLogEnabled.value = DEFAULT_EVENT_LOG_ENABLED;
+    saveEventLogEnabled(DEFAULT_EVENT_LOG_ENABLED);
+    promptSize.value = DEFAULT_PROMPT_SIZE;
+    savePromptSize(DEFAULT_PROMPT_SIZE);
+    // Guide-on-table: clear the explicit preference so it follows the platform default
+    // again (desktop on, mobile off). Persistence layer treats null as "not set".
+    guideOnTablePref.value = DEFAULT_GUIDE_ON_TABLE_PREF;
+    clearGuideOnTable();
   };
 
   /**
@@ -683,6 +649,10 @@ export function useGame(opts: UseGameOptions = {}) {
     setAudioMuted,
     wispEnabled,
     setWispEnabled,
+    eventLogEnabled,
+    setEventLogEnabled,
+    guideOnTablePref,
+    setGuideOnTable,
     strictPrompts,
     setStrictPrompts,
     aiSkill,
@@ -695,6 +665,7 @@ export function useGame(opts: UseGameOptions = {}) {
     playgroundHandSize,
     setPlaygroundHandSize,
     resetPlaygroundDefaults,
+    resetGeneralDefaults,
     pendingSnapDraw,
     submitSnapPlay,
     submitSoloAction,

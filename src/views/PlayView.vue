@@ -8,16 +8,21 @@ import GameTable from '@/components/GameTable.vue';
 import EventLog from '@/components/EventLog.vue';
 import WinnerOverlay from '@/components/WinnerOverlay.vue';
 import GuideCard from '@/components/GuideCard.vue';
+import GuideContent from '@/components/GuideContent.vue';
 import ChantTicker from '@/components/ChantTicker.vue';
 import MobileBottomSheet from '@/components/MobileBottomSheet.vue';
 import SidePanel from '@/components/SidePanel.vue';
 import SettingsPanel from '@/components/SettingsPanel.vue';
 import SnapDrawnOverlay from '@/components/SnapDrawnOverlay.vue';
 import PauseOverlay from '@/components/PauseOverlay.vue';
+import TutorialOverlay from '@/components/TutorialOverlay.vue';
 import IconVolume from '@/components/icons/IconVolume.vue';
 import { useGame } from '@/composables/useGame';
 import { useBeatAudio } from '@/composables/useBeatAudio';
 import { useResponsive } from '@/composables/useResponsive';
+import { FLAGS } from '@/config/flags';
+import { useTutorial } from '@/composables/useTutorial';
+import { loadTutorialCompletion } from '@/tutorial/persistence';
 
 const route = useRoute();
 const router = useRouter();
@@ -25,7 +30,10 @@ const router = useRouter();
 function readModeFromRoute(): SimMode {
   const raw = Array.isArray(route.query.mode) ? route.query.mode[0] : route.query.mode;
   if (raw === 'solo') return 'solo';
-  if (raw === 'playground') return 'playground';
+  // Playground is gated behind a build-time feature flag. If a stale URL points
+  // here while the flag is off (e.g. another user opens a shared link), silently
+  // coerce to Versus so they get a sensible game rather than a broken state.
+  if (raw === 'playground' && FLAGS.playgroundEnabled) return 'playground';
   return 'versus';
 }
 
@@ -50,6 +58,10 @@ const {
   pendingFlights,
   wispEnabled,
   setWispEnabled,
+  eventLogEnabled,
+  setEventLogEnabled,
+  guideOnTablePref,
+  setGuideOnTable,
   strictPrompts,
   setStrictPrompts,
   aiSkill,
@@ -59,6 +71,7 @@ const {
   playgroundHandSize,
   setPlaygroundHandSize,
   resetPlaygroundDefaults,
+  resetGeneralDefaults,
   promptSize,
   setPromptSize,
   pendingSnapDraw,
@@ -73,6 +86,48 @@ const {
   submitSoloAction,
   submitVersusAction,
 } = useGame({ initialMode });
+
+// Tutorial mode: ?tutorial=1 query flips this on. Solo and Versus each have their own
+// scripted walk-through. Playground is a tutorial-less sandbox. When active, the
+// SimulationController is paused on every step that expects player input; the overlay
+// drives the lifecycle.
+const isTutorial = computed(() => {
+  if (route.query.tutorial !== '1') return false;
+  return initialMode === 'solo' || initialMode === 'versus';
+});
+
+const tutorial = isTutorial.value
+  ? useTutorial({
+      mode: initialMode as 'solo' | 'versus',
+      game,
+      controller,
+      pendingFlights,
+    })
+  : null;
+
+// Tutorial completion flags — surfaced into the in-game GuideCard so the "Start
+// tutorial" button can flip to "Replay tutorial" once done.
+const tutorialCompletion = ref({ solo: false, versus: false });
+void loadTutorialCompletion().then((c) => { tutorialCompletion.value = c; });
+
+function onStartTutorialFromGuide() {
+  // Re-route into PlayView with tutorial=1; the route guard re-runs setup.
+  router.push({ name: 'play', query: { mode: initialMode, tutorial: '1' } });
+}
+
+// Tutorial completion: we used to auto-route on phase === 'done', but that gave the
+// user no time to see the "You're ready" celebration. Now phase='done' freezes the
+// overlay on the final step (with a "Back to menu" CTA); routing only happens when the
+// user clicks that button via the `finish` emit.
+
+function onTutorialQuit() {
+  tutorial?.quit();
+  router.push({ name: 'menu' });
+}
+function onTutorialFinish() {
+  tutorial?.quit();
+  router.push({ name: 'menu' });
+}
 
 // Reactive snap-card + drawer + legal targets for the SnapDrawnOverlay. Both human
 // and AI's pending snaps surface the overlay — for the AI the chips are read-only and
@@ -114,6 +169,34 @@ function onSnapChooseTarget(targetSeatIndex: number) {
 
 const { isMobile } = useResponsive();
 const { fx } = useBeatAudio();
+
+/** Whether to render the How-to-Play card floating on the table. Resolves the user's
+ *  saved preference if any (true/false), otherwise falls back to the platform default —
+ *  desktop sees the floating guide, mobile keeps the table clean. The user can override
+ *  either way from Settings > Display > "Guide on table". */
+const guideOnTable = computed(() => guideOnTablePref.value ?? !isMobile.value);
+
+/** Pre-open emphasis flag for the Halo-Halo Chik. True until the game has actually
+ *  been opened (= the Halo-Halo has been played for the first time). This covers Solo
+ *  before the first slam, and Versus both before AND after pressing Start — so the
+ *  card keeps glowing once the round begins, right up until the player plays it.
+ *
+ *  `game.opened` is a plain (non-reactive) field on the engine; touching `state.version`
+ *  inside the computed re-runs us whenever useGame bumps the version after a play. */
+const pulseHaloHalo = computed(() => {
+  if (state.status === 'ended' || state.status === 'paused') return false;
+  void state.version;
+  return !game.value.opened;
+});
+
+/** When the user picks "How to play" from Settings, we close the settings sheet and
+ *  surface the rules in a modal overlay. Independent of guideOnTable so the user can
+ *  read the rules even when the floating card is hidden. */
+const guideModalOpen = ref(false);
+function onShowGuide() {
+  closeSheet();           // closes both the mobile sheet and the desktop side panel
+  guideModalOpen.value = true;
+}
 /** Mode capability flags — branch on these instead of `mode === 'versus'` etc. so
  *  adding a new mode is a one-row edit to MODE_CAPS rather than a hunt across files. */
 const caps = computed(() => modeCaps(mode.value));
@@ -245,21 +328,22 @@ watch(settingsOpen, (isOpen) => {
   }
 });
 
-const primaryLabel = computed(() => {
-  switch (state.status) {
-    case 'opening': return '…';
-    case 'running': return 'Pause';
-    case 'paused':  return 'Resume';
-    case 'ended':   return 'Restart';
-    default:        return 'Start';
-  }
-});
+/** Primary action used only by the centre "Start / Play Again" CTA (Versus + Playground).
+ *  Solo has no Start button — players auto-start by slamming their pulsing Halo-Halo —
+ *  so this handler is intentionally Versus-shaped. */
 function onPrimary() {
   fx('tap');
   if (state.status === 'idle') start();
-  else if (state.status === 'running') pause();
-  else if (state.status === 'paused') resume();
   else if (state.status === 'ended') onRestart();
+}
+
+/** Dedicated Pause/Resume handler for the top-header pause button. Always safe to call
+ *  even when status falls outside the running/paused window — the underlying useGame
+ *  pause/resume are no-ops otherwise — but the button is gated in the template anyway. */
+function onPauseResume() {
+  fx('tap');
+  if (state.status === 'running') pause();
+  else if (state.status === 'paused') resume();
 }
 
 function onBackToMenu() {
@@ -328,14 +412,23 @@ function onPauseOverlayTap() {
             <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
           </svg>
         </button>
+        <!-- Pause / Resume — own dedicated control. Hidden in idle / opening / ended
+             states (nothing to pause); flips icon based on whether we're running. -->
         <button
+          v-if="state.status === 'running' || state.status === 'paused'"
           type="button"
-          class="px-4 py-2 rounded-full font-extrabold uppercase tracking-wider text-cream-soft text-sm shadow-md"
-          :style="{ background: 'var(--color-coral-deep)' }"
-          :disabled="state.status === 'opening'"
-          @click="onPrimary"
+          :aria-label="state.status === 'paused' ? 'Resume' : 'Pause'"
+          :title="state.status === 'paused' ? 'Resume' : 'Pause'"
+          class="w-9 h-9 rounded-full bg-cream-soft/95 ring-1 ring-black/10 flex items-center justify-center text-coral-deep shadow-md"
+          @click="onPauseResume"
         >
-          {{ primaryLabel }}
+          <svg v-if="state.status === 'running'" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+            <rect x="6" y="5" width="4" height="14" rx="1" />
+            <rect x="14" y="5" width="4" height="14" rx="1" />
+          </svg>
+          <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+            <polygon points="6,4 6,20 20,12" />
+          </svg>
         </button>
         <button
           type="button"
@@ -367,16 +460,6 @@ function onPauseOverlayTap() {
       </button>
 
       <button
-        type="button"
-        class="px-3 py-1.5 rounded-full font-extrabold uppercase tracking-widest text-[11px] text-cream-soft shrink-0"
-        :style="{ background: 'var(--color-coral-deep)', boxShadow: '0 4px 10px rgba(0,0,0,0.25)' }"
-        :disabled="state.status === 'opening'"
-        @click="onPrimary"
-      >
-        {{ primaryLabel }}
-      </button>
-
-      <button
         v-if="state.status !== 'idle'"
         type="button"
         aria-label="Restart"
@@ -387,6 +470,23 @@ function onPauseOverlayTap() {
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="23 4 23 10 17 10" />
           <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+        </svg>
+      </button>
+
+      <button
+        v-if="state.status === 'running' || state.status === 'paused'"
+        type="button"
+        :aria-label="state.status === 'paused' ? 'Resume' : 'Pause'"
+        class="w-9 h-9 rounded-full bg-cream-soft/95 ring-1 ring-black/10 flex items-center justify-center text-coral-deep shrink-0"
+        :style="{ boxShadow: '0 4px 10px rgba(0,0,0,0.18)' }"
+        @click="onPauseResume"
+      >
+        <svg v-if="state.status === 'running'" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+          <rect x="6" y="5" width="4" height="14" rx="1" />
+          <rect x="14" y="5" width="4" height="14" rx="1" />
+        </svg>
+        <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+          <polygon points="6,4 6,20 20,12" />
         </svg>
       </button>
 
@@ -449,23 +549,26 @@ function onPauseOverlayTap() {
       />
     </div>
 
-    <GuideCard v-if="isMobile" mobile :mode="mode" />
-    <button
-      v-if="isMobile"
-      type="button"
-      :aria-label="audioMuted ? 'Unmute' : 'Mute'"
-      class="fixed bottom-3 left-3 z-30 w-11 h-11 rounded-full bg-cream-soft/95 ring-1 ring-black/10 flex items-center justify-center text-coral-deep shadow-lg"
-      @click="setAudioMuted(!audioMuted)"
-    >
-      <IconVolume :muted="audioMuted" :size="22" />
-    </button>
+    <GuideCard
+      v-if="isMobile && !isTutorial && guideOnTable"
+      mobile
+      :mode="mode"
+      :tutorial-completed="mode === 'solo' ? tutorialCompletion.solo : mode === 'versus' ? tutorialCompletion.versus : false"
+      :supports-tutorial="mode === 'solo' || mode === 'versus'"
+      @start-tutorial="onStartTutorialFromGuide"
+    />
 
     <aside
-      v-if="!isMobile"
+      v-if="!isMobile && !isTutorial && guideOnTable"
       class="absolute top-20 sm:top-23 left-3 sm:left-4 flex flex-col gap-5"
     >
       <div class="relative z-30">
-        <GuideCard :mode="mode" />
+        <GuideCard
+          :mode="mode"
+          :tutorial-completed="mode === 'solo' ? tutorialCompletion.solo : mode === 'versus' ? tutorialCompletion.versus : false"
+          :supports-tutorial="mode === 'solo' || mode === 'versus'"
+          @start-tutorial="onStartTutorialFromGuide"
+        />
       </div>
     </aside>
 
@@ -497,6 +600,16 @@ function onPauseOverlayTap() {
           :next-pos="chantVirtualPos"
         />
       </div>
+      <!-- Solo "slam Halo-Halo to start" hint. Sits in the HUD column right below the
+           chant ticker so it doesn't fight the table for legibility. The Halo-Halo card
+           itself carries the visual call to action via its heartbeat glow; this pill is
+           just the verbal cue. -->
+      <div
+        v-if="!isTutorial && !winnerId && state.status === 'idle'"
+        class="solo-start-hint"
+      >
+        <span>Slam your Halo-Halo Chik to start</span>
+      </div>
     </div>
 
     <main class="absolute inset-0 isolate" :style="{ paddingTop: isMobile ? '116px' : '0' }">
@@ -515,6 +628,7 @@ function onPauseOverlayTap() {
         :pending-snap-interactive="pendingSnapIsHuman"
         :pending-snap-ai-pick="pendingSnapAiPick"
         :prompt-size="promptSize"
+        :pulse-halo-halo="pulseHaloHalo"
         @solo-slam="onSoloSlam"
         @versus-play="onVersusPlay"
         @draw-deck-click="onDrawDeckClick"
@@ -523,15 +637,15 @@ function onPauseOverlayTap() {
     </main>
 
     <PauseOverlay
-      v-if="state.status === 'paused'"
+      v-if="state.status === 'paused' && !isTutorial"
       @resume="onPauseOverlayTap"
     />
 
     <!-- Big central Start / Play Again CTA for Versus — only shown when nothing is in
-         flight, so it never covers the deck/cards mid-game. The small header button
-         stays available too; this one is the prominent "begin" affordance. -->
+         flight, so it never covers the deck/cards mid-game. With the top-header Start
+         button removed, this is the only "begin" affordance for Versus + Playground. -->
     <div
-      v-if="caps.isTurnBased && !winnerId && (state.status === 'idle' || state.status === 'ended')"
+      v-if="!isTutorial && caps.isTurnBased && !winnerId && (state.status === 'idle' || state.status === 'ended')"
       class="absolute inset-0 z-30 flex items-center justify-center pointer-events-none font-subtitle"
     >
       <button
@@ -543,12 +657,13 @@ function onPauseOverlayTap() {
       </button>
     </div>
 
-    <aside v-if="!isMobile" class="absolute bottom-3 right-3 w-70 max-w-[80vw] z-20">
+
+    <aside v-if="!isMobile && eventLogEnabled" class="absolute bottom-3 right-3 w-70 max-w-[80vw] z-20">
       <EventLog :events="state.events" />
     </aside>
 
     <MobileBottomSheet
-      v-if="isMobile"
+      v-if="isMobile && eventLogEnabled"
       :open="sheetOpen === 'log'"
       title="Event Log"
       @close="closeSheet"
@@ -567,6 +682,8 @@ function onPauseOverlayTap() {
         :mode="mode"
         :audio-muted="audioMuted"
         :wisp-enabled="wispEnabled"
+        :event-log-enabled="eventLogEnabled"
+        :guide-on-table="guideOnTable"
         :prompt-size="promptSize"
         :strict-prompts="strictPrompts"
         :ai-skill="aiSkill"
@@ -576,6 +693,9 @@ function onPauseOverlayTap() {
         :playground-hand-size="playgroundHandSize"
         @update:audio-muted="setAudioMuted"
         @update:wisp-enabled="setWispEnabled"
+        @update:event-log-enabled="setEventLogEnabled"
+        @update:guide-on-table="setGuideOnTable"
+        @show-guide="onShowGuide"
         @update:prompt-size="setPromptSize"
         @update:strict-prompts="setStrictPrompts"
         @update:ai-skill="setAiSkill"
@@ -584,6 +704,7 @@ function onPauseOverlayTap() {
         @update:playground-prompt-count="(p) => setPlaygroundPromptCount(p.prompt, p.count)"
         @update:playground-hand-size="setPlaygroundHandSize"
         @reset-playground-defaults="resetPlaygroundDefaults"
+        @reset-general-defaults="resetGeneralDefaults"
         @restart="onSettingsRestart"
         @back-to-menu="onSettingsBackToMenu"
       />
@@ -600,6 +721,8 @@ function onPauseOverlayTap() {
         :mode="mode"
         :audio-muted="audioMuted"
         :wisp-enabled="wispEnabled"
+        :event-log-enabled="eventLogEnabled"
+        :guide-on-table="guideOnTable"
         :prompt-size="promptSize"
         :strict-prompts="strictPrompts"
         :ai-skill="aiSkill"
@@ -609,6 +732,9 @@ function onPauseOverlayTap() {
         :playground-hand-size="playgroundHandSize"
         @update:audio-muted="setAudioMuted"
         @update:wisp-enabled="setWispEnabled"
+        @update:event-log-enabled="setEventLogEnabled"
+        @update:guide-on-table="setGuideOnTable"
+        @show-guide="onShowGuide"
         @update:prompt-size="setPromptSize"
         @update:strict-prompts="setStrictPrompts"
         @update:ai-skill="setAiSkill"
@@ -617,6 +743,7 @@ function onPauseOverlayTap() {
         @update:playground-prompt-count="(p) => setPlaygroundPromptCount(p.prompt, p.count)"
         @update:playground-hand-size="setPlaygroundHandSize"
         @reset-playground-defaults="resetPlaygroundDefaults"
+        @reset-general-defaults="resetGeneralDefaults"
         @restart="onSettingsRestart"
         @back-to-menu="onSettingsBackToMenu"
       />
@@ -633,6 +760,54 @@ function onPauseOverlayTap() {
 
     <!-- Snap-drawn surfaces inline on the deck via SnapDrawnOverlay (mounted INSIDE
          GameTable above) — replaces the previous modal chooser. -->
+
+    <!-- Tutorial overlay — bottom speech card + spotlight backdrop. Only mounts when
+         ?tutorial=1 is in the route. Collapses while the SnapDrawnOverlay is up so the
+         chooser chips stay reachable. -->
+    <TutorialOverlay
+      v-if="tutorial"
+      :step="tutorial.currentStep.value"
+      :index="tutorial.currentStepIndex.value"
+      :total="tutorial.total"
+      :phase="tutorial.phase.value"
+      :spotlight-selector="tutorial.spotlightSelector.value"
+      :card-position="tutorial.cardPosition.value"
+      :hint-visible="tutorial.hintVisible.value"
+      :collapsed="!!pendingSnapCard"
+      @next="tutorial.nextNarrative"
+      @skip-step="tutorial.skipStep"
+      @quit="onTutorialQuit"
+      @finish="onTutorialFinish"
+    />
+
+    <!-- "How to play" modal — opened from Settings > Display > How to play. Renders the
+         same GuideContent the floating GuideCard uses, in a centred backdrop. Lets the
+         user reach the rules without the floating card cluttering the table. -->
+    <Teleport to="body">
+      <div
+        v-if="guideModalOpen"
+        class="guide-modal-backdrop"
+        role="dialog"
+        aria-modal="true"
+        aria-label="How to play"
+        @click.self="guideModalOpen = false"
+      >
+        <div class="guide-modal-card" @click.stop>
+          <GuideContent
+            :mode="mode"
+            :supports-tutorial="mode === 'solo' || mode === 'versus'"
+            :tutorial-completed="mode === 'solo' ? tutorialCompletion.solo : mode === 'versus' ? tutorialCompletion.versus : false"
+            @start-tutorial="onStartTutorialFromGuide"
+          />
+          <button
+            type="button"
+            class="guide-modal-close"
+            aria-label="Close"
+            @click="guideModalOpen = false"
+          >Close</button>
+        </div>
+      </div>
+    </Teleport>
 
     <!-- Toast: floating pill at the bottom of the viewport. Currently used only for the
          "restart to apply new config" nudge; auto-dismisses after a few seconds. -->
@@ -735,6 +910,80 @@ function onPauseOverlayTap() {
   }
 }
 
+/* Solo's "Slam your Halo-Halo Chik to start" pill. Sits inside the HUD column under
+ * the chant ticker; the Halo-Halo card in hand carries the visual emphasis (heartbeat
+ * + cream/coral glow). Darker coral fill so it stands out against the regular coral
+ * background but still feels part of the Halohalo palette. Subtle opacity throb in
+ * lockstep with the card's heartbeat invites the eye downward to the hand. */
+.solo-start-hint {
+  margin-top: 2px;
+  padding: 6px 14px;
+  border-radius: 9999px;
+  background: var(--color-coral-deep);
+  color: var(--color-cream-soft);
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: center;
+  pointer-events: none;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.28);
+  transform-origin: top center;
+  /* Three-stage animation system:
+   *  1. solo-start-hint-in   — one-shot pop-in for entry (transform + opacity).
+   *  2. solo-start-hint-pulse — infinite opacity throb (no transform contention).
+   *  3. solo-start-hint-emphasis — every 5s, a quick wiggle nudges the eye back to the
+   *     hint if the player still hasn't slammed. Delayed 5s so the first emphasis fires
+   *     5s after the entrance; the keyframes are calm for ~90% of each cycle and only
+   *     the last 10% does the wiggle, keeping the rest of the time visually quiet. */
+  animation:
+    solo-start-hint-in 520ms cubic-bezier(.2, .8, .2, 1.2) both,
+    solo-start-hint-pulse 2.4s ease-in-out 520ms infinite,
+    solo-start-hint-emphasis 5s ease-in-out 5s infinite;
+}
+@media (min-width: 768px) {
+  .solo-start-hint {
+    font-size: 0.72rem;
+    padding: 5px 12px;
+    letter-spacing: 0.1em;
+  }
+}
+@keyframes solo-start-hint-in {
+  0% {
+    opacity: 0;
+    transform: translateY(-14px) scale(0.7);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(0) scale(1.08);
+  }
+  100% {
+    opacity: 0.92;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes solo-start-hint-pulse {
+  0%, 100% { opacity: 0.92; }
+  50%      { opacity: 1; }
+}
+/* Periodic emphasis: most of the 5s cycle stays at scale(1), then a quick three-beat
+ * wobble at the END nudges the eye back to the pill. Because the animation has a 5s
+ * delay AND a 5s duration, the wobble lands at t=5s, t=10s, t=15s ... — once for every
+ * 5s the player has been idle. */
+@keyframes solo-start-hint-emphasis {
+  0%, 88%, 100% { transform: scale(1); }
+  91%           { transform: scale(1.12) rotate(-2.5deg); }
+  94%           { transform: scale(0.96) rotate(2deg); }
+  97%           { transform: scale(1.06) rotate(-1deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .solo-start-hint {
+    animation: none;
+    opacity: 1;
+  }
+}
+
 .toast-root {
   position: fixed;
   left: 50%;
@@ -764,4 +1013,52 @@ function onPauseOverlayTap() {
   opacity: 0;
   transform: translate(-50%, 16px);
 }
+
+/* Guide-from-settings modal. Reuses GuideContent at near-full-screen with a coral
+ * backdrop matching the in-game palette. Close affordance is the DONE pill at the
+ * top-right; clicking the backdrop also dismisses. */
+.guide-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(20, 14, 10, 0.62);
+  padding: max(env(safe-area-inset-top, 0px), 32px) 16px max(env(safe-area-inset-bottom, 0px), 32px);
+}
+.guide-modal-card {
+  position: relative;
+  width: min(100%, 480px);
+  height: min(88dvh, 720px);
+  border-radius: 18px;
+  /* No `overflow: hidden` here — the close button is absolutely positioned at `top: -32px`
+   * (sitting just above the card, matching the table-guide mobile modal), and clipping
+   * the card would hide it. GuideContent has no background of its own and `.guide-grid`
+   * scrolls internally, so the card's rounded corners still render correctly. */
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45);
+  background: var(--color-cream-soft);
+}
+/* Matches the close pill on the table-guide mobile modal in GuideCard.vue:
+ *   `-top-8 right-2 px-3 py-1 rounded-full text-xs font-extrabold uppercase
+ *   tracking-widest text-cream-soft` with coral background. */
+.guide-modal-close {
+  position: absolute;
+  top: -32px;
+  right: 8px;
+  padding: 4px 12px;
+  border-radius: 9999px;
+  border: 0;
+  background: var(--color-coral);
+  color: var(--color-cream-soft);
+  font-family: var(--font-body);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+  z-index: 10;
+}
+.guide-modal-close:hover { background: var(--color-coral-deep); }
 </style>

@@ -49,6 +49,23 @@ public/cards/          Card PNG faces + back
 - All animations use `transform` + `opacity` only — no layout thrash.
 - Touch-friendly: `touch-action: manipulation`, large tap targets.
 
+## Developer commands
+
+Open the browser DevTools console while the app is running:
+
+- `chikReset()` — wipe ALL persisted state (tutorial completion, Solo best time, settings, Playground config). Reload after to see a fresh start.
+- `chikReset('tutorial')` — wipe only the tutorial-completion flags (Solo + Versus). Use when iterating on the tutorial flow.
+
+A one-line hint is logged on app startup so the command is discoverable.
+
+## Feature flags
+
+Build-time flags live in `.env.local` (gitignored) and are read at startup via Vite. Copy `.env.example` as a starting point. All flags default to OFF.
+
+| Flag | Effect |
+|---|---|
+| `VITE_PLAYGROUND_ENABLED=true` | Surfaces the Playground entry on the main menu (sandbox Versus with deck-composition + hand-size knobs). Stale `?mode=playground` URLs coerce to Versus when the flag is off. |
+
 ## What's not in v1 (yet)
 
 - Sleeping / Boss expansions (assets exist, code path open)

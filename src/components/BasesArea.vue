@@ -17,11 +17,14 @@ const props = defineProps<{
   hiddenIds?: Set<string>;
   /** ID of the most recently played card; BasePile glows it. */
   lastPlayedCardId?: string | null;
-  /** Width of the cards in each Solo pile. Both bases render at this size regardless
-   *  of the active prompt — the active-prompt spotlight comes from the secondary
-   *  "PROMPT" label + ring glow, not from resizing. A user-selected XL prompt size
-   *  surfaces instead as a clone behind the human's hand (rendered by PlayerSeat). */
+  /** Natural width of each Solo pile. The ACTIVE base scales off this value
+   *  via the user's promptSize setting (S/M/L); the non-active base always
+   *  renders at the natural width so the layout stays balanced. */
   promptCardWidth?: number;
+  /** User's prompt-size preference. In Solo, S/M/L scale the ACTIVE base
+   *  (the one holding the current prompt); XL hands off to the human's
+   *  clone-above-hand rendering and leaves the bases at their natural size. */
+  promptSize?: 'small' | 'medium' | 'large' | 'xl';
 }>();
 
 const emit = defineEmits<{
@@ -43,6 +46,26 @@ const activeSide = computed<BaseSide | null>(() => {
   void props.game.soloBases.right.length;
   return props.game.soloActiveBaseSide;
 });
+
+/** Scale factor applied to the ACTIVE Solo base based on the user's prompt-size pref.
+ *  XL is the only size that hands off to the clone-above-hand rendering (in GameTable),
+ *  so we keep the bases at their natural size in that case. */
+const SOLO_ACTIVE_SCALE: Record<'small' | 'medium' | 'large' | 'xl', number> = {
+  small: 0.85,
+  medium: 1,
+  large: 1.4,
+  xl: 1,
+};
+const naturalWidth = computed(() => props.promptCardWidth ?? 64);
+const activeWidth = computed(() =>
+  Math.round(naturalWidth.value * SOLO_ACTIVE_SCALE[props.promptSize ?? 'medium']),
+);
+const leftCardWidth = computed(() =>
+  activeSide.value === 'left' ? activeWidth.value : naturalWidth.value,
+);
+const rightCardWidth = computed(() =>
+  activeSide.value === 'right' ? activeWidth.value : naturalWidth.value,
+);
 </script>
 
 <template>
@@ -56,7 +79,7 @@ const activeSide = computed<BaseSide | null>(() => {
       :highlighted="highlightedSide === 'left'"
       :hidden-ids="hiddenIds"
       :highlight-card-id="lastPlayedCardId"
-      :card-width="promptCardWidth"
+      :card-width="leftCardWidth"
     />
 
     <button
@@ -66,6 +89,16 @@ const activeSide = computed<BaseSide | null>(() => {
       data-base-id="deck"
       @click="emit('draw-deck-click')"
     >
+      <!-- Versus / Playground only: when the pile is empty a tap on the deck just passes
+           the turn (no card to draw, but the action is still legal). This hint surfaces
+           that without adding a separate "Pass" button. Solo doesn't have a pass concept
+           so we skip it there. -->
+      <div
+        v-if="drawPileCount === 0 && mode !== 'solo'"
+        class="text-[9px] font-medium tracking-wide text-coral-deep/85 uppercase"
+      >
+        Tap to pass
+      </div>
       <div
         class="relative rounded-xl ring-2 ring-cream-soft/30 active:scale-95 transition-transform overflow-hidden"
         :style="{ width: '64px', height: (64 * 1.45) + 'px' }"
@@ -98,7 +131,7 @@ const activeSide = computed<BaseSide | null>(() => {
       :highlighted="highlightedSide === 'right'"
       :hidden-ids="hiddenIds"
       :highlight-card-id="lastPlayedCardId"
-      :card-width="promptCardWidth"
+      :card-width="rightCardWidth"
     />
   </div>
 </template>

@@ -41,6 +41,9 @@ const props = defineProps<{
   /** User's prompt-size preference. Threads through to PlayerSeat (Versus) and the Solo
    *  BasesArea so the active prompt scales to taste. */
   promptSize?: 'small' | 'medium' | 'large' | 'xl';
+  /** When true, the human's Halo-Halo Chik pulses + glows to invite the opening play.
+   *  Parent (PlayView) flips this on during idle/opening status; off otherwise. */
+  pulseHaloHalo?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -383,6 +386,7 @@ function dispatchFlight(spec: FlightSpec): void {
         :hidden-ids="inFlightIds"
         :last-played-card-id="lastPlayedCardId"
         :prompt-card-width="SOLO_BASE_CARD_WIDTH"
+        :prompt-size="promptSize"
         @draw-deck-click="emit('draw-deck-click')"
       />
     </div>
@@ -430,6 +434,7 @@ function dispatchFlight(spec: FlightSpec): void {
         :fresh-card-ids="freshCardIds"
         :prompt-size="promptSize"
         :extra-prompt-card="soloHumanCloneCard"
+        :pulse-halo-halo="pulseHaloHalo"
         @card-aim-start="onAimStart"
       />
     </div>

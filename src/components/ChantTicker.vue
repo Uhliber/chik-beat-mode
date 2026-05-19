@@ -49,6 +49,7 @@ const dimmedCenter = computed(() => props.lastPlayedPos === null);
   <div
     class="relative flex items-center rounded-full bg-cream-soft/95 ring-1 ring-coral/30 shadow-lg overflow-hidden"
     :style="{ width: '320px', height: '52px' }"
+    data-tutorial-target="chant-ticker"
   >
     <!-- Tiny labels above to clarify what each slot means. -->
     <div class="absolute inset-x-0 -top-4 flex justify-around text-[9px] font-bold uppercase tracking-widest text-cream-soft/85 select-none pointer-events-none">

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router';
 import { useBeatAudio } from '@/composables/useBeatAudio';
+import { FLAGS } from '@/config/flags';
 
 const router = useRouter();
 const { fx } = useBeatAudio();
@@ -52,18 +53,15 @@ function openSettings() {
         class="menu-btn menu-btn-primary menu-stagger"
         style="--stagger-delay: 320ms;"
         @click="startSolo"
-      >
-        Solo
-      </button>
+      >Solo</button>
       <button
         type="button"
         class="menu-btn menu-btn-primary menu-stagger"
         style="--stagger-delay: 420ms;"
         @click="startVersus"
-      >
-        Versus
-      </button>
+      >Versus</button>
       <button
+        v-if="FLAGS.playgroundEnabled"
         type="button"
         class="menu-btn menu-btn-primary menu-stagger"
         style="--stagger-delay: 520ms;"
@@ -137,6 +135,7 @@ function openSettings() {
   opacity: 0.55;
   cursor: not-allowed;
 }
+
 
 /* Stagger entrance: each .menu-stagger fades + slides up a beat after the previous one
    via its own `--stagger-delay` inline style. The disabled Login button keeps its 0.55

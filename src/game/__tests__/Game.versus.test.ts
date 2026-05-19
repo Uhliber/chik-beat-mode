@@ -286,6 +286,53 @@ describe('Game (Versus) — strict prompts house rule', () => {
     expect(g.players[0].cardCount).toBe(handSizeBefore + 1);
     expect(g.players[0].hand.some((c) => c.id === wally.id)).toBe(true);
   });
+
+  it('strict penalty bounces the chain back to the card source (treats penalty as a forced draw)', () => {
+    // Setup: seat 3 plays Right onto seat 0 (chain source = seat 3). Seat 0 then tries
+    // an illegal direction in strict mode → penalty. Expectation: the turn bounces back
+    // to seat 3, NOT clockwise to seat 1.
+    const g = setupForStrict();
+    const opener = g.players[0];
+    const halo = opener.hand.find((c) => c.isHaloHalo)!;
+    g.submitVersusAction(opener.id, { type: 'play', cardId: halo.id, targetSeatIndex: 3 });
+    // Now active = seat 3; have seat 3 play a Right card onto seat 0. (Seat 0 is seat 3's
+    // right neighbour — neighborSeat for radial is CCW from the seated POV.) Find any
+    // beat-matching Right card in seat 3's hand or pull one in.
+    const beat = g.chant.current;
+    let rightCard = g.players[3].hand.find((c) => c.prompt === 'right' && c.word === beat);
+    if (!rightCard) {
+      const i = g.drawPile.findIndex((c) => c.prompt === 'right' && c.word === beat);
+      if (i >= 0) g.players[3].hand.push(g.drawPile.splice(i, 1)[0]);
+      rightCard = g.players[3].hand.find((c) => c.prompt === 'right' && c.word === beat)!;
+    }
+    const playResult = g.submitVersusAction(g.players[3].id, {
+      type: 'play',
+      cardId: rightCard.id,
+      targetSeatIndex: 0,
+    });
+    expect(playResult.type).toBe('played');
+    // Active is now seat 0; their top prompt is Right (must target their right neighbour).
+    expect(g.activeSeatIndex).toBe(0);
+    expect(g.players[0].topPrompt?.prompt).toBe('right');
+
+    // Seat 0 tries the wrong direction (target seat 1 instead of seat 3 = right neighbour).
+    const beatNow = g.chant.current;
+    let anyCard = g.players[0].hand.find((c) => c.word === beatNow);
+    if (!anyCard) {
+      const i = g.drawPile.findIndex((c) => c.word === beatNow);
+      if (i >= 0) g.players[0].hand.push(g.drawPile.splice(i, 1)[0]);
+      anyCard = g.players[0].hand.find((c) => c.word === beatNow)!;
+    }
+    const r = g.submitVersusAction(g.players[0].id, {
+      type: 'play',
+      cardId: anyCard.id,
+      targetSeatIndex: 1, // wrong direction
+    });
+    expect(r.type).toBe('rejected');
+    // The penalty draw should have triggered the chain bounce — seat 3 (the chain
+    // source) should now be active, NOT seat 1 (clockwise of penalty player).
+    expect(g.activeSeatIndex).toBe(3);
+  });
 });
 
 describe('Game (Versus) — drawn-Snap parks for direction', () => {
@@ -428,6 +475,60 @@ describe('Game (Playground) — sandbox setup', () => {
     // Snap card itself never moved to a prompt stack.
     for (const p of g.players) {
       expect(p.promptStack.some((c) => c.id === 'snap-test-2')).toBe(false);
+    }
+  });
+
+  // Statistical sanity: the Fetch drain picks a UNIFORMLY RANDOM card from the owner's
+  // hand. The user reported a hunch that it always takes "the last drawn card" — this
+  // test runs many iterations against a 6-card owner hand and asserts no position is
+  // disproportionately drained.
+  it('Fetch drain is uniformly random across the owner hand', () => {
+    const ITERATIONS = 6000;
+    const HAND_SIZE = 6;
+    const counts = new Array<number>(HAND_SIZE).fill(0);
+    for (let trial = 0; trial < ITERATIONS; trial++) {
+      const g = new Game(); // default Math.random
+      g.setupVersus(3);
+      // Pin a known 6-card hand on seat 1, in a known order.
+      const owner = g.players[1];
+      owner.hand = [
+        { id: 'c0', word: 'chik',  prompt: 'free', isHaloHalo: false } as never,
+        { id: 'c1', word: 'wally', prompt: 'free', isHaloHalo: false } as never,
+        { id: 'c2', word: 'hindo', prompt: 'free', isHaloHalo: false } as never,
+        { id: 'c3', word: 'pop',   prompt: 'free', isHaloHalo: false } as never,
+        { id: 'c4', word: 'tambo', prompt: 'free', isHaloHalo: false } as never,
+        { id: 'c5', word: 'riki',  prompt: 'free', isHaloHalo: false } as never,
+      ];
+      // Plant a Fetch from seat 1 in front of seat 0; make seat 0 active.
+      (g as unknown as { opened: boolean }).opened = true;
+      const fetchStub = { id: `fetch-${trial}`, word: 'chik', prompt: 'fetch', isHaloHalo: false } as never;
+      g.players[0].promptStack.push(fetchStub);
+      (g as unknown as { fetchOwners: Map<string, number> }).fetchOwners.set(`fetch-${trial}`, 1);
+      (g as unknown as { activeSeatIndex: number }).activeSeatIndex = 0;
+      g.drawPile.length = 0;
+      // chainSourceSeatIndex stays null so the draw doesn't bounce; we only care about which card was taken.
+
+      const handIdsBefore = new Set(owner.hand.map((c) => c.id));
+      g.submitVersusAction(g.players[0].id, { type: 'draw' });
+      // Whichever id is now missing from owner.hand is the one that got drained.
+      const idsAfter = new Set(owner.hand.map((c) => c.id));
+      for (const id of handIdsBefore) {
+        if (!idsAfter.has(id)) {
+          const pos = Number(id.slice(1));
+          counts[pos]++;
+          break;
+        }
+      }
+    }
+    // Each position's expected share is 1/6 ≈ 1000 of 6000. Allow ±20% slack
+    // (800..1200) which is wide enough to survive Math.random noise but tight
+    // enough to catch a "last-card-only" bug (which would peg one position at 6000).
+    const expected = ITERATIONS / HAND_SIZE;
+    const lo = expected * 0.8;
+    const hi = expected * 1.2;
+    for (let pos = 0; pos < HAND_SIZE; pos++) {
+      expect(counts[pos]).toBeGreaterThan(lo);
+      expect(counts[pos]).toBeLessThan(hi);
     }
   });
 

@@ -80,6 +80,7 @@ function jitterFor(id: string): { rot: number; jx: number; jy: number } {
   <div
     class="relative flex flex-col items-center gap-2"
     :data-base-id="baseId"
+    :data-tutorial-target="baseId ? (baseId === 'left' || baseId === 'right' ? `base-${baseId}` : baseId) : undefined"
   >
     <div
       class="relative rounded-xl ring-2 transition-all"

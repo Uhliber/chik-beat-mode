@@ -14,7 +14,20 @@ import GuideContent from './GuideContent.vue';
 defineProps<{
   mobile?: boolean;
   mode?: 'solo' | 'versus' | 'playground';
+  /** When true, the GuideContent renders a "Start tutorial" CTA at the top of the body. */
+  supportsTutorial?: boolean;
+  /** When true, the tutorial CTA flips to "Replay tutorial" with a check. */
+  tutorialCompleted?: boolean;
 }>();
+
+const emit = defineEmits<{
+  (e: 'start-tutorial'): void;
+}>();
+
+function onStartTutorial() {
+  open.value = false;        // close the guide so the route change isn't masked
+  emit('start-tutorial');
+}
 
 const BACK = '/guides/guides-back.png';
 
@@ -79,7 +92,12 @@ const cardStyle = computed(() => {
           class="absolute inset-0 backface-hidden rounded-lg shadow-xl ring-1 ring-black/15 guide-front"
           style="transform: rotateY(180deg);"
         >
-          <GuideContent :mode="mode" />
+          <GuideContent
+            :mode="mode"
+            :supports-tutorial="supportsTutorial"
+            :tutorial-completed="tutorialCompleted"
+            @start-tutorial="onStartTutorial"
+          />
         </div>
       </div>
     </button>
@@ -163,7 +181,12 @@ const cardStyle = computed(() => {
             :style="{ width: 'min(100%, 480px)', height: 'min(88dvh, 720px)' }"
             @click.stop
           >
-            <GuideContent :mode="mode" />
+            <GuideContent
+            :mode="mode"
+            :supports-tutorial="supportsTutorial"
+            :tutorial-completed="tutorialCompleted"
+            @start-tutorial="onStartTutorial"
+          />
             <button
               type="button"
               class="absolute -top-8 right-2 z-10 px-3 py-1 rounded-full text-xs font-extrabold uppercase tracking-widest text-cream-soft"
@@ -181,172 +204,12 @@ const cardStyle = computed(() => {
 
 <style scoped>
 /*
- * Container queries keep typography readable across the small / preview / hovered sizes
- * (and across the mobile modal's natural width).
+ * Surface styles for the flip-card front and the mobile modal panel. Typography and
+ * layout for the actual guide body live inside GuideContent.vue, so the rules render
+ * identically whether GuideContent is mounted inside this component or anywhere else
+ * (e.g. the settings-panel "How to play" overlay in PlayView).
  */
 .guide-front {
-  container-type: inline-size;
   background: var(--color-cream-soft);
-  color: #3a2a1f;
-  font-family: var(--font-body);
-  text-align: left;
-}
-
-/* Desktop in-place front needs the back-flip transform; mobile modal renders un-flipped. */
-.guide-front:not([data-mobile-modal]) {
-  /* default — rotateY applied via parent inline style */
-}
-
-/*
- * The desktop flip puts the front in a rotateY(180deg) frame, so the front content needs
- * to be counter-rotated. We keep the existing convention: anchor `transform: rotateY(180deg)`
- * on the in-place `.guide-front` so the parent flip un-rotates it. The mobile modal's
- * `.guide-front` lives outside any flipped frame, so we override its transform there.
- */
-:deep(.guide-grid) {
-  width: 100%;
-  height: 100%;
-  display: grid;
-  grid-template-columns: 3fr 2fr;
-  gap: 3cqw;
-  padding: 3.5cqw 3.5cqw 2.5cqw;
-  overflow: auto;
-  /* Keep scroll capability (mobile modal can have content taller than the viewport),
-     but hide the scrollbar visually so the desktop preview state doesn't show one. */
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-}
-:deep(.guide-grid)::-webkit-scrollbar {
-  width: 0;
-  height: 0;
-  display: none;
-}
-
-:deep(.left-col),
-:deep(.right-col) {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-:deep(.guide-title),
-:deep(.chant-title) {
-  font-family: var(--font-display);
-  font-weight: 800;
-  font-size: 6cqw;
-  line-height: 1;
-  color: var(--color-coral);
-  text-transform: uppercase;
-  margin: 0 0 2.5cqw;
-  padding-bottom: 1.4cqw;
-  border-bottom: 0.5cqw solid var(--color-coral);
-  letter-spacing: 0.02em;
-}
-
-:deep(.section) {
-  margin-bottom: 1.4cqw;
-}
-
-:deep(.section h3) {
-  font-family: var(--font-display);
-  font-size: 3.4cqw;
-  font-weight: 700;
-  color: var(--color-coral-deep);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin: 0 0 0.6cqw;
-  line-height: 1;
-}
-
-:deep(.section p) {
-  font-size: 2.65cqw;
-  line-height: 1.35;
-  margin: 0;
-}
-
-:deep(.section strong) {
-  font-weight: 700;
-  color: #2a1d12;
-}
-
-:deep(.section em) {
-  font-style: italic;
-  color: var(--color-coral-deep);
-}
-
-:deep(.card-name) {
-  font-family: var(--font-display);
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--word-color, var(--color-coral));
-}
-
-:deep(.hi-high) {
-  color: var(--color-coral);
-}
-
-/* Special-cards list */
-:deep(.cards-list) {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1cqw;
-}
-:deep(.cards-list li) {
-  display: flex;
-  align-items: center;
-  gap: 1.6cqw;
-}
-:deep(.mini-card) {
-  width: 7cqw;
-  height: auto;
-  flex-shrink: 0;
-  border-radius: 0.6cqw;
-  box-shadow: 0 0.3cqw 0.6cqw rgba(0, 0, 0, 0.18);
-}
-:deep(.cards-list p) {
-  margin: 0;
-  font-size: 2.5cqw;
-  line-height: 1.3;
-  flex: 1;
-}
-
-/* Right column — chant list */
-:deep(.chant-list) {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 0.4cqw;
-}
-
-:deep(.chant-word) {
-  font-family: var(--font-display);
-  font-size: 6cqw;
-  font-weight: 800;
-  text-transform: uppercase;
-  line-height: 1;
-  color: var(--word-color);
-  letter-spacing: 0.02em;
-}
-
-:deep(.chant-list-arrow) {
-  font-size: 3.6cqw;
-  color: var(--color-coral);
-  font-weight: 800;
-  line-height: 1;
-  margin: -0.4cqw 0;
-  opacity: 0.65;
-}
-
-:deep(.chant-loop) {
-  margin-top: 1.5cqw;
-  font-size: 2.5cqw;
-  color: rgba(60, 40, 30, 0.45);
-  font-style: italic;
 }
 </style>

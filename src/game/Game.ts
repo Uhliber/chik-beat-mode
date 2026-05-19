@@ -469,16 +469,17 @@ export class Game {
    * Wrong-move penalty (strict prompts mode only). The attempted play is reverted: the
    * card stays in the player's hand and they instead draw 1 card. Fetch still applies —
    * if the penalty player's top prompt is a Fetch, the draw comes from the Fetch
-   * owner's hand. Turn passes clockwise; no chain bounce (the player chose this).
+   * owner's hand.
+   *
+   * Chain rule: a strict penalty IS a forced draw, so it follows the same chain bounce
+   * as any other forced draw — if the player who placed the current prompt is still
+   * the chain source, the turn bounces back to them. Conceptually this is equivalent
+   * to the player passing because they couldn't play legally.
    */
   private applyStrictPenalty(seatIdx: number, card: Card, reason: StrictPenaltyReason): VersusActionResult {
     const player = this.players[seatIdx];
     // No card movement — the card never leaves hand. Just force a draw + advance.
-    // Reuse versusDraw for the actual mechanic (handles Fetch, empty pile, Snap-drawn).
-    // But suppress the chain bounce: we clear chainSource first so the draw's chain
-    // logic treats this as a chain-end (or no-chain) event.
-    this.chainSourceSeatIndex = null;
-    // Capture which card lands (if any) so the strict-penalty event can name it for UI.
+    // versusDraw handles Fetch, empty pile, Snap-drawn, AND the chain bounce.
     let penaltyCardId: string | null = null;
     const cardCountBefore = player.cardCount;
     const drawResult = this.versusDraw(seatIdx);

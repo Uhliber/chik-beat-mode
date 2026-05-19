@@ -19,6 +19,8 @@ const props = defineProps<{
   mode: SimMode;
   audioMuted: boolean;
   wispEnabled: boolean;
+  eventLogEnabled: boolean;
+  guideOnTable: boolean;
   strictPrompts: boolean;
   aiSkill: AiSkillLevel;
   playerCount: number;
@@ -31,6 +33,9 @@ const props = defineProps<{
   hideGameSection?: boolean;
   /** Hide Restart / Back-to-menu (e.g. from /settings already on the menu). */
   hideRoundActions?: boolean;
+  /** Hide the "How to play" action row (e.g. from /settings without an active game
+   *  that can host the guide modal). */
+  hideGuideAction?: boolean;
   promptSize?: 'small' | 'medium' | 'large' | 'xl';
   appVersion?: string;
 }>();
@@ -38,6 +43,9 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'update:audio-muted', v: boolean): void;
   (e: 'update:wisp-enabled', v: boolean): void;
+  (e: 'update:event-log-enabled', v: boolean): void;
+  (e: 'update:guide-on-table', v: boolean): void;
+  (e: 'show-guide'): void;
   (e: 'update:strict-prompts', v: boolean): void;
   (e: 'update:ai-skill', v: AiSkillLevel): void;
   (e: 'update:player-count', n: number): void;
@@ -45,6 +53,7 @@ const emit = defineEmits<{
   (e: 'update:playground-prompt-count', payload: { prompt: CardPrompt; count: number }): void;
   (e: 'update:playground-hand-size', n: number): void;
   (e: 'reset-playground-defaults'): void;
+  (e: 'reset-general-defaults'): void;
   (e: 'update:prompt-size', v: 'small' | 'medium' | 'large' | 'xl'): void;
   (e: 'restart'): void;
   (e: 'back-to-menu'): void;
@@ -256,6 +265,61 @@ const deckSufficient = computed(() => deckTotal.value >= minDeckNeeded.value);
           aria-label="Prompt size"
           @update:model-value="(v) => emit('update:prompt-size', v as 'small' | 'medium' | 'large' | 'xl')"
         />
+      </SettingsRow>
+      <SettingsRow description="Show the running event log (desktop sidebar / mobile sheet).">
+        <template #icon>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="8" y1="6" x2="21" y2="6" />
+            <line x1="8" y1="12" x2="21" y2="12" />
+            <line x1="8" y1="18" x2="21" y2="18" />
+            <line x1="3" y1="6" x2="3.01" y2="6" />
+            <line x1="3" y1="12" x2="3.01" y2="12" />
+            <line x1="3" y1="18" x2="3.01" y2="18" />
+          </svg>
+        </template>
+        <template #label>Event log</template>
+        <SettingsToggle
+          :model-value="eventLogEnabled"
+          aria-label="Event log"
+          @update:model-value="(v) => emit('update:event-log-enabled', v)"
+        />
+      </SettingsRow>
+      <SettingsRow description="Show the How-to-Play card floating on the table. Off keeps the table clean — open the guide from the row below instead.">
+        <template #icon>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+          </svg>
+        </template>
+        <template #label>Guide on table</template>
+        <SettingsToggle
+          :model-value="guideOnTable"
+          aria-label="Guide on table"
+          @update:model-value="(v) => emit('update:guide-on-table', v)"
+        />
+      </SettingsRow>
+      <SettingsRow v-if="!hideGuideAction" as-button @click="emit('show-guide')">
+        <template #icon>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10" />
+            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+            <line x1="12" y1="17" x2="12.01" y2="17" />
+          </svg>
+        </template>
+        <template #label>How to play</template>
+      </SettingsRow>
+      <SettingsRow
+        as-button
+        description="Restores Sound, Game, and Display to defaults. Playground deck has its own reset above."
+        @click="emit('reset-general-defaults')"
+      >
+        <template #icon>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="1 4 1 10 7 10" />
+            <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+          </svg>
+        </template>
+        <template #label>Reset to defaults</template>
       </SettingsRow>
     </SettingsGroup>
 
