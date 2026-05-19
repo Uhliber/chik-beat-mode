@@ -89,6 +89,16 @@ const rightCardWidth = computed(() =>
       data-base-id="deck"
       @click="emit('draw-deck-click')"
     >
+      <!-- Versus / Playground only: when the pile is empty a tap on the deck just passes
+           the turn (no card to draw, but the action is still legal). This hint surfaces
+           that without adding a separate "Pass" button. Solo doesn't have a pass concept
+           so we skip it there. -->
+      <div
+        v-if="drawPileCount === 0 && mode !== 'solo'"
+        class="text-[9px] font-medium tracking-wide text-coral-deep/85 uppercase"
+      >
+        Tap to pass
+      </div>
       <div
         class="relative rounded-xl ring-2 ring-cream-soft/30 active:scale-95 transition-transform overflow-hidden"
         :style="{ width: '64px', height: (64 * 1.45) + 'px' }"
@@ -109,16 +119,6 @@ const rightCardWidth = computed(() =>
       </div>
       <div class="font-extrabold uppercase tracking-widest text-[10px] text-cream-soft/85">
         Deck
-      </div>
-      <!-- Versus / Playground only: when the pile is empty a tap on the deck just passes
-           the turn (no card to draw, but the action is still legal). This hint surfaces
-           that without adding a separate "Pass" button. Solo doesn't have a pass concept
-           so we skip it there. -->
-      <div
-        v-if="drawPileCount === 0 && mode !== 'solo'"
-        class="text-[9px] font-medium tracking-wide text-cream-soft/55"
-      >
-        Tap to pass
       </div>
     </button>
 
