@@ -801,7 +801,7 @@ function onPauseOverlayTap() {
             class="guide-modal-close"
             aria-label="Close"
             @click="guideModalOpen = false"
-          >DONE</button>
+          >Close</button>
         </div>
       </div>
     </Teleport>
@@ -1029,26 +1029,33 @@ function onPauseOverlayTap() {
   width: min(100%, 480px);
   height: min(88dvh, 720px);
   border-radius: 18px;
-  overflow: hidden;
+  /* No `overflow: hidden` here — the close button is absolutely positioned at `top: -32px`
+   * (sitting just above the card, matching the table-guide mobile modal), and clipping
+   * the card would hide it. GuideContent has no background of its own and `.guide-grid`
+   * scrolls internally, so the card's rounded corners still render correctly. */
   box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45);
   background: var(--color-cream-soft);
 }
+/* Matches the close pill on the table-guide mobile modal in GuideCard.vue:
+ *   `-top-8 right-2 px-3 py-1 rounded-full text-xs font-extrabold uppercase
+ *   tracking-widest text-cream-soft` with coral background. */
 .guide-modal-close {
   position: absolute;
-  top: -36px;
+  top: -32px;
   right: 8px;
-  padding: 6px 14px;
+  padding: 4px 12px;
   border-radius: 9999px;
   border: 0;
   background: var(--color-coral);
   color: var(--color-cream-soft);
   font-family: var(--font-body);
-  font-size: 0.78rem;
+  font-size: 0.75rem;
   font-weight: 800;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   cursor: pointer;
   box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+  z-index: 10;
 }
 .guide-modal-close:hover { background: var(--color-coral-deep); }
 </style>
