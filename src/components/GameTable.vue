@@ -6,6 +6,7 @@ import SlamWheel, { type WheelTarget } from './SlamWheel.vue';
 import TurnWisp from './TurnWisp.vue';
 import TableSurface from './TableSurface.vue';
 import SnapDrawnOverlay from './SnapDrawnOverlay.vue';
+import ChantTriggerOverlay from './ChantTriggerOverlay.vue';
 import { useSeatLayout } from '@/composables/useSeatLayout';
 import { useResponsive } from '@/composables/useResponsive';
 import { flyCardSlam, flyCardDraw } from '@/composables/useCardAnimation';
@@ -44,6 +45,20 @@ const props = defineProps<{
   /** When true, the human's Halo-Halo Chik pulses + glows to invite the opening play.
    *  Parent (PlayView) flips this on during idle/opening status; off otherwise. */
   pulseHaloHalo?: boolean;
+  /** v1.2 Beat ownership — beats claimed by each seat (key = seat index). */
+  beatsBySeat?: Map<number, ChantWord[]>;
+  /** v1.2 Setup phase — current beat picker seat. -1/null when not in setup. */
+  currentBeatPickerSeat?: number | null;
+  /** v1.2 Chant Trigger overlay state. */
+  chantTriggerActive?: boolean;
+  chantTriggerLandedBeat?: ChantWord | 'no-winner-opening' | 'no-winner-unclaimed' | null;
+  chantTriggerWinnerSeat?: number | null;
+  chantTriggerTotal?: number;
+  chantTriggerReceiverSeat?: number | null;
+  /** Per-seat recital state. Step counter & shouts driven by useGame. */
+  chantRecitalStepsBySeat?: Map<number, number>;
+  chantRecitalCurrentSeat?: number | null;
+  recitalShouts?: Record<number, { word: ChantWord; key: number }>;
 }>();
 
 const emit = defineEmits<{
@@ -303,6 +318,15 @@ watch(
   { immediate: true },
 );
 
+/** Merge normal-play shouts with Chant Trigger recital shouts. The recital fires the
+ *  same SpeechBubble system as a regular play, but driven by useGame's recital walk. We
+ *  prefer the recital shout when active so the chant overrides any stale play shout. */
+function effectiveShout(seatIdx: number): { word: ChantWord; key: number } | null {
+  const recital = props.recitalShouts?.[seatIdx];
+  if (recital) return recital;
+  return shouts.value[seatIdx] ?? null;
+}
+
 function dispatchFlight(spec: FlightSpec): void {
   inFlightIds.value = new Set(inFlightIds.value).add(spec.cardId);
   if (spec.shoutWord != null && spec.shoutSeatIndex != null) {
@@ -360,6 +384,7 @@ function dispatchFlight(spec: FlightSpec): void {
 <template>
   <div
     class="relative w-full h-full flex items-end justify-center"
+    :class="{ 'ambiance-chant-resolve': chantTriggerActive }"
     data-game-table
   >
     <!-- 1. The tabletop — perspective-tilted rounded rect at the back of the stacking
@@ -409,11 +434,15 @@ function dispatchFlight(spec: FlightSpec): void {
           :is-legal-target="highlightedId === String(p.seatIndex)"
           :hidden-ids="inFlightIds"
           :last-played-card-id="lastPlayedCardId"
-          :shouted="shouts[p.seatIndex]?.word ?? null"
-          :shout-key="shouts[p.seatIndex]?.key ?? 0"
+          :shouted="effectiveShout(p.seatIndex)?.word ?? null"
+          :shout-key="effectiveShout(p.seatIndex)?.key ?? 0"
           :fresh-card-ids="freshCardIds"
           :compact="isMobile"
           :prompt-size="promptSize"
+          :owned-beats="beatsBySeat?.get(p.seatIndex) ?? []"
+          :is-beat-picker="currentBeatPickerSeat === p.seatIndex"
+          :chant-recital-active="chantTriggerActive && chantRecitalCurrentSeat === p.seatIndex"
+          :chant-recital-step="chantRecitalStepsBySeat?.get(p.seatIndex) ?? -1"
         />
       </div>
     </template>
@@ -429,15 +458,29 @@ function dispatchFlight(spec: FlightSpec): void {
         :is-active="caps.isTurnBased ? activeSeatIndex === humanSeat.seatIndex : true"
         :hidden-ids="inFlightIds"
         :last-played-card-id="lastPlayedCardId"
-        :shouted="shouts[humanSeat.seatIndex]?.word ?? null"
-        :shout-key="shouts[humanSeat.seatIndex]?.key ?? 0"
+        :shouted="effectiveShout(humanSeat.seatIndex)?.word ?? null"
+        :shout-key="effectiveShout(humanSeat.seatIndex)?.key ?? 0"
         :fresh-card-ids="freshCardIds"
         :prompt-size="promptSize"
         :extra-prompt-card="soloHumanCloneCard"
         :pulse-halo-halo="pulseHaloHalo"
+        :owned-beats="beatsBySeat?.get(humanSeat.seatIndex) ?? []"
+        :is-beat-picker="currentBeatPickerSeat === humanSeat.seatIndex"
+        :chant-recital-active="chantTriggerActive && chantRecitalCurrentSeat === humanSeat.seatIndex"
+        :chant-recital-step="chantRecitalStepsBySeat?.get(humanSeat.seatIndex) ?? -1"
         @card-aim-start="onAimStart"
       />
     </div>
+
+    <!-- Chant Trigger overlay (spotlight + banner). The clockwise recital itself is
+         driven by per-seat SpeechBubble pops via the shout merging above. -->
+    <ChantTriggerOverlay
+      :active="!!chantTriggerActive"
+      :landed-beat="chantTriggerLandedBeat ?? null"
+      :winner-seat-index="chantTriggerWinnerSeat ?? null"
+      :total="chantTriggerTotal ?? 0"
+      :receiver-seat-index="chantTriggerReceiverSeat ?? null"
+    />
 
     <!-- Slam wheel overlay (during aim) -->
     <SlamWheel

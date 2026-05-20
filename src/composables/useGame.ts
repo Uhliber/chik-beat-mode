@@ -3,7 +3,7 @@ import { App as CapApp } from '@capacitor/app';
 import type { Card } from '@/game/Card';
 import { Game } from '@/game/Game';
 import { SimulationController, type SimStatus, type SimMode, type AiSkillLevel } from '@/game/SimulationController';
-import type { BaseSide, CardPrompt, ChantWord, GameEvent, PlayerId, PlaygroundComposition, SoloAction, VersusAction } from '@/game/types';
+import type { BaseSide, CardPrompt, ChantPowerGift, ChantWord, GameEvent, PlayerId, PlaygroundComposition, SoloAction, VersusAction } from '@/game/types';
 import { modeCaps } from '@/game/modes';
 import { useBeatAudio } from './useBeatAudio';
 import {
@@ -251,6 +251,41 @@ export function useGame(opts: UseGameOptions = {}) {
    * (and cleared on snap-played / kept).
    */
   const pendingSnapDraw = ref<{ playerId: PlayerId; cardId: string } | null>(null);
+
+  // ----- v1.2 Beat ownership + Chant Trigger state, mirrored for templates -----
+  const setupPhase = ref<'beat-selection' | 'play'>('play');
+  const beatOwners = ref<Map<ChantWord, number>>(new Map());
+  const beatsBySeat = ref<Map<number, ChantWord[]>>(new Map());
+  const currentBeatPickerSeat = ref<number | null>(null);
+
+  /** Live Chant Trigger state. `active` flips true on versusChantTriggered, false on
+   *  versusChantPowerResolved (or ~300ms after a no-winner trigger). The recital steps
+   *  are drained one-by-one with a per-step delay so SpeechBubbles + counter pips
+   *  animate sequentially around the table. */
+  const chantTrigger = ref<{
+    active: boolean;
+    sourceSeatIndex: number;
+    receiverSeatIndex: number;
+    total: number;
+    landedBeat: ChantWord | 'no-winner-opening' | 'no-winner-unclaimed';
+    winnerSeatIndex: number | null;
+    perSeatCounts: number[];
+  } | null>(null);
+  /** Recital step currently lit. Keyed by seat index → number of count units spoken so
+   *  far AT that seat. Updated as the recital walks. */
+  const chantRecitalStepsBySeat = ref<Map<number, number>>(new Map());
+  /** Speech bubble fired by the recital — one shout per beat step. Mirrors the existing
+   *  `shouts` pattern in GameTable so we can reuse SpeechBubble. */
+  const recitalShouts = ref<Record<number, { word: ChantWord; key: number }>>({});
+  /** Seat that's currently being recited at — used to glow that seat's popover. */
+  const chantRecitalCurrentSeat = ref<number | null>(null);
+
+  /** Pending Chant Power state (mirrors game.pendingChantPower so templates can react). */
+  const pendingChantPower = ref<{
+    winnerSeatIndex: number;
+    receiverSeatIndex: number;
+    chantChikId: string;
+  } | null>(null);
   let soloRafId: number | null = null;
   let soloStartedAt = 0;
   const startSoloTimer = () => {
@@ -424,6 +459,81 @@ export function useGame(opts: UseGameOptions = {}) {
       case 'versusSnapDrawnPlayed':
         pendingSnapDraw.value = null;
         break;
+      case 'versusBeatPickerChanged':
+        currentBeatPickerSeat.value = e.seatIndex;
+        setupPhase.value = game.value.setupPhase;
+        beatOwners.value = new Map(game.value.beatOwners);
+        beatsBySeat.value = game.value.beatsOwnedBySeat();
+        break;
+      case 'versusBeatClaimed':
+        beatOwners.value = new Map(game.value.beatOwners);
+        beatsBySeat.value = game.value.beatsOwnedBySeat();
+        break;
+      case 'versusSetupCompleted':
+        setupPhase.value = 'play';
+        currentBeatPickerSeat.value = null;
+        break;
+      case 'versusChantTriggered': {
+        chantTrigger.value = {
+          active: true,
+          sourceSeatIndex: e.sourceSeatIndex,
+          receiverSeatIndex: e.receiverSeatIndex,
+          total: e.total,
+          landedBeat: e.landedBeat,
+          winnerSeatIndex: e.winnerSeatIndex,
+          perSeatCounts: e.perSeatCounts,
+        };
+        chantRecitalStepsBySeat.value = new Map();
+        recitalShouts.value = {};
+        chantRecitalCurrentSeat.value = null;
+        // No-winner: no chant-power-resolve will fire, so we tear down the overlay
+        // ourselves after the recital plus a short tail so the landed banner is seen.
+        if (e.winnerSeatIndex === null) {
+          const recitalMs = e.total * 180;
+          window.setTimeout(() => {
+            chantTrigger.value = null;
+            chantRecitalStepsBySeat.value = new Map();
+            chantRecitalCurrentSeat.value = null;
+            recitalShouts.value = {};
+          }, recitalMs + 1100);
+        }
+        break;
+      }
+      case 'versusChantRecitedBeat': {
+        // Per-step animation: defer each step by ~180ms so the bubbles + popovers
+        // animate sequentially. Capture step locals to avoid stale closure refs.
+        const stepDelayMs = 180;
+        const { seatIndex, beatWord, step } = e;
+        window.setTimeout(() => {
+          const next = new Map(chantRecitalStepsBySeat.value);
+          next.set(seatIndex, (next.get(seatIndex) ?? 0) + 1);
+          chantRecitalStepsBySeat.value = next;
+          chantRecitalCurrentSeat.value = seatIndex;
+          const prevKey = recitalShouts.value[seatIndex]?.key ?? 0;
+          recitalShouts.value = {
+            ...recitalShouts.value,
+            [seatIndex]: { word: beatWord, key: prevKey + 1 },
+          };
+        }, step * stepDelayMs);
+        break;
+      }
+      case 'versusChantPowerAwarded':
+        pendingChantPower.value = {
+          winnerSeatIndex: e.winnerSeatIndex,
+          receiverSeatIndex: e.receiverSeatIndex,
+          chantChikId: '',
+        };
+        break;
+      case 'versusChantPowerResolved':
+        pendingChantPower.value = null;
+        // Tear down the trigger overlay after a brief beat so the landed banner is seen.
+        window.setTimeout(() => {
+          chantTrigger.value = null;
+          chantRecitalStepsBySeat.value = new Map();
+          chantRecitalCurrentSeat.value = null;
+          recitalShouts.value = {};
+        }, 600);
+        break;
       case 'versusStrictPenalty':
         // Same fail sting Solo penalties use — fires for ANY player so the human
         // can hear when an AI fumbles too (otherwise penalties are easy to miss).
@@ -475,6 +585,15 @@ export function useGame(opts: UseGameOptions = {}) {
     soloIsNewBest.value = false;
     pendingFlights.value = [];
     pendingSnapDraw.value = null;
+    setupPhase.value = 'play';
+    beatOwners.value = new Map();
+    beatsBySeat.value = new Map();
+    currentBeatPickerSeat.value = null;
+    chantTrigger.value = null;
+    chantRecitalStepsBySeat.value = new Map();
+    recitalShouts.value = {};
+    chantRecitalCurrentSeat.value = null;
+    pendingChantPower.value = null;
 
     const g = new Game();
     const ctrl = new SimulationController(g);
@@ -532,6 +651,14 @@ export function useGame(opts: UseGameOptions = {}) {
     g.drawPile = reactive(g.drawPile) as Card[];
     g.soloBases = reactive(g.soloBases) as Game['soloBases'];
 
+    // Mirror v1.2 setup state into the reactive refs so templates have it right away.
+    setupPhase.value = g.setupPhase;
+    beatOwners.value = new Map(g.beatOwners);
+    beatsBySeat.value = g.beatsOwnedBySeat();
+    currentBeatPickerSeat.value = g.setupPhase === 'beat-selection'
+      ? (g.players.find((p) => p.id === g.currentBeatPicker())?.seatIndex ?? null)
+      : null;
+
     triggerRef(game);
     triggerRef(controller);
   };
@@ -581,6 +708,20 @@ export function useGame(opts: UseGameOptions = {}) {
     if (state.status !== 'running') return;
     beatAudio.fx('tap');
     controller.value.submitVersusHumanAction(playerId, { type: 'snap-play', targetSeatIndex });
+  };
+
+  /** Human's beat pick during setup. */
+  const submitBeatClaim = (playerId: PlayerId, beat: ChantWord) => {
+    if (state.status !== 'running') return;
+    beatAudio.fx('tap');
+    controller.value.submitVersusHumanAction(playerId, { type: 'claim-beat', beat });
+  };
+
+  /** Human's chant-power give-cards decision. */
+  const submitChantPowerResolve = (playerId: PlayerId, gifts: ChantPowerGift[]) => {
+    if (state.status !== 'running') return;
+    beatAudio.fx('tap');
+    controller.value.submitVersusHumanAction(playerId, { type: 'chant-power-resolve', gifts });
   };
 
   const setMode = (m: SimMode) => {
@@ -670,6 +811,18 @@ export function useGame(opts: UseGameOptions = {}) {
     submitSnapPlay,
     submitSoloAction,
     submitVersusAction,
+    // v1.2 additions
+    setupPhase,
+    beatOwners,
+    beatsBySeat,
+    currentBeatPickerSeat,
+    chantTrigger,
+    chantRecitalStepsBySeat,
+    chantRecitalCurrentSeat,
+    recitalShouts,
+    pendingChantPower,
+    submitBeatClaim,
+    submitChantPowerResolve,
   };
 }
 

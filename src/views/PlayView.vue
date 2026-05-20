@@ -16,6 +16,8 @@ import SettingsPanel from '@/components/SettingsPanel.vue';
 import SnapDrawnOverlay from '@/components/SnapDrawnOverlay.vue';
 import PauseOverlay from '@/components/PauseOverlay.vue';
 import TutorialOverlay from '@/components/TutorialOverlay.vue';
+import BeatPickerOverlay from '@/components/BeatPickerOverlay.vue';
+import ChantPowerModal from '@/components/ChantPowerModal.vue';
 import IconVolume from '@/components/icons/IconVolume.vue';
 import { useGame } from '@/composables/useGame';
 import { useBeatAudio } from '@/composables/useBeatAudio';
@@ -85,6 +87,17 @@ const {
   setAudioMuted,
   submitSoloAction,
   submitVersusAction,
+  setupPhase,
+  beatOwners,
+  beatsBySeat,
+  currentBeatPickerSeat,
+  chantTrigger,
+  chantRecitalStepsBySeat,
+  chantRecitalCurrentSeat,
+  recitalShouts,
+  pendingChantPower,
+  submitBeatClaim,
+  submitChantPowerResolve,
 } = useGame({ initialMode });
 
 // Tutorial mode: ?tutorial=1 query flips this on. Solo and Versus each have their own
@@ -165,6 +178,58 @@ function onSnapChooseTarget(targetSeatIndex: number) {
   const p = pendingSnapDraw.value;
   if (!p) return;
   submitSnapPlay(p.playerId, targetSeatIndex);
+}
+
+// ---- v1.2 Beat picker + Chant Power UI glue ----
+
+/** Player labels by seat index — used by both BeatPickerOverlay and ChantPowerModal. */
+const playerLabels = computed(() => game.value.players.map((p) => p.id));
+const playerAi = computed(() => game.value.players.map((p) => p.isAI));
+
+/** Show the beat picker overlay during setup phase. The overlay always shows whenever
+ *  beat selection is active so the user can SEE the AI pick (with a "AI is picking…"
+ *  label); chips are only clickable when it's the human's turn. */
+const beatPickerVisible = computed(() => setupPhase.value === 'beat-selection');
+const beatPickerInteractive = computed(() => {
+  const seat = currentBeatPickerSeat.value;
+  if (seat == null || seat < 0) return false;
+  return !game.value.players[seat]?.isAI;
+});
+function onBeatPick(beat: import('@/game/types').ChantWord) {
+  const seat = currentBeatPickerSeat.value;
+  if (seat == null || seat < 0) return;
+  const player = game.value.players[seat];
+  if (!player) return;
+  submitBeatClaim(player.id, beat);
+}
+
+/** The Chant Power modal surfaces ONLY when the winner is the human. AI winners are
+ *  auto-resolved by the SimulationController. */
+const chantPowerVisibleForHuman = computed(() => {
+  const pending = pendingChantPower.value;
+  if (!pending) return false;
+  const winner = game.value.players[pending.winnerSeatIndex];
+  return !!winner && !winner.isAI;
+});
+const chantPowerHumanHand = computed(() => {
+  const pending = pendingChantPower.value;
+  if (!pending) return [];
+  return game.value.players[pending.winnerSeatIndex]?.hand ?? [];
+});
+const chantPowerRecipientSeats = computed(() => {
+  const pending = pendingChantPower.value;
+  if (!pending) return [];
+  const winnerSeat = pending.winnerSeatIndex;
+  const out: number[] = [];
+  for (let i = 0; i < game.value.players.length; i++) if (i !== winnerSeat) out.push(i);
+  return out;
+});
+function onChantPowerResolve(gifts: import('@/game/types').ChantPowerGift[]) {
+  const pending = pendingChantPower.value;
+  if (!pending) return;
+  const winner = game.value.players[pending.winnerSeatIndex];
+  if (!winner) return;
+  submitChantPowerResolve(winner.id, gifts);
 }
 
 const { isMobile } = useResponsive();
@@ -629,10 +694,41 @@ function onPauseOverlayTap() {
         :pending-snap-ai-pick="pendingSnapAiPick"
         :prompt-size="promptSize"
         :pulse-halo-halo="pulseHaloHalo"
+        :beats-by-seat="beatsBySeat"
+        :current-beat-picker-seat="currentBeatPickerSeat"
+        :chant-trigger-active="!!chantTrigger"
+        :chant-trigger-landed-beat="chantTrigger?.landedBeat ?? null"
+        :chant-trigger-winner-seat="chantTrigger?.winnerSeatIndex ?? null"
+        :chant-trigger-total="chantTrigger?.total ?? 0"
+        :chant-trigger-receiver-seat="chantTrigger?.receiverSeatIndex ?? null"
+        :chant-recital-steps-by-seat="chantRecitalStepsBySeat"
+        :chant-recital-current-seat="chantRecitalCurrentSeat"
+        :recital-shouts="recitalShouts"
         @solo-slam="onSoloSlam"
         @versus-play="onVersusPlay"
         @draw-deck-click="onDrawDeckClick"
         @snap-target="onSnapChooseTarget"
+      />
+
+      <!-- v1.2 Setup phase: pick your Beat Card. Surfaces above the GameTable so the
+           player can see seat dots animating in as picks land. -->
+      <BeatPickerOverlay
+        :visible="beatPickerVisible"
+        :beat-owners="beatOwners"
+        :player-labels="playerLabels"
+        :player-ai="playerAi"
+        :current-picker-seat="currentBeatPickerSeat"
+        :interactive="beatPickerInteractive"
+        @pick="onBeatPick"
+      />
+
+      <!-- v1.2 Chant Power modal — only for the human winner. -->
+      <ChantPowerModal
+        :visible="chantPowerVisibleForHuman"
+        :hand="chantPowerHumanHand"
+        :recipient-seats="chantPowerRecipientSeats"
+        :player-labels="playerLabels"
+        @resolve="onChantPowerResolve"
       />
     </main>
 

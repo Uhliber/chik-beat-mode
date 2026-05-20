@@ -28,6 +28,19 @@ function describe(e: GameEvent): string {
     case 'versusChainStarted': return `Chain: seat ${e.sourceSeatIndex} bounces back`;
     case 'versusChainEnded':   return `Chain ended (${e.reason})`;
     case 'versusStopConverted': return 'Draw pile empty — Stops convert to Left/Right';
+    case 'versusBeatPickerChanged': return e.seatIndex === null ? 'Beat selection complete' : `Beat picker → seat ${e.seatIndex}`;
+    case 'versusBeatClaimed': return `Seat ${e.seatIndex} claimed beat: ${e.beat}`;
+    case 'versusSetupCompleted': return 'Setup complete — play begins';
+    case 'versusChantTriggered': {
+      if (e.winnerSeatIndex !== null) return `Chant Trigger! Total ${e.total} → ${e.landedBeat} (seat ${e.winnerSeatIndex} wins)`;
+      return `Chant Trigger! Total ${e.total} → ${e.landedBeat}`;
+    }
+    case 'versusChantRecitedBeat': return `Chant step ${e.step + 1}/${e.totalSteps} → ${e.beatWord} (seat ${e.seatIndex})`;
+    case 'versusChantPowerAwarded': return `Chant Power awarded → seat ${e.winnerSeatIndex}`;
+    case 'versusChantPowerResolved': {
+      const total = e.gifts.reduce((sum, g) => sum + g.cardIds.length, 0);
+      return `Chant Power resolved (${total} card${total === 1 ? '' : 's'} given)`;
+    }
     case 'chantAdvanced':   return `Chant: ${e.from} → ${e.to}`;
     case 'winner':          return `Winner: ${e.playerId}`;
   }

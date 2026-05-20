@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue';
 import CardFan from './CardFan.vue';
 import BasePile from './BasePile.vue';
 import SpeechBubble from './SpeechBubble.vue';
+import PromptPopover from './PromptPopover.vue';
 import { useResponsive } from '@/composables/useResponsive';
 import type { Player } from '@/game/Player';
 import type { Card } from '@/game/Card';
@@ -46,6 +47,17 @@ const props = defineProps<{
    *  + glow to tell the player "this is what starts the game". The parent decides when
    *  to flip this on (pre-open phases of Solo/Versus); the seat just decorates. */
   pulseHaloHalo?: boolean;
+  /** Beats this player owns (Versus only). Rendered as a row of word-color dots next
+   *  to the player pill so the table can see who's claimed what. */
+  ownedBeats?: ChantWord[];
+  /** When set, this seat is currently the one being recited to during a Chant Trigger.
+   *  Drives the PromptPopover's recital glow and the pip counter. */
+  chantRecitalActive?: boolean;
+  /** How many count units have been "spoken" at this seat in the active recital.
+   *  Drives the pip counter on the prompt popover. -1 = no recital. */
+  chantRecitalStep?: number;
+  /** True while it's this seat's turn to claim a Beat Card in the setup phase. */
+  isBeatPicker?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -178,13 +190,30 @@ watch(
       >YOU</span>
     </div>
 
+    <!-- Beat-owner dots row, sits between pill and prompt stack. Shows who owns which
+         chant beat. The setup phase highlights the dot ring of whoever's picking right
+         now (handled by the `is-picker` outer ring). -->
+    <div
+      v-if="ownedBeats && ownedBeats.length > 0"
+      class="beat-owner-dots mt-1"
+      :class="{ 'is-picker': isBeatPicker }"
+      aria-hidden="true"
+    >
+      <span
+        v-for="b in ownedBeats"
+        :key="b"
+        :class="`beat-dot word-${b}`"
+        :title="`Beat: ${b}`"
+      />
+    </div>
+
     <!-- Prompt stack: cards face-up sitting in front of this player. The top one is the
          active prompt; older cards stack underneath but are inert. The human's own pile
          is permanently ~30% larger than the opponents' piles so they can always read
          their current prompt at a glance — independent of whose turn it is. -->
     <div
       v-if="promptStack.length > 0"
-      class="mt-1 prompt-pile-wrapper"
+      class="mt-1 prompt-pile-wrapper relative"
       :class="{ 'is-human': isHumanSeat }"
     >
       <BasePile
@@ -195,6 +224,15 @@ watch(
         :base-id="`seat-${player.seatIndex}`"
         :highlight-card-id="lastPlayedCardId"
       />
+      <!-- Floating prompt + count badge beside the active prompt. Recolored to the
+           card's chant-word color so it reads at a glance even on small art. -->
+      <div class="prompt-popover-anchor">
+        <PromptPopover
+          :card="promptStack[promptStack.length - 1]"
+          :recital-active="chantRecitalActive ?? false"
+          :recital-step="chantRecitalStep ?? -1"
+        />
+      </div>
     </div>
 
     <!-- Solo clone: the active prompt mirrored in front of the human player so they can
@@ -280,5 +318,46 @@ watch(
 }
 .player-pill {
   z-index: 20;
+}
+
+/* Beat-owner dots — one per claimed beat. The setup-phase highlight pulses the row
+ * when this seat is the current picker. */
+.beat-owner-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border-radius: 9999px;
+  background: rgba(0, 0, 0, 0.18);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+.beat-owner-dots.is-picker {
+  animation: beat-picker-pulse 1.2s ease-in-out infinite;
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.25),
+    0 0 0 2px rgba(252, 246, 230, 0.92);
+}
+@keyframes beat-picker-pulse {
+  0%, 100% { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25), 0 0 0 2px rgba(252, 246, 230, 0.92); }
+  50%      { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25), 0 0 0 5px rgba(252, 246, 230, 0.5); }
+}
+.beat-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 9999px;
+  background: var(--word-color, var(--color-coral));
+  border: 1px solid rgba(252, 246, 230, 0.9);
+}
+
+/* Anchor that floats the prompt popover to the right side of the prompt stack. The
+ * absolute positioning + translateY centres it vertically on the top card. */
+.prompt-popover-anchor {
+  position: absolute;
+  left: calc(100% + 6px);
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  z-index: 25;
 }
 </style>
