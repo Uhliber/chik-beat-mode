@@ -35,7 +35,7 @@ describe('Game (Versus)', () => {
     g = new Game(seededRng(7));
     events = [];
     g.on((e) => events.push(e));
-    g.setupVersus(3);
+    g.setupVersus(3); g.autoCompleteBeatSelection();
   });
 
   it('deals 7 cards to each of 3 players and rest to draw pile', () => {
@@ -125,7 +125,7 @@ describe('Game (Versus)', () => {
 describe('Game (Versus) — seat direction matches player perspective', () => {
   function setupFourPlayerOpened(): Game {
     const g = new Game(seededRng(11));
-    g.setupVersus(4);
+    g.setupVersus(4); g.autoCompleteBeatSelection();
     // Force the Halo-Halo opener to be P1 (seat 0) deterministically by moving the
     // halo card into seat 0 and updating haloHaloOwnerId.
     if (g.haloHaloOwnerId !== 'p1') {
@@ -206,7 +206,7 @@ describe('Game (Versus) — seat direction matches player perspective', () => {
 
   it('with a 6-player game, Right from seat 0 wraps to seat 5 (not seat 1)', () => {
     const g = new Game(seededRng(13));
-    g.setupVersus(6);
+    g.setupVersus(6); g.autoCompleteBeatSelection();
     if (g.haloHaloOwnerId !== 'p1') {
       const halo = g.players
         .flatMap((p) => p.hand.map((c) => ({ c, p })))
@@ -236,7 +236,7 @@ describe('Game (Versus) — seat direction matches player perspective', () => {
 describe('Game (Versus) — strict prompts house rule', () => {
   function setupForStrict(): Game {
     const g = new Game(seededRng(31));
-    g.setupVersus(4);
+    g.setupVersus(4); g.autoCompleteBeatSelection();
     g.setStrictPromptsEnabled(true);
     // Force opener to seat 0 for determinism.
     if (g.haloHaloOwnerId !== 'p1') {
@@ -338,7 +338,7 @@ describe('Game (Versus) — strict prompts house rule', () => {
 describe('Game (Versus) — drawn-Snap parks for direction', () => {
   it('drawing a Snap matching the current beat sets pendingSnapDraw and does not auto-play', () => {
     const g = new Game(seededRng(53));
-    g.setupVersus(4);
+    g.setupVersus(4); g.autoCompleteBeatSelection();
     // Force opener = seat 0 and open the game so we're past the Halo-Halo gate.
     if (g.haloHaloOwnerId !== 'p1') {
       const haloEntry = g.players
@@ -430,7 +430,7 @@ describe('Game (Playground) — sandbox setup', () => {
   // a +1 penalty draw (matching how strict mode treats other illegal plays).
   it('drawn-Snap on non-neighbour rejects silently in standard mode', () => {
     const g = new Game(seededRng(110));
-    g.setupVersus(4);
+    g.setupVersus(4); g.autoCompleteBeatSelection();
     // Open + plant a pending Snap-drawn for seat 0 (the human), with an across-table
     // target (seat 2). Easiest path: directly mutate the pending state + put a Snap
     // card matching the current beat in seat 0's hand.
@@ -453,7 +453,7 @@ describe('Game (Playground) — sandbox setup', () => {
 
   it('drawn-Snap on non-neighbour in strict mode applies a +1 penalty draw', () => {
     const g = new Game(seededRng(111));
-    g.setupVersus(4);
+    g.setupVersus(4); g.autoCompleteBeatSelection();
     g.setStrictPromptsEnabled(true);
     (g as unknown as { opened: boolean }).opened = true;
     const snapCard = { id: 'snap-test-2', word: 'chik', prompt: 'snap', isHaloHalo: false, matchesBeat: () => true } as never;
@@ -488,7 +488,7 @@ describe('Game (Playground) — sandbox setup', () => {
     const counts = new Array<number>(HAND_SIZE).fill(0);
     for (let trial = 0; trial < ITERATIONS; trial++) {
       const g = new Game(); // default Math.random
-      g.setupVersus(3);
+      g.setupVersus(3); g.autoCompleteBeatSelection();
       // Pin a known 6-card hand on seat 1, in a known order.
       const owner = g.players[1];
       owner.hand = [
@@ -536,7 +536,7 @@ describe('Game (Playground) — sandbox setup', () => {
   // forced draw must still drain from the Fetch owner's hand (not silently pass).
   it('Fetch prompt drains from owner hand even when draw pile is empty', () => {
     const g = new Game(seededRng(101));
-    g.setupVersus(3);
+    g.setupVersus(3); g.autoCompleteBeatSelection();
     // Open the game.
     const opener = g.players[g.activeSeatIndex];
     const halo = opener.hand.find((c) => c.isHaloHalo)!;
@@ -571,6 +571,7 @@ describe('Game (Playground) — sandbox setup', () => {
       handSize: 7,
       composition: { right: 14, left: 14, free: 7, stop: 7, snap: 7, fetch: 7 },
     });
+    g.autoCompleteBeatSelection();
     const opener = g.players[g.activeSeatIndex];
     const halo = opener.hand.find((c) => c.isHaloHalo);
     expect(halo).toBeTruthy();

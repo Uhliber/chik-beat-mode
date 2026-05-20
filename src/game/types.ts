@@ -74,7 +74,17 @@ export type SoloActionResult =
 export type VersusAction =
   | { type: 'play'; cardId: string; targetSeatIndex: number }
   | { type: 'draw' }
-  | { type: 'snap-play'; targetSeatIndex: number };
+  | { type: 'snap-play'; targetSeatIndex: number }
+  | { type: 'claim-beat'; beat: ChantWord }
+  | { type: 'chant-power-resolve'; gifts: ChantPowerGift[] };
+
+/** One bundle of cards from the chant-power winner to a single recipient. The engine
+ *  accepts an array of these per resolve action so the winner can split up to 3 cards
+ *  across multiple opponents (or pile them all on one). */
+export interface ChantPowerGift {
+  recipientSeatIndex: number;
+  cardIds: string[];
+}
 
 export type VersusRejectReason =
   | 'not-your-turn'
@@ -83,7 +93,13 @@ export type VersusRejectReason =
   | 'illegal-target'
   | 'stopped'
   | 'self-target'
-  | 'no-pending-snap';
+  | 'no-pending-snap'
+  | 'wrong-setup-phase'
+  | 'beat-already-claimed'
+  | 'not-your-beat-pick'
+  | 'no-pending-chant-power'
+  | 'invalid-gift-target'
+  | 'invalid-gift-count';
 
 export type StrictPenaltyReason = 'wrong-beat' | 'illegal-target' | 'stopped';
 
@@ -115,6 +131,15 @@ export type GameEvent =
   | { kind: 'versusChainStarted'; sourceSeatIndex: number; targetSeatIndex: number }
   | { kind: 'versusChainEnded'; reason: 'target-played' | 'source-drew' }
   | { kind: 'versusStopConverted' }   // draw pile emptied — Stops become Left/Right
+  // Beat ownership (setup phase, Versus / Playground)
+  | { kind: 'versusBeatPickerChanged'; seatIndex: number | null }
+  | { kind: 'versusBeatClaimed'; seatIndex: number; beat: ChantWord }
+  | { kind: 'versusSetupCompleted' }
+  // Chant Trigger (Versus / Playground)
+  | { kind: 'versusChantTriggered'; sourceSeatIndex: number; receiverSeatIndex: number; chantChikId: string; total: number; landedBeat: ChantWord | 'no-winner-opening' | 'no-winner-unclaimed'; winnerSeatIndex: number | null; perSeatCounts: number[] }
+  | { kind: 'versusChantRecitedBeat'; seatIndex: number; beatWord: ChantWord; step: number; totalSteps: number }
+  | { kind: 'versusChantPowerAwarded'; winnerSeatIndex: number; receiverSeatIndex: number }
+  | { kind: 'versusChantPowerResolved'; winnerSeatIndex: number; gifts: ChantPowerGift[] }
   // Shared
   | { kind: 'chantAdvanced'; from: ChantWord; to: ChantWord }
   | { kind: 'winner'; playerId: PlayerId };

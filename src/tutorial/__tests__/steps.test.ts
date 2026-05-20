@@ -14,7 +14,7 @@ import type { GameEvent } from '@/game/types';
 function setupGameForMode(mode: 'solo' | 'versus'): Game {
   const g = new Game(seededRng(101));
   if (mode === 'solo') g.setupSolo();
-  else g.setupVersus(4);
+  else g.setupVersus(4); g.autoCompleteBeatSelection();
   return g;
 }
 
