@@ -288,14 +288,23 @@ watch(
           :base-id="`seat-${player.seatIndex}`"
           :highlight-card-id="lastPlayedCardId"
         />
+        <!-- AI popovers: two circular badges side-by-side, anchored beside the card.
+             Counter-rotated as a group so the prompt-then-count reading order stays
+             intact regardless of the seat's table-facing rotation. -->
         <div
-          class="prompt-popover-anchor"
+          class="prompt-popover-anchor ai-pair"
           :style="counterRotate ? { transform: `translateY(-50%) ${counterRotate}` } : undefined"
         >
           <PromptPopover
             :card="promptStack[promptStack.length - 1]"
             :size="promptInfoSize ?? 'medium'"
-            mode="combined"
+            mode="icon"
+            :recital-active="chantRecitalActive ?? false"
+          />
+          <PromptPopover
+            :card="promptStack[promptStack.length - 1]"
+            :size="promptInfoSize ?? 'medium'"
+            mode="count"
             :recital-active="chantRecitalActive ?? false"
           />
         </div>
@@ -426,6 +435,14 @@ watch(
   transform: translateY(-50%);
   pointer-events: none;
   z-index: 25;
+}
+
+/* AI variant: two circular popovers side-by-side. Flex centers them vertically on
+ * the prompt card; small gap keeps them visually distinct without crowding. */
+.prompt-popover-anchor.ai-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 /* Human's three-piece layout: [prompt-icon] [prompt-card] [count-icon]. Flex centers
