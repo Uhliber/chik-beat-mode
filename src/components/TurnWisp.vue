@@ -3,13 +3,13 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { gsap } from 'gsap';
 
 /**
- * Turn-indicator wisp — a translucent coral dot (with a soft cream halo) that hops from
+ * Turn-indicator wisp, a translucent coral dot (with a soft cream halo) that hops from
  * seat to seat as the active player rotates. Anchored to each seat pill via the
  * `data-seat-index` attribute (already present on PlayerSeat).
  *
  * Two elements, one GSAP timeline per turn change:
  *  - `.wisp-glow` is a soft cream halo (pure CSS keyframe for the idle pulse).
- *  - `.wisp-dot` is a solid coral-deep pill, white-bordered, ~75% alpha — same style as
+ *  - `.wisp-dot` is a solid coral-deep pill, white-bordered, ~75% alpha, same style as
  *    the player pills so it reads as "spotlight on this seat" rather than a generic
  *    decoration. The dot also drives the squash-and-stretch on transit: GSAP rotates it
  *    to face the motion vector, stretches it along that axis during the move, then
@@ -37,12 +37,12 @@ let activeAnim: gsap.core.Animation | null = null;
 /**
  * Anchor point for the wisp in coordinates LOCAL TO THE WISP'S OFFSET PARENT (the
  * GameTable's root). The wisp is `position: absolute`, so GSAP x/y transforms apply
- * relative to that parent — we translate the seat's viewport rect into the parent's
+ * relative to that parent, we translate the seat's viewport rect into the parent's
  * coordinate space by subtracting the parent's rect origin.
  *
  * Each seat is rotated to face the table centre, so the pill's local "up" (= the
  * player's perspective "above their pill") points toward the table centre on screen.
- * We pull the anchor in THAT direction — not screen-up — so the wisp peeks above
+ * We pull the anchor in THAT direction, not screen-up, so the wisp peeks above
  * every pill from the seated player's POV, regardless of which side of the table
  * they're on. Magnitude: ~60% of the pill's measured height (a third of the dot
  * remains behind the pill as an anchor; two thirds peek over).
@@ -121,7 +121,7 @@ function moveTo(seatIdx: number, immediate = false): void {
     x: target.x, y: target.y,
     duration: 0.55, ease: 'power2.inOut',
   }, 0);
-  // 3. Recover the dot with a slight back-out overshoot — gives the arrival a tactile "settle".
+  // 3. Recover the dot with a slight back-out overshoot, gives the arrival a tactile "settle".
   if (dotEl.value) {
     tl.to(dotEl.value, {
       rotation: 0, scaleX: 1, scaleY: 1,
@@ -144,7 +144,7 @@ onMounted(() => {
   // First placement: snap to whichever seat is active right now. No flight on first paint.
   requestAnimationFrame(() => moveTo(props.seatIndex, true));
 
-  // Re-anchor whenever the viewport changes — seat positions are computed from radius
+  // Re-anchor whenever the viewport changes, seat positions are computed from radius
   // which scales with min(viewport). ResizeObserver fires once per layout change.
   resizeObserver = new ResizeObserver(() => {
     if (props.seatIndex >= 0) moveTo(props.seatIndex, true);
@@ -165,10 +165,10 @@ onBeforeUnmount(() => {
     class="turn-wisp"
     aria-hidden="true"
   >
-    <!-- Outer cream bloom — pulses gently. Sits behind the dot, mostly there to soften
+    <!-- Outer cream bloom, pulses gently. Sits behind the dot, mostly there to soften
          the dot's edge against the cream table. -->
     <div class="wisp-glow" />
-    <!-- Solid coral dot with cream border, ~75% alpha — same visual language as the
+    <!-- Solid coral dot with cream border, ~75% alpha, same visual language as the
          player pills. Carries the squash-stretch animation during transit. -->
     <div ref="dotEl" class="wisp-dot" />
   </div>
@@ -187,7 +187,7 @@ onBeforeUnmount(() => {
 
 /**
  * Outer cream bloom. radial-gradient(circle closest-side, ...) so the gradient's 0-alpha
- * stop coincides with the box's closest edge — pixels outside the inscribed circle are
+ * stop coincides with the box's closest edge, pixels outside the inscribed circle are
  * already transparent. No visible bounding-box seam regardless of stacking context.
  */
 .wisp-glow {

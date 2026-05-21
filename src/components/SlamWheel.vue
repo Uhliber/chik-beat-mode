@@ -2,10 +2,10 @@
 import { computed } from 'vue';
 
 export interface WheelTarget {
-  /** Stable id — for Solo this is 'left' | 'right'; for Versus it's the target seat index as string. */
+  /** Stable id, for Solo this is 'left' | 'right'; for Versus it's the target seat index as string. */
   id: string;
   label: string;
-  /** Image to render in the chip — top card art if there's a stack, otherwise base / seat fallback. */
+  /** Image to render in the chip, top card art if there's a stack, otherwise base / seat fallback. */
   chipArt: string;
   /** Whether the chip is showing a real card (vs. a placeholder). */
   hasTopCard: boolean;
@@ -28,7 +28,7 @@ const props = defineProps<{
   highlightedId: string | '';
   /** Drag distance below this px → cursor is in the cancel zone. */
   threshold: number;
-  /** True once the cursor has moved past the click tolerance — i.e. user is dragging. */
+  /** True once the cursor has moved past the click tolerance, i.e. user is dragging. */
   hasDragged: boolean;
 }>();
 

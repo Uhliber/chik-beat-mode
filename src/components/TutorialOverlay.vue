@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * TutorialOverlay — bottom-anchored speech card + spotlight backdrop in one component.
+ * TutorialOverlay, bottom-anchored speech card + spotlight backdrop in one component.
  *
  * Layout: portal-rendered to <body>, two layers:
  *   1. Backdrop with a `clip-path: path('evenodd')` cut-out shaped from the spotlight
@@ -9,7 +9,7 @@
  *   2. A speech card pinned to the bottom-centre (max-width 480px) with copy, icons,
  *      progress pips, Skip/Quit/Next.
  *
- * Presentation only — owns no game state. The parent (PlayView via useTutorial) feeds
+ * Presentation only, owns no game state. The parent (PlayView via useTutorial) feeds
  * step content + phase; this component emits player intents back.
  */
 
@@ -41,14 +41,21 @@ const emit = defineEmits<{
 }>();
 
 // ---- Icon URL map ----
+/** Prompt-icon URLs point at the v1.2 `/new/` set so the tutorial card glyphs
+ *  match the icons the player sees on real cards mid-game (PromptPopover loads
+ *  from the same files). The new prompt glyphs have directional arrows baked
+ *  in, so the legacy `left-right` combo icon was retired, pair a prompt icon
+ *  with itself, not with arrows. */
 const ICON_URLS: Record<TutorialIcon, string> = {
-  left: '/icons/left-icon.svg',
-  right: '/icons/right-icon.svg',
-  free: '/icons/free-icon.svg',
-  stop: '/icons/stop-icon.svg',
-  snap: '/icons/snap-icon.svg',
-  'deck-off': '/icons/deck-off-icon.svg',
-  'left-right': '/icons/left-right-icon.svg',
+  left:        '/new/prompt-left.svg',
+  right:       '/new/prompt-right.svg',
+  free:        '/new/prompt-free.svg',
+  stop:        '/new/prompt-stop.svg',
+  snap:        '/new/prompt-snap.svg',
+  fetch:       '/new/prompt-fetch.svg',
+  'deck-off':  '/new/prompt-fetch.svg', // legacy alias, Fetch is the off-deck prompt.
+  count:       '/new/count-5.svg',
+  'chant-chik': '/new/free-chant-chik-5.png',
 };
 
 // ---- Spotlight rect tracking ----
@@ -117,7 +124,7 @@ onBeforeUnmount(() => {
 });
 
 watch(() => props.step?.id, () => {
-  // New step — re-anchor next frame so the DOM has reflected any setup() mutations.
+  // New step, re-anchor next frame so the DOM has reflected any setup() mutations.
   requestAnimationFrame(() => computeSpotRect());
 });
 watch(() => props.spotlightSelector, () => requestAnimationFrame(() => computeSpotRect()));
@@ -126,7 +133,7 @@ watch(() => props.collapsed, computeSpotRect);
 // ---- Mask SVG path: full viewport rect with the spot punched out using evenodd. ----
 const maskPath = computed(() => {
   if (!spotRect.value) {
-    // No spotlight — full-viewport dim with no hole.
+    // No spotlight, full-viewport dim with no hole.
     return `M0,0 H100% V100% H0 Z`;
   }
   // Build a path "outer rect" + "inner rounded rect", evenodd punches the inner hole.
@@ -173,7 +180,7 @@ const nextAvailable = computed(() => {
   if (props.phase !== 'intro') return false;
   return !!props.step?.canSkipForward;
 });
-/** Final "Back to menu" CTA — only shown on the completion celebration screen. */
+/** Final "Back to menu" CTA, only shown on the completion celebration screen. */
 const finishAvailable = computed(() => props.phase === 'done');
 
 const icons = computed<string[]>(() => (props.step?.icons ?? []).map((i) => ICON_URLS[i]));
@@ -192,7 +199,7 @@ const cardPosition = computed<'top' | 'bottom'>(() => props.cardPosition ?? 'bot
       aria-modal="true"
       aria-label="Tutorial"
     >
-      <!-- Spotlight backdrop — full-viewport mask with the highlighted target punched out -->
+      <!-- Spotlight backdrop, full-viewport mask with the highlighted target punched out -->
       <svg
         class="tutorial-spotlight"
         :width="'100%'"
@@ -325,7 +332,7 @@ const cardPosition = computed<'top' | 'bottom'>(() => props.cardPosition ?? 'bot
 .tutorial-spotlight {
   position: absolute;
   inset: 0;
-  /* The spotlight is purely VISUAL — the mask only paints a hole, but SVG still
+  /* The spotlight is purely VISUAL, the mask only paints a hole, but SVG still
    * captures pointer events across its full extent. Setting pointer-events:none lets
    * clicks pass through to whatever's underneath (the spotlighted card, an opponent
    * seat, etc.) so the user can actually interact with the highlighted target. */
@@ -361,7 +368,7 @@ const cardPosition = computed<'top' | 'bottom'>(() => props.cardPosition ?? 'bot
 
 /* Desktop: pin the card to the top-left so the table view stays clear. Logo lives at
  * (16px, 16px); the card slots in below it. The pos-top/pos-bottom variants no longer
- * move the card on desktop — the spotlight cut-out alone draws the eye. */
+ * move the card on desktop, the spotlight cut-out alone draws the eye. */
 @media (min-width: 768px) {
   .tutorial-card,
   .tutorial-card.pos-top,
@@ -384,7 +391,7 @@ const cardPosition = computed<'top' | 'bottom'>(() => props.cardPosition ?? 'bot
   }
   .tutorial-title { font-size: 1.02rem; }
   .tutorial-body { font-size: 0.88rem; line-height: 1.35; }
-  .tutorial-icons img { width: 30px; height: 30px; }
+  .tutorial-icons img { height: 30px; width: auto; max-width: 30px; }
 }
 .tutorial-card.is-demo {
   /* Lower opacity ring while the engine demonstrates so the player's eye goes to the table. */
@@ -460,8 +467,13 @@ const cardPosition = computed<'top' | 'bottom'>(() => props.cardPosition ?? 'bot
   margin-bottom: 10px;
 }
 .tutorial-icons img {
-  width: 36px;
+  /* Square prompt icons (left/right/free/stop/snap/fetch/count) fit a 36×36
+   * slot. Card-art icons (chant-chik) are portrait (~0.6:1), height-only
+   * sizing with `width: auto` keeps them at their natural aspect ratio
+   * instead of squishing them into a square box. */
   height: 36px;
+  width: auto;
+  max-width: 36px;
   filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.15));
 }
 

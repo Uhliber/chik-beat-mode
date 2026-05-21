@@ -45,7 +45,7 @@ interface Piece {
   rounded: boolean;
 }
 
-// ~18 pieces — half of the win confetti so it reads as a flourish, not a victory.
+// ~18 pieces, half of the win confetti so it reads as a flourish, not a victory.
 const PIECES: Piece[] = Array.from({ length: 18 }, (_, i): Piece => {
   // Burst in a random direction with random spread distance.
   const angle = Math.random() * Math.PI * 2;

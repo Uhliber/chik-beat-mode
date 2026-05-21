@@ -6,11 +6,11 @@ defineProps<{
   winnerId: string | null;
   /** Title override (Solo uses "Cleared!" instead of "Winner"). */
   title?: string;
-  /** Big centred line — falls back to winnerId.toUpperCase(). Used for Solo to show the time. */
+  /** Big centred line, falls back to winnerId.toUpperCase(). Used for Solo to show the time. */
   headline?: string;
   /** Optional sub-line below the headline (e.g. "New best!"). */
   subtitle?: string;
-  /** Sub-line tone — 'celebrate' = amber + bold for new-best. */
+  /** Sub-line tone, 'celebrate' = amber + bold for new-best. */
   subtitleTone?: 'info' | 'celebrate';
 }>();
 defineEmits<{ (e: 'restart'): void }>();

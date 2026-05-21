@@ -7,7 +7,7 @@ import GuideContent from './GuideContent.vue';
  *
  *  - Desktop (default): in-place card in the aside, flips + grows on hover.
  *  - Mobile (`mobile` prop): a full-size guide-back card PEEKING in from the right edge
- *    of the screen — about 40% visible, 60% off-screen — with a "GUIDE" label tucked
+ *    of the screen, about 40% visible, 60% off-screen, with a "GUIDE" label tucked
  *    above the tilted top edge. Tap → opens a near-full-screen modal teleported to body.
  */
 
@@ -42,7 +42,7 @@ const toggle = () => { open.value = !open.value; };
 // the visible card stays a playing-card shape across transitions. Content is rendered
 // once at the read-size dimensions (READ_W × READ_H) and the surrounding scaler is
 // `transform: scale()`-ed to fit whichever size we're showing. This keeps the layout
-// — font sizes (via cqw), padding, gaps, the two-column grid — proportionally
+//, font sizes (via cqw), padding, gaps, the two-column grid, proportionally
 // IDENTICAL whether the card is tiny or full-size. The previous approach let the
 // cqw container shrink to ~120px wide, which made title fonts compute to ~7px and
 // the body text essentially unreadable while breaking the relative proportions.
@@ -118,7 +118,7 @@ const contentStyle = computed(() => ({
           class="absolute inset-0 backface-hidden rounded-lg shadow-xl ring-1 ring-black/15 guide-front overflow-hidden"
           style="transform: rotateY(180deg);"
         >
-          <!-- Inner scaler — fixed READ_W×READ_H so GuideContent's cqw units always
+          <!-- Inner scaler, fixed READ_W×READ_H so GuideContent's cqw units always
                compute against the same container width. The visible card size is
                handled by scaling THIS wrapper, not by resizing the content. -->
           <div :style="contentStyle">
@@ -184,9 +184,9 @@ const contentStyle = computed(() => ({
     </span>
   </button>
 
-  <!-- Mobile modal — teleported to body, near-full-screen with backdrop.
+  <!-- Mobile modal, teleported to body, near-full-screen with backdrop.
        Parent uses 100dvh (not 100vh) so it respects the browser's CURRENT visible
-       viewport — no clipping into the URL bar / tab bar on iOS. -->
+       viewport, no clipping into the URL bar / tab bar on iOS. -->
   <Teleport to="body">
     <Transition
       enter-from-class="opacity-0"

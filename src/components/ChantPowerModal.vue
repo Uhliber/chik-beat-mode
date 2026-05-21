@@ -21,6 +21,11 @@ const props = defineProps<{
   recipientSeats: number[];
   /** Player labels by seat index. */
   playerLabels: string[];
+  /** When true, the "Keep all cards" no-op confirm is blocked, the player MUST
+   *  pick at least 1 card to give before confirming. Used by the Versus tutorial
+   *  so the give-cards step actually demonstrates the give-cards action instead
+   *  of being instantly dismissable. */
+  requireGift?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -83,6 +88,9 @@ function selectionMeta(cardId: string) {
 
 function confirm() {
   if (picks.value.length === 0) {
+    // Tutorial / forced-give modes: no-op confirm is blocked so the player
+    // actually exercises the give-cards mechanic.
+    if (props.requireGift) return;
     // Per rulebook: the winner MUST give up to 3, but giving 0 is implicitly allowed
     // when they want to keep their hand. Surface both paths.
     emit('resolve', []);
@@ -110,7 +118,7 @@ function confirm() {
     leave-active-class="transition duration-220"
     leave-to-class="opacity-0"
   >
-    <div v-if="visible" class="cp-modal" role="dialog" aria-label="Chant Power: give cards">
+    <div v-if="visible" class="cp-modal" role="dialog" aria-label="Chant Power: give cards" data-tutorial-target="chant-power-modal">
       <div class="cp-backdrop" />
       <div class="cp-panel">
         <div class="cp-title">You won the Chant Power!</div>
@@ -135,8 +143,18 @@ function confirm() {
         </div>
 
         <div class="cp-actions">
-          <button type="button" class="cp-confirm" @click="confirm">
-            {{ picks.length === 0 ? 'Keep all cards' : `Give ${picks.length} card${picks.length === 1 ? '' : 's'}` }}
+          <button
+            type="button"
+            class="cp-confirm"
+            :disabled="requireGift && picks.length === 0"
+            @click="confirm"
+          >
+            <template v-if="picks.length === 0">
+              {{ requireGift ? 'Pick a card to give' : 'Keep all cards' }}
+            </template>
+            <template v-else>
+              Give {{ picks.length }} card{{ picks.length === 1 ? '' : 's' }}
+            </template>
           </button>
         </div>
       </div>
@@ -147,7 +165,7 @@ function confirm() {
 <style scoped>
 /**
  * Bottom-anchored overlay (not a full-screen modal). Sits above the human's hand
- * area so the rest of the table — opponents, prompts, hand sizes — remains fully
+ * area so the rest of the table, opponents, prompts, hand sizes, remains fully
  * visible. The user can read who has what before deciding where to send cards.
  */
 .cp-modal {
@@ -203,8 +221,15 @@ function confirm() {
   flex-wrap: nowrap;
   gap: 8px;
   justify-content: center;
+  /* `overflow-x: auto` implicitly forces `overflow-y: auto` (CSS spec, when one
+   * axis is non-visible the other can't stay visible). The cards lift + glow
+   * on selection and the recipient pill hangs at `bottom: -10px`, so both want
+   * vertical breathing room outside the row's natural box. The clip plane sits
+   * at the padding edge, generous padding pushes that plane past the lift,
+   * the drop-shadow, and the pill height. Horizontal padding gives the
+   * end-of-row pills room too. */
   overflow-x: auto;
-  padding: 4px 2px 12px;
+  padding: 16px 16px 28px;
 }
 .cp-card {
   position: relative;
@@ -267,4 +292,15 @@ function confirm() {
   box-shadow: 0 8px 18px rgba(0, 0, 0, 0.42);
 }
 .cp-confirm:active { transform: scale(0.97); }
+.cp-confirm:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  background: var(--color-coral);
+  transform: none;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.25);
+}
+.cp-confirm:disabled:hover {
+  transform: none;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.25);
+}
 </style>

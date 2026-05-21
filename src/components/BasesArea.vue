@@ -40,7 +40,7 @@ const right = computed<Card[]>(() => props.game.soloBases.right);
  *
  *  `soloActiveBaseSide` is a plain field on the Game class (not a reactive proxy), so
  *  reads aren't tracked. Touching the reactive `soloBases` arrays' lengths makes this
- *  computed re-evaluate on every slam — which is exactly when the active side flips. */
+ *  computed re-evaluate on every slam, which is exactly when the active side flips. */
 const activeSide = computed<BaseSide | null>(() => {
   void props.game.soloBases.left.length;
   void props.game.soloBases.right.length;
@@ -82,9 +82,13 @@ const rightCardWidth = computed(() =>
       :card-width="leftCardWidth"
     />
 
+    <!-- Deck is raised above opponent seats (z-15) so prompt cards hanging
+         down from the top seat (P3 on a 4-player layout) can't intercept the
+         tap. On mobile the table is tight and an opponent's prompt regularly
+         lands directly over the deck, leaving it un-clickable without this. -->
     <button
       type="button"
-      class="relative flex flex-col items-center gap-2 focus:outline-none"
+      class="relative z-[15] flex flex-col items-center gap-2 focus:outline-none"
       :aria-label="`Draw pile: ${drawPileCount} cards`"
       data-base-id="deck"
       @click="emit('draw-deck-click')"

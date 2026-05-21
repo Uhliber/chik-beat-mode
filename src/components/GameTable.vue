@@ -23,7 +23,7 @@ const props = defineProps<{
   events: GameEvent[];
   version: number;
   mode: SimMode;
-  /** Speed multiplier — passed through to the flight animation so AI-vs-AI runs at the
+  /** Speed multiplier, passed through to the flight animation so AI-vs-AI runs at the
    *  same cadence as the controller's think delays. 1 = stock duration. */
   speed?: number;
   /** Versus only: which seat's turn is it (-1 = none / Solo). */
@@ -47,9 +47,9 @@ const props = defineProps<{
   /** When true, the human's Halo-Halo Chik pulses + glows to invite the opening play.
    *  Parent (PlayView) flips this on during idle/opening status; off otherwise. */
   pulseHaloHalo?: boolean;
-  /** v1.2 Beat ownership — beats claimed by each seat (key = seat index). */
+  /** v1.2 Beat ownership, beats claimed by each seat (key = seat index). */
   beatsBySeat?: Map<number, ChantWord[]>;
-  /** v1.2 Setup phase — current beat picker seat. -1/null when not in setup. */
+  /** v1.2 Setup phase, current beat picker seat. -1/null when not in setup. */
   currentBeatPickerSeat?: number | null;
   /** v1.2 Chant Trigger overlay state. */
   chantTriggerActive?: boolean;
@@ -65,7 +65,7 @@ const props = defineProps<{
   chantRecitalStepsBySeat?: Map<number, number>;
   chantRecitalCurrentSeat?: number | null;
   /** Per-seat starting beat index for the chant recital (which beat word each pip
-   *  represents — derived from receiverSeatIndex + perSeatCounts). */
+   *  represents, derived from receiverSeatIndex + perSeatCounts). */
   chantStartStepBySeat?: Map<number, number>;
   recitalShouts?: Record<number, { word: ChantWord; key: number }>;
 }>();
@@ -96,7 +96,7 @@ const seatLayoutMode = computed(() => {
 const playerCount = computed(() => props.game.players.length);
 const { seats } = useSeatLayout(playerCount, radius, seatLayoutMode);
 
-/** Solo bases always render at this fixed width regardless of the promptSize setting —
+/** Solo bases always render at this fixed width regardless of the promptSize setting -
  *  the user's promptSize preference only affects the CLONE that surfaces behind the
  *  human's hand (see soloHumanCloneCard below). Keeping the table bases at a stable
  *  size leaves the centre of the table balanced against the deck. */
@@ -104,7 +104,7 @@ const SOLO_BASE_CARD_WIDTH = 64;
 /** Solo XL: render a CLONE of the active prompt above the human's hand (mirroring how
  *  Versus renders the human's promptStack). Lookup walks both Solo bases to find the
  *  card whose id matches the engine's `soloActiveCardId`. Returns null whenever a clone
- *  shouldn't be shown — non-Solo modes, non-XL sizes, or no active prompt yet.
+ *  shouldn't be shown, non-Solo modes, non-XL sizes, or no active prompt yet.
  *
  *  Reactivity note: `game.soloActiveCardId` is a plain field on the Game class, not a
  *  reactive proxy, so reads of it aren't tracked. Touching the .length of both reactive
@@ -222,7 +222,7 @@ function onAimStart(payload: { card: Card; el: HTMLElement; clientX: number; cli
     : snapshotVersusTargets(payload.card, payload.player.seatIndex);
 
   // Turn-based modes: if no legal targets exist for this card, swallow the press
-  // silently — there's nowhere to throw, so don't even open the aim ring.
+  // silently, there's nowhere to throw, so don't even open the aim ring.
   if (caps.value.isTurnBased && targets.length === 0) return;
 
   aim.value = {
@@ -299,19 +299,19 @@ watch(() => props.game, cleanupAim);
 
 // ---- Card flight animations (Versus + Solo) ----
 //
-// Rects are pre-captured inside useGame.handleEvent at event-emission time — BEFORE Vue
+// Rects are pre-captured inside useGame.handleEvent at event-emission time, BEFORE Vue
 // re-renders the source's hand (one card lighter, slightly re-centered). We just drain
 // the queue here and dispatch GSAP timelines. The inFlightIds set hides the card from
 // the destination pile until the flight lands, so only the flying clone is visible
 // during travel.
 
 const draining = ref<Set<number>>(new Set());
-/** Per-seat shout state — fires the speech bubble above the source player on each play. */
+/** Per-seat shout state, fires the speech bubble above the source player on each play. */
 const shouts = ref<Record<number, { word: ChantWord; key: number }>>({});
 /**
  * Card IDs that just LANDED in someone's hand (draw flight complete). CardFan applies
  * a brief CSS slide-in animation for each id in this set. We clear ids ~520ms after
- * insert — the keyframe runs 380ms, with a buffer so the class is gone before another
+ * insert, the keyframe runs 380ms, with a buffer so the class is gone before another
  * frame paints. */
 const freshCardIds = ref<Set<string>>(new Set());
 
@@ -331,7 +331,7 @@ watch(
 // recitalShouts map clears at the same moment, so effectiveShout for every recital
 // participant would otherwise FALL BACK to a stale play-shout (the chant chik play
 // from before the trigger, or anything older still in the map). That fallback
-// re-triggers PlayerSeat's bubble watcher for every seat simultaneously — the
+// re-triggers PlayerSeat's bubble watcher for every seat simultaneously, the
 // "everyone shouted altogether" flash. Clearing here means the merge returns null,
 // the watcher's `!props.shouted` guard kicks in, and no rogue bubbles fire.
 watch(
@@ -380,7 +380,7 @@ function dispatchFlight(spec: FlightSpec): void {
 
   if (spec.kind === 'draw') {
     flyCardDraw({
-      fromEl: document.body, // unused — fromRect wins
+      fromEl: document.body, // unused, fromRect wins
       toEl: document.body,
       fromRect: spec.fromRect,
       toRect: spec.toRect,
@@ -411,11 +411,11 @@ function dispatchFlight(spec: FlightSpec): void {
     class="relative w-full h-full flex items-end justify-center"
     data-game-table
   >
-    <!-- 1. The tabletop — perspective-tilted rounded rect at the back of the stacking
+    <!-- 1. The tabletop, perspective-tilted rounded rect at the back of the stacking
          context. Everything else paints on top. -->
     <TableSurface />
 
-    <!-- 2. Turn-indicator wisp (Versus + Playground — anything turn-based). Paints
+    <!-- 2. Turn-indicator wisp (Versus + Playground, anything turn-based). Paints
          above the tabletop but BEFORE the seats / bases (source-order stacking) so
          the pill text & cards remain readable. -->
     <TurnWisp
@@ -424,9 +424,13 @@ function dispatchFlight(spec: FlightSpec): void {
       :enabled="wispEnabled ?? true"
     />
 
-    <!-- Center area (bases + draw pile) -->
+    <!-- Center area (bases + draw pile). XL prompt: lift upward so the human's
+         tall XL prompt at the bottom doesn't cover the deck (especially on
+         mobile, where vertical space is tight). Applies in both modes since
+         either layout's XL prompt overlaps the center region. -->
     <div
-      class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
+      class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 center-piles"
+      :class="{ 'is-xl-prompt': promptSize === 'xl' }"
     >
       <BasesArea
         :game="game"
@@ -475,9 +479,14 @@ function dispatchFlight(spec: FlightSpec): void {
       </div>
     </template>
 
-    <!-- Human seat (bottom, both modes) -->
+    <!-- Human seat (bottom, both modes). In Solo Time Attack the seat is lifted
+         so the combo bar (anchored to the play-area bottom) can sit beneath it
+         without overlapping the hand fan. Lift applies to the WHOLE seat, pill,
+         prompt (incl. XL), and hand all rise together since they share this
+         absolute wrapper. -->
     <div
-      class="absolute left-1/2 bottom-3 -translate-x-1/2"
+      class="absolute left-1/2 -translate-x-1/2"
+      :class="caps.isTimeAttack ? 'bottom-20' : 'bottom-3'"
     >
       <PlayerSeat
         v-if="humanSeat"
@@ -528,7 +537,7 @@ function dispatchFlight(spec: FlightSpec): void {
       :has-dragged="aim.hasDragged"
     />
 
-    <!-- Snap-drawn overlay — inline, anchored to the deck. Shown in any mode that
+    <!-- Snap-drawn overlay, inline, anchored to the deck. Shown in any mode that
          uses prompt stacks (Snap mechanic only exists with the prompt system). -->
     <SnapDrawnOverlay
       v-if="caps.usesPromptStacks && pendingSnapCard"
@@ -542,3 +551,24 @@ function dispatchFlight(spec: FlightSpec): void {
     />
   </div>
 </template>
+
+<style scoped>
+/* XL prompt lifts the center piles (deck + Solo bases / Versus prompt stack)
+ * upward just enough to clear the human's XL prompt at the bottom of the
+ * screen. We use `margin-top` (negative) rather than `transform` so Tailwind's
+ * `-translate-x-1/2 -translate-y-1/2` centering stays intact, overriding
+ * `transform` in scoped CSS can lose the X-centering depending on stylesheet
+ * order. Kept conservative on purpose: too aggressive a lift pushes the deck
+ * above the table edge entirely (especially on portrait viewports). */
+.center-piles {
+  transition: margin-top 220ms cubic-bezier(.2, .7, .2, 1);
+}
+.center-piles.is-xl-prompt {
+  margin-top: -36px;
+}
+@media (max-width: 767px) {
+  .center-piles.is-xl-prompt {
+    margin-top: -24px;
+  }
+}
+</style>

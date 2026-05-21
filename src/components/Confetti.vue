@@ -1,11 +1,11 @@
 <script setup lang="ts">
 /**
- * Subtle, dependency-free confetti — pure CSS animation over absolute-positioned divs.
+ * Subtle, dependency-free confetti, pure CSS animation over absolute-positioned divs.
  * The pieces are sampled once on component mount (so they don't reshuffle on re-render),
  * each falls from above the viewport with a random horizontal drift and rotation.
  *
  * Designed to be mounted on a winning event via v-if; once the parent unmounts the
- * component, the animation stops — no manual cleanup needed.
+ * component, the animation stops, no manual cleanup needed.
  */
 
 const COLORS = [

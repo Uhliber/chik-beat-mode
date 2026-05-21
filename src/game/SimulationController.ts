@@ -5,7 +5,7 @@ import { CHANT_ORDER } from './types';
 import { modeCaps } from './modes';
 
 export type SimStatus = 'idle' | 'opening' | 'running' | 'paused' | 'ended';
-/** SimMode is just GameMode — the controller dispatches based on capability flags
+/** SimMode is just GameMode, the controller dispatches based on capability flags
  *  (hasAIOpponents), not on identity, so any turn-based mode is supported automatically. */
 export type SimMode = GameMode;
 
@@ -13,7 +13,7 @@ export type SimMode = GameMode;
  * AI skill rungs (Versus). Each level is a (mistakeRate, strategyDepth) pair.
  *  - mistakeRate is the probability that an AI player attempts an ILLEGAL play
  *    (wrong direction / wrong beat) on their turn. Only meaningful when strict
- *    prompts is enabled — otherwise illegal plays are hard-rejected by the engine.
+ *    prompts is enabled, otherwise illegal plays are hard-rejected by the engine.
  *  - strategyDepth controls how much thought goes into target/card selection,
  *    irrespective of strict mode.
  */
@@ -36,9 +36,9 @@ const VOLUNTARY_DRAW_RATE: Record<AiSkillLevel, number> = {
 };
 
 export interface SimOptions {
-  speed: number;       // 0.25 .. 4 — multiplier on AI think delays
+  speed: number;       // 0.25 .. 4, multiplier on AI think delays
   baseDelayMs: number; // base AI think delay (Versus)
-  jitter: number;      // 0..1 — fraction of randomized variation around the delay
+  jitter: number;      // 0..1, fraction of randomized variation around the delay
 }
 
 const DEFAULT_OPTS: SimOptions = {
@@ -51,7 +51,7 @@ const DEFAULT_OPTS: SimOptions = {
  * Versus-only orchestrator: schedules AI turns, calls submitVersusAction on the Game,
  * waits, repeats. Solo mode bypasses this entirely (player drives every action).
  *
- * The controller is unaware of the chain rule and prompt resolution — it just polls
+ * The controller is unaware of the chain rule and prompt resolution, it just polls
  * `game.activeSeatIndex` each tick. If the active seat is a human, it parks. If it's
  * AI, it picks a legal action and calls submitVersusAction.
  */
@@ -63,7 +63,7 @@ export class SimulationController {
   private status: SimStatus = 'idle';
   private statusListeners: ((s: SimStatus) => void)[] = [];
   private mode: SimMode = 'versus';
-  /** AI skill level. 3 (Hard) is the default — feels competent without being unfair. */
+  /** AI skill level. 3 (Hard) is the default, feels competent without being unfair. */
   private aiSkill: AiSkillLevel = 3;
   /** Timer for the deliberate delay before an AI commits a pending snap, so the UI
    *  can show the snap card popping up + the chosen target highlighting. */
@@ -81,7 +81,7 @@ export class SimulationController {
   private recitalStepMs = 320;
 
   /**
-   * Pick a Beat Card for an AI during setup. Random unclaimed beat — there's no
+   * Pick a Beat Card for an AI during setup. Random unclaimed beat, there's no
    * meaningful strategy for the AI here since landing odds depend on prompts visible
    * on the table, which don't exist yet.
    */
@@ -97,7 +97,7 @@ export class SimulationController {
 
   /**
    * AI chant-power give-away: pick up to 3 of the highest-count cards from the winner's
-   * hand and target the opponent(s) with the LARGEST hands (more disruptive — adds cards
+   * hand and target the opponent(s) with the LARGEST hands (more disruptive, adds cards
    * to whoever is least likely to be near winning). Splits the cards 2-1 if there are at
    * least two opponents available, else all to one. If the winner has fewer than 3 cards,
    * gives what they have.
@@ -107,7 +107,7 @@ export class SimulationController {
     if (!winner) return [];
     const cardCount = Math.min(3, winner.cardCount);
     if (cardCount === 0) return [];
-    // Highest counts first — most disruptive when added to opponent's hand.
+    // Highest counts first, most disruptive when added to opponent's hand.
     const sortedCards = [...winner.hand].sort((a, b) => b.count - a.count);
     const giftCards = sortedCards.slice(0, cardCount).map((c) => c.id);
 
@@ -131,7 +131,7 @@ export class SimulationController {
 
   /**
    * Pick which seat an AI player should snap-play onto. Strict mode allows any non-self
-   * target — use skill to pick strategically (leader = fewest cards). Standard mode is
+   * target, use skill to pick strategically (leader = fewest cards). Standard mode is
    * left-or-right; high skill picks the neighbour with the fewest cards.
    */
   private chooseSnapTarget(seatIdx: number): number {
@@ -236,7 +236,7 @@ export class SimulationController {
   submitVersusHumanAction(playerId: PlayerId, action: VersusAction): void {
     this.game.submitVersusAction(playerId, action);
     if (this.game.winnerId) { this.setStatus('ended'); return; }
-    // After a human action, the active seat may now be AI — schedule a tick to handle it.
+    // After a human action, the active seat may now be AI, schedule a tick to handle it.
     this.scheduleNext();
   }
 
@@ -264,11 +264,11 @@ export class SimulationController {
   private tick(): void {
     if (this.status !== 'running' || this.game.winnerId) return;
 
-    // Chant Trigger cooldown — once a trigger fires, the engine resolves the chant
+    // Chant Trigger cooldown, once a trigger fires, the engine resolves the chant
     // power chain immediately (including the no-winner path where setActiveSeat
     // advances back to the receiver), but the UI is still mid-recital. PARK the AI
     // until the view layer signals the trigger overlay has cleared via
-    // endChantTriggerWindow(). pendingChantPower is handled separately below — that
+    // endChantTriggerWindow(). pendingChantPower is handled separately below, that
     // branch fires its own timer that already waits for the recital + tail.
     if (this.game.chantTriggerCoolingDown && !this.game.pendingChantPower) {
       // Re-check in a moment; the UI will release the gate when the overlay tears down.
@@ -276,18 +276,18 @@ export class SimulationController {
       return;
     }
 
-    // Beat selection phase — AI auto-picks visibly after a short delay; humans pick via UI.
+    // Beat selection phase, AI auto-picks visibly after a short delay; humans pick via UI.
     if (this.game.setupPhase === 'beat-selection') {
       const pickerId = this.game.currentBeatPicker();
       if (!pickerId) return; // selection completed between ticks
       const picker = this.game.players.find((p) => p.id === pickerId);
       if (!picker) return;
-      if (!picker.isAI) return; // human's pick — UI submits
+      if (!picker.isAI) return; // human's pick, UI submits
       if (this.pendingBeatPickTimer !== null) return; // already scheduled
       this.pendingBeatPickTimer = window.setTimeout(() => {
         this.pendingBeatPickTimer = null;
         if (this.game.setupPhase !== 'beat-selection' || this.game.currentBeatPicker() !== pickerId) {
-          // State changed under us — just re-tick.
+          // State changed under us, just re-tick.
           this.scheduleNext();
           return;
         }
@@ -298,7 +298,7 @@ export class SimulationController {
       return;
     }
 
-    // Pending Chant Power — winner must give up to 3 cards. Humans use the modal; AI
+    // Pending Chant Power, winner must give up to 3 cards. Humans use the modal; AI
     // auto-resolves: pick highest-count cards from hand and target opponents with the
     // largest hands. Delay matches the on-screen recital so the AI doesn't pre-empt
     // the chant animation.
@@ -342,7 +342,7 @@ export class SimulationController {
         }, 900);
         return;
       }
-      // Human's pending — park and wait for the UI to submit.
+      // Human's pending, park and wait for the UI to submit.
       return;
     }
 
@@ -350,7 +350,7 @@ export class SimulationController {
     if (seat < 0 || seat >= this.game.players.length) return;
     const player = this.game.players[seat];
 
-    // Human seat — just park. Their action via submitVersusHumanAction will re-kick.
+    // Human seat, just park. Their action via submitVersusHumanAction will re-kick.
     if (!player.isAI) return;
 
     // AI decision: try to play; otherwise draw.
@@ -373,7 +373,7 @@ export class SimulationController {
   private chooseAIAction(playerId: PlayerId, seat: number): VersusAction {
     const player = this.game.players.find((p) => p.id === playerId)!;
 
-    // Pre-open: only Halo-Halo is legal. (Mistake path can't trigger here — wrong
+    // Pre-open: only Halo-Halo is legal. (Mistake path can't trigger here, wrong
     // moves pre-open are silently rejected by the engine regardless of strict mode.)
     if (!this.game.opened) {
       const halo = player.hand.find((c) => c.isHaloHalo);
@@ -386,7 +386,7 @@ export class SimulationController {
 
     const skill = this.aiSkill;
 
-    // Mistake roll. Only meaningful with strict prompts on — otherwise the engine
+    // Mistake roll. Only meaningful with strict prompts on, otherwise the engine
     // hard-rejects illegal plays and the AI's turn would be wasted to no effect.
     if (this.game.strictPromptsEnabled && this.rng() < MISTAKE_RATE[skill]) {
       const mistake = this.chooseMistakeAction(player, seat);
@@ -400,7 +400,7 @@ export class SimulationController {
   /**
    * Pick an intentionally illegal play: any card paired with a target that violates
    * either the beat or the prompt direction. Returns null only if every (card, target)
-   * combination is rulebook-legal (very rare — e.g. Free prompt + multiple beat-matching
+   * combination is rulebook-legal (very rare, e.g. Free prompt + multiple beat-matching
    * cards in hand).
    */
   private chooseMistakeAction(player: import('./Player').Player, seat: number): VersusAction | null {
@@ -432,7 +432,7 @@ export class SimulationController {
 
     for (const card of player.hand) {
       if (!card.matchesBeat(beat)) continue;
-      // Always use rulebook-legal targets for the AI's smart path — strict mode's
+      // Always use rulebook-legal targets for the AI's smart path, strict mode's
       // widening is for the human's wheel, not for AI strategy.
       const legalTargets = this.game.legalTargetSeats(seat, card, true);
       if (legalTargets.length === 0) continue;

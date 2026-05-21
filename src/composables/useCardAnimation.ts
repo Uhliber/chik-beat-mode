@@ -12,7 +12,7 @@ export interface SlamFlightParams {
   cardId: string;
   fromEl: HTMLElement;
   toEl: HTMLElement;
-  /** Optional pre-captured rects — wins over fromEl/toEl when provided. Use these when the
+  /** Optional pre-captured rects, wins over fromEl/toEl when provided. Use these when the
    *  source element will re-layout (e.g. hand-fan re-centres) before the animation starts. */
   fromRect?: DOMRect;
   toRect?: DOMRect;
@@ -95,7 +95,7 @@ function buildStage(faceUrl: string, backUrl: string, startCx: number, startCy: 
 
 /**
  * Fly a card from source to target. Larger clone + slower arc + bigger apex than the
- * v0.7 default — v1.0 has more cross-table travel and the prior 0.55s/64px clone was
+ * v0.7 default, v1.0 has more cross-table travel and the prior 0.55s/64px clone was
  * easy to miss against a busy table.
  *
  * Optional `fromRect`/`toRect` let callers pin the geometry at event-emission time so
@@ -168,7 +168,7 @@ export interface DrawFlightParams {
   faceUrl?: string;
   backUrl: string;
   speed: number;
-  /** True when the drawer should see what they drew — flips back→face mid-flight.
+  /** True when the drawer should see what they drew, flips back→face mid-flight.
    *  False for AI draws and for Fetch-from-hand (peek would spoil opponent's hand). */
   revealFace?: boolean;
   onComplete?: () => void;

@@ -4,7 +4,7 @@ import type { GameEvent } from '@/game/types';
 
 const props = defineProps<{
   events: GameEvent[];
-  /** Suppress the inner "Event Log" title — used when the parent container (e.g. the
+  /** Suppress the inner "Event Log" title, used when the parent container (e.g. the
    *  mobile bottom sheet) already provides its own header. */
   hideTitle?: boolean;
 }>();
@@ -28,10 +28,10 @@ function describe(e: GameEvent): string {
     case 'versusTurnChanged': return `Turn → ${e.playerId}${e.viaChain ? ' (chain)' : ''}`;
     case 'versusChainStarted': return `Chain: seat ${e.sourceSeatIndex} bounces back`;
     case 'versusChainEnded':   return `Chain ended (${e.reason})`;
-    case 'versusStopConverted': return 'Draw pile empty — Stops convert to Left/Right';
+    case 'versusStopConverted': return 'Draw pile empty, Stops convert to Left/Right';
     case 'versusBeatPickerChanged': return e.seatIndex === null ? 'Beat selection complete' : `Beat picker → seat ${e.seatIndex}`;
     case 'versusBeatClaimed': return `Seat ${e.seatIndex} claimed beat: ${e.beat}`;
-    case 'versusSetupCompleted': return 'Setup complete — play begins';
+    case 'versusSetupCompleted': return 'Setup complete, play begins';
     case 'versusChantTriggered': {
       if (e.winnerSeatIndex !== null) return `Chant Trigger! Total ${e.total} → ${e.landedBeat} (seat ${e.winnerSeatIndex} wins)`;
       return `Chant Trigger! Total ${e.total} → ${e.landedBeat}`;

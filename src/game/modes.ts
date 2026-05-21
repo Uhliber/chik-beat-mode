@@ -8,7 +8,7 @@
  *
  * Capability flags describe ENGINE/UX BEHAVIOUR, not arbitrary feature toggles.
  * If two modes happen to share a UI element today but might diverge later, give
- * them separate flags — that's the whole point of this registry.
+ * them separate flags, that's the whole point of this registry.
  */
 
 import type { GameMode } from './types';

@@ -82,7 +82,7 @@ const emit = defineEmits<{ (e: 'close'): void }>();
 .done-pill:hover { background: var(--color-cream-soft); }
 .done-pill:active { transform: scale(0.96); }
 
-/* Themed scrollbar — coral-deep at low alpha against the cream panel background.
+/* Themed scrollbar, coral-deep at low alpha against the cream panel background.
  * Matches the muted vibe of the rest of the settings UI; the default browser scrollbar
  * is far too bright on this surface. Covers Firefox (scrollbar-* properties) and WebKit
  * (::-webkit-scrollbar pseudos). */

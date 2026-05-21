@@ -1,15 +1,15 @@
 <script setup lang="ts">
 /**
  * Visual layer for the Chant Trigger. Borrows the spotlight technique used by
- * TutorialOverlay: a full-viewport SVG `<path>` with `fill-rule="evenodd"` whose
+ * TutorialOverlay: a full-viewport SVG `<path>` with `fill-rule="nonzero"` whose
  * outer rectangle is punched out by inner rounded rectangles around the elements
  * we want to keep visible. The punched regions render at full brightness/color
  * (no filter mucking with chant-word tints); everything else sits behind a 0.62-
  * opacity dark wash.
  *
  * Spotlighted targets:
- *   - `.lottery-banner` (self) — the current chant beat readout
- *   - `[data-chant-spotlight]` — each seat's count-spotlight wrapper
+ *   - `.lottery-banner` (self), the current chant beat readout
+ *   - `[data-chant-spotlight]`, each seat's count-spotlight wrapper
  *
  * Recomputed on mount, on currentBeat change (recital may have animated new
  * spotlights into view), and on window resize / orientationchange.
@@ -21,7 +21,7 @@ import type { ChantWord } from '@/game/types';
 const props = defineProps<{
   /** True while a Chant Trigger is in flight. */
   active: boolean;
-  /** The beat being spoken at the current recital step. Drives the lottery banner —
+  /** The beat being spoken at the current recital step. Drives the lottery banner -
    *  cycles through beats live during the recital, then naturally freezes on the
    *  LAST step's beat (which is the landed beat). */
   currentBeat: ChantWord | null;
@@ -29,7 +29,7 @@ const props = defineProps<{
    *  flip animation re-fires even when consecutive steps land on the same beat
    *  word (e.g. closing chik → opening chik). */
   tick?: number;
-  /** True after a no-winner chant has landed — show the "No beat owner" subtitle. */
+  /** True after a no-winner chant has landed, show the "No beat owner" subtitle. */
   noWinnerRevealed?: boolean;
 }>();
 
@@ -82,11 +82,11 @@ function computeHoles(): void {
   // Lottery banner (this component's own element).
   const banner = rectHole(bannerEl.value);
   if (banner) out.push(banner);
-  // Per-seat count spotlights — circular punches sized to include the orbiting
+  // Per-seat count spotlights, circular punches sized to include the orbiting
   // ChantPips (which live INSIDE the spotlight wrapper and extend its bounding
   // box). The badge + ring share one hole.
   //
-  // Speech bubbles deliberately AREN'T spotlit — they sit behind the dim wash
+  // Speech bubbles deliberately AREN'T spotlit, they sit behind the dim wash
   // and pop briefly per recital step as ambient flavor, without competing with
   // the bright spotlights for attention.
   document.querySelectorAll('[data-chant-spotlight]').forEach((el) => {
@@ -132,7 +132,7 @@ watch(() => props.active, async () => {
   // Two-frame defer: the count spotlights have a CSS transform transition (380ms),
   // but their final-state rect is what we want to anchor to. requestAnimationFrame
   // chained twice lets the transition start, then settle to its final geometry
-  // before we measure — without waiting the full transition duration.
+  // before we measure, without waiting the full transition duration.
   requestAnimationFrame(() => requestAnimationFrame(computeHoles));
 });
 watch(() => props.currentBeat, async () => {
@@ -147,6 +147,11 @@ watch(() => props.currentBeat, async () => {
 const maskPath = computed(() => {
   const vw = viewport.value.width;
   const vh = viewport.value.height;
+  // Outer rect wound CLOCKWISE (right → down → left → up). Hole subpaths below
+  // wind COUNTER-CLOCKWISE so the nonzero fill rule treats them as subtractions
+  // — and crucially, overlapping holes UNION rather than re-filling at the
+  // intersection (which is what evenodd does, producing a dark patch where two
+  // count spotlights touch).
   let path = `M0,0 H${vw} V${vh} H0 Z`;
   for (const h of holes.value) {
     if (h.kind === 'rect') {
@@ -158,24 +163,26 @@ const maskPath = computed(() => {
       const innerH = bottom - top;
       if (innerW <= 0 || innerH <= 0) continue;
       const radius = Math.min(RECT_RADIUS, innerW / 2, innerH / 2);
+      // Counter-clockwise: top-left → bottom-left → bottom-right → top-right →
+      // close. Each rounded corner uses a Q that turns the opposite way from
+      // the clockwise version.
       path += ' ' + [
         `M${left + radius},${top}`,
-        `H${left + innerW - radius}`,
-        `Q${left + innerW},${top} ${left + innerW},${top + radius}`,
+        `Q${left},${top} ${left},${top + radius}`,
         `V${top + innerH - radius}`,
-        `Q${left + innerW},${top + innerH} ${left + innerW - radius},${top + innerH}`,
-        `H${left + radius}`,
-        `Q${left},${top + innerH} ${left},${top + innerH - radius}`,
+        `Q${left},${top + innerH} ${left + radius},${top + innerH}`,
+        `H${left + innerW - radius}`,
+        `Q${left + innerW},${top + innerH} ${left + innerW},${top + innerH - radius}`,
         `V${top + radius}`,
-        `Q${left},${top} ${left + radius},${top}`,
+        `Q${left + innerW},${top} ${left + innerW - radius},${top}`,
         `Z`,
       ].join(' ');
     } else {
-      // Circle hole: SVG's "two semicircle arcs" trick. Start at the right edge,
-      // sweep half a circle to the left edge, sweep the other half back. Both arcs
-      // are direction-agnostic for evenodd punch-out purposes.
+      // Circle hole: two semicircle arcs winding COUNTER-CLOCKWISE (sweep flag
+      // = 0). Opposite winding to the outer rect so nonzero subtracts; with
+      // matching winding, overlapping holes would re-fill where they cross.
       if (h.r <= 0) continue;
-      path += ` M${h.cx + h.r},${h.cy} A${h.r},${h.r} 0 0,1 ${h.cx - h.r},${h.cy} A${h.r},${h.r} 0 0,1 ${h.cx + h.r},${h.cy} Z`;
+      path += ` M${h.cx + h.r},${h.cy} A${h.r},${h.r} 0 0,0 ${h.cx - h.r},${h.cy} A${h.r},${h.r} 0 0,0 ${h.cx + h.r},${h.cy} Z`;
     }
   }
   return path;
@@ -192,7 +199,7 @@ const maskPath = computed(() => {
     <div v-if="active" class="chant-overlay" aria-hidden="true">
       <!-- Spotlight mask: full-viewport dim with rounded-rect punch-outs around the
            banner + every count spotlight. Like the tutorial overlay, this preserves
-           the highlighted elements' true colors — the dim only paints the wash. -->
+           the highlighted elements' true colors, the dim only paints the wash. -->
       <svg
         class="chant-spotlight-mask"
         :width="'100%'"
@@ -200,13 +207,13 @@ const maskPath = computed(() => {
         :viewBox="`0 0 ${viewport.width} ${viewport.height}`"
         preserveAspectRatio="none"
       >
-        <path :d="maskPath" fill="rgba(20, 14, 10, 0.62)" fill-rule="evenodd" />
+        <path :d="maskPath" fill="rgba(20, 14, 10, 0.62)" fill-rule="nonzero" />
       </svg>
 
       <!-- Lottery banner: a single big beat word that re-renders per recital step.
            The :key on the inner span uses the per-step `tick` (not the word) so the
            flip animation re-fires even when consecutive steps land on the same word
-           — chik → chik used to silently skip the transition because the key didn't
+          , chik → chik used to silently skip the transition because the key didn't
            change. Once the recital ends, this freezes on whatever the final beat
            was (which IS the landed beat). -->
       <div v-if="currentBeat" ref="bannerEl" class="lottery-banner" :class="beatWordClass">
@@ -239,7 +246,7 @@ const maskPath = computed(() => {
   pointer-events: none;
 }
 
-/* Lottery banner — single beat word, large, centered over the table (overlapping
+/* Lottery banner, single beat word, large, centered over the table (overlapping
  * the deck area). Sits ABOVE the mask (the mask punches a hole around it via the
  * bannerEl ref) so its colors render true regardless of the wash. Centering at the
  * table center also leaves the top-of-screen seat (P3 on radial layouts) clear so
@@ -260,6 +267,22 @@ const maskPath = computed(() => {
   animation: banner-in 360ms cubic-bezier(.2, .8, .2, 1);
   min-width: 200px;
   min-height: 60px;
+}
+/* Mobile: park the banner under the chant ticker (top of screen) instead of
+ * over the table center. On phones the table is short and the banner ends up
+ * sitting on top of the deck / P1 prompt; tucking it up high keeps the table
+ * clear so the count spotlights + recital bubbles read uninterrupted. The
+ * mask resolver still tracks bannerEl's live position, so the punch-out hole
+ * follows the banner here too. The ticker pill is ~64px tall + ~120px top
+ * inset on mobile, so 180px clears it. */
+@media (max-width: 767px) {
+  .lottery-banner {
+    top: 180px;
+    transform: translate(-50%, 0);
+    padding: 8px 22px;
+    min-width: 160px;
+    min-height: 48px;
+  }
 }
 .lottery-subtitle {
   margin-top: 4px;
@@ -286,7 +309,7 @@ const maskPath = computed(() => {
   to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
 }
 
-/* Per-step lottery transition — slot-machine style flip. */
+/* Per-step lottery transition, slot-machine style flip. */
 .lottery-enter-active,
 .lottery-leave-active {
   transition: transform 160ms cubic-bezier(.2, .8, .2, 1), opacity 140ms ease;

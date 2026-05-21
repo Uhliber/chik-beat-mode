@@ -12,17 +12,17 @@ import type { ChantWord } from './types';
  *   - `virtualPos`: a monotonic counter (increments on advance) that never wraps. The view
  *     layer uses this to render a smoothly-sliding chant ticker.
  *
- * v1.0 removed the Reverse card and with it the reverse-chant mechanic — the chant only
+ * v1.0 removed the Reverse card and with it the reverse-chant mechanic, the chant only
  * ever moves forward now.
  */
 export const BEAT_ORDER: readonly ChantWord[] = [
-  'chik',  // 0 — opening
+  'chik',  // 0, opening
   'wally', // 1
   'hindo', // 2
   'pop',   // 3
   'tambo', // 4
   'riki',  // 5
-  'chik',  // 6 — closing (loops back to 0)
+  'chik',  // 6, closing (loops back to 0)
 ] as const;
 
 export class Chant {

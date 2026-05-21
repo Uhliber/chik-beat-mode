@@ -5,7 +5,7 @@
  * current picker's available choices are interactive. The overlay vanishes once setup
  * is complete (`setupPhase` flips to 'play').
  *
- * Beat ownership doesn't pin to specific seat positions — the overlay just renders the
+ * Beat ownership doesn't pin to specific seat positions, the overlay just renders the
  * six chant words. Each player picks one (or two in 3p) and the dot row on their seat
  * shows what they took.
  */
@@ -17,13 +17,13 @@ const props = defineProps<{
   visible: boolean;
   /** Map of chant word → seat index that owns the Beat Card. -1 = unclaimed. */
   beatOwners: Map<ChantWord, number>;
-  /** Player IDs by seat index — used to label the owner-pill on claimed beats. */
+  /** Player IDs by seat index, used to label the owner-pill on claimed beats. */
   playerLabels: string[];
   /** Player.isAI flags by seat index. */
   playerAi: boolean[];
   /** Seat index whose pick is currently up. -1 / null = none (overlay can vanish). */
   currentPickerSeat: number | null;
-  /** True when the currentPickerSeat is the human — chips are clickable. */
+  /** True when the currentPickerSeat is the human, chips are clickable. */
   interactive: boolean;
 }>();
 

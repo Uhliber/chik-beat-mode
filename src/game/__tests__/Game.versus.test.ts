@@ -105,7 +105,7 @@ describe('Game (Versus)', () => {
 
     // Now give the active player a Right Wally and force a Right prompt on them by playing
     // a Right Wally on them from elsewhere... easier: just check what legalTargetSeats says
-    // for a Right card when they currently have Free (Halo-Halo) — Free should let them
+    // for a Right card when they currently have Free (Halo-Halo), Free should let them
     // hit any non-self seat.
     const active = g.players[g.activeSeatIndex];
     const wally = injectCard(g, active.id, (c) => c.word === 'wally') ?? active.hand.find((c) => c.word === 'wally')!;
@@ -122,7 +122,7 @@ describe('Game (Versus)', () => {
  * OTHER way around the array. So from seat 0's perspective the right neighbor is
  * seat n-1 (east on screen), NOT seat 1 (west on screen).
  */
-describe('Game (Versus) — seat direction matches player perspective', () => {
+describe('Game (Versus), seat direction matches player perspective', () => {
   function setupFourPlayerOpened(): Game {
     const g = new Game(seededRng(11));
     g.setupVersus(4); g.autoCompleteBeatSelection();
@@ -233,7 +233,7 @@ describe('Game (Versus) — seat direction matches player perspective', () => {
  * Strict-prompts house rule + Snap-drawn pending direction. Both are off-by-default
  * extensions that the user toggles via settings.
  */
-describe('Game (Versus) — strict prompts house rule', () => {
+describe('Game (Versus), strict prompts house rule', () => {
   function setupForStrict(): Game {
     const g = new Game(seededRng(31));
     g.setupVersus(4); g.autoCompleteBeatSelection();
@@ -296,7 +296,7 @@ describe('Game (Versus) — strict prompts house rule', () => {
     const halo = opener.hand.find((c) => c.isHaloHalo)!;
     g.submitVersusAction(opener.id, { type: 'play', cardId: halo.id, targetSeatIndex: 3 });
     // Now active = seat 3; have seat 3 play a Right card onto seat 0. (Seat 0 is seat 3's
-    // right neighbour — neighborSeat for radial is CCW from the seated POV.) Find any
+    // right neighbour, neighborSeat for radial is CCW from the seated POV.) Find any
     // beat-matching Right card in seat 3's hand or pull one in.
     const beat = g.chant.current;
     let rightCard = g.players[3].hand.find((c) => c.prompt === 'right' && c.word === beat);
@@ -329,13 +329,13 @@ describe('Game (Versus) — strict prompts house rule', () => {
       targetSeatIndex: 1, // wrong direction
     });
     expect(r.type).toBe('rejected');
-    // The penalty draw should have triggered the chain bounce — seat 3 (the chain
+    // The penalty draw should have triggered the chain bounce, seat 3 (the chain
     // source) should now be active, NOT seat 1 (clockwise of penalty player).
     expect(g.activeSeatIndex).toBe(3);
   });
 });
 
-describe('Game (Versus) — drawn-Snap parks for direction', () => {
+describe('Game (Versus), drawn-Snap parks for direction', () => {
   it('drawing a Snap matching the current beat sets pendingSnapDraw and does not auto-play', () => {
     const g = new Game(seededRng(53));
     g.setupVersus(4); g.autoCompleteBeatSelection();
@@ -366,7 +366,7 @@ describe('Game (Versus) — drawn-Snap parks for direction', () => {
         if (idx >= 0) { snap = p.hand.splice(idx, 1)[0]; break; }
       }
     }
-    if (!snap) throw new Error('Wally-Snap not present in this deal — seed regression?');
+    if (!snap) throw new Error('Wally-Snap not present in this deal, seed regression?');
     g.drawPile.push(snap);
     const snapId = snap.id;
 
@@ -382,7 +382,7 @@ describe('Game (Versus) — drawn-Snap parks for direction', () => {
   });
 });
 
-describe('Game (Playground) — sandbox setup', () => {
+describe('Game (Playground), sandbox setup', () => {
   it('deals the requested hand size with one Chik per player and one Halo-Halo overall', () => {
     const g = new Game(seededRng(91));
     g.setupPlayground({
@@ -479,7 +479,7 @@ describe('Game (Playground) — sandbox setup', () => {
   });
 
   // Statistical sanity: the Fetch drain picks a UNIFORMLY RANDOM card from the owner's
-  // hand. The user reported a hunch that it always takes "the last drawn card" — this
+  // hand. The user reported a hunch that it always takes "the last drawn card", this
   // test runs many iterations against a 6-card owner hand and asserts no position is
   // disproportionately drained.
   it('Fetch drain is uniformly random across the owner hand', () => {

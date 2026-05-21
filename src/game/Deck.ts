@@ -26,9 +26,9 @@ export function countFor(word: ChantWord, prompt: CardPrompt, dupIndex = 0): num
 }
 
 /**
- * Solo deck — 56 cards using only Left/Right/Free prompts.
+ * Solo deck, 56 cards using only Left/Right/Free prompts.
  *
- * Counts are assigned for art-set parity even though Solo doesn't read them — the same
+ * Counts are assigned for art-set parity even though Solo doesn't read them, the same
  * Card class is shared and assetPath would otherwise point at `…-undefined.png`. Pulls
  * from the same per-word count table; for words/prompts with two counts (Right/Left)
  * we cycle through the array; for single-count prompts (Free) we repeat.
@@ -59,7 +59,7 @@ export function buildSoloDeck(): Card[] {
   // Free: Halo-Halo Chik + 3 Chant Chik (free) + 2 each of the others.
   //
   // The 3 generic Free Chik slots use the CHANT CHIK variant because there is no
-  // `free-chik-${count}.png` asset in /new/ — only the Halo-Halo card carries a
+  // `free-chik-${count}.png` asset in /new/, only the Halo-Halo card carries a
   // Free + Chik (regular) face (`free-chik-halohalo-5.png`). Without this swap the
   // remaining 3 Free Chik cards would 404 their image. Solo mode doesn't use the
   // Chant Trigger so isChantChik is purely visual here.
@@ -76,7 +76,7 @@ export function buildSoloDeck(): Card[] {
 }
 
 /**
- * Versus deck — canonical v1.2 56-card distribution. Half of the 16 Chik cards are
+ * Versus deck, canonical v1.2 56-card distribution. Half of the 16 Chik cards are
  * Chant Chik variants (8 each); per prompt, the regular/Chant-Chik split is even so
  * the rulebook's per-prompt count distribution (Right/Left: 4 and 6; others: 5) is
  * preserved across both variants.
@@ -108,7 +108,7 @@ export function buildVersusDeck(): Card[] {
       const id = isHalo ? 'halohalo-chik' : `${prompt}-chik-${i}`;
       cards.push(new Card({ id, prompt, word: 'chik', isHaloHalo: isHalo, count: countFor('chik', prompt, i) }));
     }
-    // Chant Chik bucket — same counts, isChantChik = true.
+    // Chant Chik bucket, same counts, isChantChik = true.
     for (let i = 0; i < chikPerVariant[prompt]; i++) {
       cards.push(new Card({
         id: `${prompt}-chant-chik-${i}`,

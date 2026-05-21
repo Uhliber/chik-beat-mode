@@ -1,6 +1,6 @@
 /**
  * Tutorial completion persistence. Mirrors the load/save pattern useGame uses for the
- * solo best time and other Capacitor Preferences — fire-and-forget writes (never throw
+ * solo best time and other Capacitor Preferences, fire-and-forget writes (never throw
  * from a winner-handler path), async reads that fall back to `false` on any error.
  */
 
@@ -8,6 +8,11 @@ import { Preferences } from '@capacitor/preferences';
 
 const SOLO_KEY = 'chik-tutorial-solo-completed';
 const VERSUS_KEY = 'chik-tutorial-versus-completed';
+
+/** All persisted tutorial-completion keys. Re-exported so the dev `chikReset`
+ *  helper (and any future bulk-clear utility) can wipe them without duplicating
+ *  the key strings. Keep this in sync if new tutorial modes are added. */
+export const TUTORIAL_PREF_KEYS: readonly string[] = [SOLO_KEY, VERSUS_KEY];
 
 export type TutorialMode = 'solo' | 'versus';
 

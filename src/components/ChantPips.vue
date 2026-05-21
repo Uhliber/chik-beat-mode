@@ -22,7 +22,7 @@ const props = defineProps<{
   lit: number;
   /** True while a Chant Trigger is in flight (otherwise hidden). */
   active: boolean;
-  /** Step counter that began at the start of THIS seat's recital run — used to derive
+  /** Step counter that began at the start of THIS seat's recital run, used to derive
    *  which beat word each lit pip represents. The chant beat advances monotonically
    *  across the whole recital (not just per seat), so we need the global step offset
    *  at the moment this seat's run started. */
@@ -53,7 +53,7 @@ const pips = computed<Pip[]>(() => {
     // Slot-based arc: imagine a fixed 10-slot ring (36° per slot) and only render
     // the first `count` slots, centered on the TOP of the ring (which faces the
     // table center on every seat thanks to the seat-rotation layout). Pip 0 is
-    // the leftmost slot of the arc, pip N-1 is the rightmost — recital lighting
+    // the leftmost slot of the arc, pip N-1 is the rightmost, recital lighting
     // walks left → right naturally.
     //
     // Polar convention here: angle = 0° → top, increasing CW. Convert to screen:
@@ -81,7 +81,7 @@ const pips = computed<Pip[]>(() => {
     }
     return out;
   }
-  // Default shallow arc — kept for the prior layout, unused by current PlayerSeat.
+  // Default shallow arc, kept for the prior layout, unused by current PlayerSeat.
   const spreadDeg = Math.min(140, 18 * n);
   const radius = Math.max(40, 14 * n);
   for (let i = 0; i < n; i++) {
@@ -125,7 +125,7 @@ const pips = computed<Pip[]>(() => {
 </template>
 
 <style scoped>
-/* The container has no size of its own — pips are absolutely positioned via translate
+/* The container has no size of its own, pips are absolutely positioned via translate
  * so they fan around a baseline anchored to the parent (PlayerSeat). The chant
  * spotlight (SVG mask in ChantTriggerOverlay) punches a hole around each seat that
  * surfaces these pips above the dim backdrop without recoloring them. */

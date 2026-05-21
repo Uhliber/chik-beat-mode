@@ -33,6 +33,7 @@ import {
   loadDrawKeyEnabled,
   RECITAL_STEP_MS_BY_SPEED,
   loadSoloBestTime,
+  loadSoloBestStreak,
   loadStrictPrompts,
   loadWispEnabled,
   saveAiSkill,
@@ -45,6 +46,7 @@ import {
   saveChantRecitalSpeed,
   saveDrawKeyEnabled,
   saveSoloBestTime,
+  saveSoloBestStreak,
   saveStrictPrompts,
   saveWispEnabled,
   type PromptSize,
@@ -67,7 +69,7 @@ export interface FlightSpec {
   faceUrl: string;
   fromRect: DOMRect;
   toRect: DOMRect;
-  /** For draw flights — flip back→face mid-flight so the drawer sees their card. */
+  /** For draw flights, flip back→face mid-flight so the drawer sees their card. */
   revealFace?: boolean;
   /** Shout-the-word state: the word + the seat that shouted it. Source-only events. */
   shoutWord?: ChantWord;
@@ -80,6 +82,13 @@ export interface FlightSpec {
 
 export interface UseGameOptions {
   initialMode?: SimMode;
+  /** When true, skip every `loadXxx()` call so all display + gameplay prefs stay
+   *  at their canonical defaults. Used by the tutorial so a player who's set
+   *  e.g. XL prompts or strict mode in their normal play gets a clean baseline
+   *  experience while learning. Setters still persist normally if the tutorial
+   *  ever opens the settings panel, we don't want to silently revert user
+   *  changes, we just don't want to inherit them on entry. */
+  skipPrefsLoad?: boolean;
 }
 
 export interface GameViewState {
@@ -92,6 +101,9 @@ const MAX_LOG = 50;
 
 export function useGame(opts: UseGameOptions = {}) {
   const initialMode: SimMode = opts.initialMode ?? 'versus';
+  /** When true, all `load*()` calls below are no-ops so every pref-driven ref
+   *  stays at its canonical default. Used by the tutorial, see UseGameOptions. */
+  const skipLoad = !!opts.skipPrefsLoad;
 
   const game = shallowRef<Game>(new Game());
   const controller = shallowRef<SimulationController>(new SimulationController(game.value));
@@ -118,8 +130,21 @@ export function useGame(opts: UseGameOptions = {}) {
   const soloBestTimeMs = ref<number | null>(null);
   const soloLastFinalMs = ref<number | null>(null);
   const soloIsNewBest = ref(false);
-  void loadSoloBestTime().then((ms) => {
+  if (!skipLoad) void loadSoloBestTime().then((ms) => {
     if (ms !== null) soloBestTimeMs.value = ms;
+  });
+
+  /** All-time highest streak across every Solo Time Attack run. Tracked
+   *  independently of best time so a player who's still grinding toward their
+   *  fastest run can watch this number grow. Updated live the moment the
+   *  current streak surpasses it (no need to wait for cash-in). */
+  const soloBestStreak = ref<number | null>(null);
+  /** Set when the CURRENT run produced a fresh personal best streak. Surfaced
+   *  in the winner overlay so a slow-time-but-record-combo run still feels
+   *  like a win. Cleared by `initGame`. */
+  const soloIsNewBestStreak = ref(false);
+  if (!skipLoad) void loadSoloBestStreak().then((n) => {
+    if (n !== null) soloBestStreak.value = n;
   });
 
   // ---- Solo combo-streak state ----
@@ -128,7 +153,7 @@ export function useGame(opts: UseGameOptions = {}) {
   // STREAK_BAR_MS wall-clock time. When the bar empties (or a penalty hits) the
   // accumulated streak converts to a time credit and the streak resets.
   //
-  // Drawing a card is NEUTRAL — the bar keeps depleting but the streak doesn't
+  // Drawing a card is NEUTRAL, the bar keeps depleting but the streak doesn't
   // break. Penalties break the streak immediately. The bonus pays out in clean
   // 1-second tiers (no decimals); the threshold ladder rewards sustained play
   // without runaway bonuses:
@@ -139,7 +164,7 @@ export function useGame(opts: UseGameOptions = {}) {
   //   streak 10+  → −3s (max)
   const STREAK_BAR_MS = 3000;
   /** Time credit added back to the streak bar when the player draws LEGALLY from the
-   *  deck. Compensates for the "search the hand for the next playable card" pause —
+   *  deck. Compensates for the "search the hand for the next playable card" pause -
    *  without it, a streak would silently die during a fishing turn. 400ms = enough
    *  to survive 2-3 consecutive draws but not so much that the bar feels free. */
   const STREAK_DRAW_GRACE_MS = 400;
@@ -148,15 +173,49 @@ export function useGame(opts: UseGameOptions = {}) {
   const soloStreakBarMs = ref(0);
   let soloStreakRafId: number | null = null;
   let soloStreakLastTickAt = 0;
-  /** Most recent streak bonus awarded — drives a one-shot bubble in PlayView. */
+  /** Most recent streak bonus awarded, drives a one-shot bubble in PlayView. */
   const soloLastStreakBonus = ref<{ id: number; streak: number; bonusMs: number } | null>(null);
   let nextStreakBonusId = 1;
+  /** Random rotation (±degrees) applied to the combo ×N label, refreshed on every
+   *  streak increment so each successive slam feels alive. ±10° keeps it punchy
+   *  without making the number unreadable. */
+  const soloStreakTiltDeg = ref(0);
 
   function computeStreakBonus(streak: number): number {
     if (streak < 3) return 0;
     if (streak < 6) return 1000;
     if (streak < 10) return 2000;
     return 3000;
+  }
+
+  /** Streak tier 0..3, matching the bonus ladder (none / -1s / -2s / -3s). Drives
+   *  combo-label sizing (PlayView) and slam-sound pitch (below). */
+  function computeStreakTier(streak: number): 0 | 1 | 2 | 3 {
+    if (streak < 3) return 0;
+    if (streak < 6) return 1;
+    if (streak < 10) return 2;
+    return 3;
+  }
+
+  /** Pitch multiplier for the slam "success" tone. Tier 0/1 keep the default tone;
+   *  tier 2 (-2s bonus territory) bumps up a major third; tier 3 (-3s) jumps to a
+   *  perfect fifth, gives the audio a clear "I'm cooking" arc as the combo grows. */
+  function streakPitchMul(streak: number): number {
+    const tier = computeStreakTier(streak);
+    if (tier <= 1) return 1.0;
+    if (tier === 2) return 1.25;
+    return 1.5;
+  }
+
+  /** Tier-3 overflow drip. The tier ladder caps at -3s on cash-in, so without this
+   *  every slam past streak 10 has zero incremental reward. Solution: once the
+   *  player is past the cap, every 5 additional slams instantly subtracts -1s from
+   *  the timer (not held until cash-in, applied right now). First drip lands on
+   *  slam 15, then 20, 25, 30, … forever. Returns the ms to drip for THIS slam
+   *  (0 for slams that aren't a drip beat). */
+  function streakDripBonus(streak: number): number {
+    if (streak >= 15 && (streak - 10) % 5 === 0) return 1000;
+    return 0;
   }
 
   function finalizeStreak(): void {
@@ -169,6 +228,7 @@ export function useGame(opts: UseGameOptions = {}) {
     }
     soloStreak.value = 0;
     soloStreakBarMs.value = 0;
+    soloStreakTiltDeg.value = 0;
     if (soloStreakRafId !== null) {
       cancelAnimationFrame(soloStreakRafId);
       soloStreakRafId = null;
@@ -178,6 +238,27 @@ export function useGame(opts: UseGameOptions = {}) {
   function pulseStreak(): void {
     soloStreak.value += 1;
     soloStreakBarMs.value = STREAK_BAR_MS;
+    // Fresh random tilt every increment, keeps the combo number lively. ±10°.
+    soloStreakTiltDeg.value = (Math.random() * 20) - 10;
+    // Live personal-best tracking: the moment the active streak passes the
+    // stored best, bump + persist immediately so the HUD "Top ×N" updates
+    // mid-run and survives a tab close or a penalty-induced break.
+    if (soloBestStreak.value === null || soloStreak.value > soloBestStreak.value) {
+      soloBestStreak.value = soloStreak.value;
+      soloIsNewBestStreak.value = true;
+      saveSoloBestStreak(soloStreak.value);
+    }
+    // Tier-3 overflow: instant -1s drip on every 5th slam past streak 10. This
+    // fires INDEPENDENT of cash-in (the -3s tier base is still held for break),
+    // so a 20-slam streak that breaks awards -3s (cash-in) + -2s (already
+    // dripped at slams 15 + 20) = -5s total. Routes through the same
+    // `soloLastStreakBonus` bubble as cash-in so the player sees instant feedback.
+    const drip = streakDripBonus(soloStreak.value);
+    if (drip > 0) {
+      soloBonusMs.value += drip;
+      soloLastStreakBonus.value = { id: nextStreakBonusId++, streak: soloStreak.value, bonusMs: drip };
+      beatAudio.ding('high');
+    }
     soloStreakLastTickAt = performance.now();
     if (soloStreakRafId === null) {
       const tick = () => {
@@ -196,7 +277,7 @@ export function useGame(opts: UseGameOptions = {}) {
     }
   }
 
-  /** Add a small grace credit to the streak bar — fired when the player draws a
+  /** Add a small grace credit to the streak bar, fired when the player draws a
    *  card legally (no penalty). Only does anything if a streak is currently in
    *  flight; a draw alone never STARTS a streak. */
   function pulseStreakDraw(): void {
@@ -206,7 +287,7 @@ export function useGame(opts: UseGameOptions = {}) {
 
   // Turn-indicator wisp (Versus only). Persisted, default ON.
   const wispEnabled = ref(DEFAULT_WISP_ENABLED);
-  void loadWispEnabled().then((on) => { wispEnabled.value = on; });
+  if (!skipLoad) void loadWispEnabled().then((on) => { wispEnabled.value = on; });
   const setWispEnabled = (on: boolean) => {
     wispEnabled.value = on;
     saveWispEnabled(on);
@@ -214,7 +295,7 @@ export function useGame(opts: UseGameOptions = {}) {
 
   // Event log visibility (desktop sidebar + mobile sheet). Persisted, default ON.
   const eventLogEnabled = ref(DEFAULT_EVENT_LOG_ENABLED);
-  void loadEventLogEnabled().then((on) => { eventLogEnabled.value = on; });
+  if (!skipLoad) void loadEventLogEnabled().then((on) => { eventLogEnabled.value = on; });
   const setEventLogEnabled = (on: boolean) => {
     eventLogEnabled.value = on;
     saveEventLogEnabled(on);
@@ -224,7 +305,7 @@ export function useGame(opts: UseGameOptions = {}) {
   // layer resolves null → !isMobile so desktop sees the floating guide by default and
   // mobile keeps the table clean; an explicit user toggle overrides either way.
   const guideOnTablePref = ref<boolean | null>(null);
-  void loadGuideOnTable().then((v) => { guideOnTablePref.value = v; });
+  if (!skipLoad) void loadGuideOnTable().then((v) => { guideOnTablePref.value = v; });
   const setGuideOnTable = (on: boolean) => {
     guideOnTablePref.value = on;
     saveGuideOnTable(on);
@@ -232,7 +313,7 @@ export function useGame(opts: UseGameOptions = {}) {
 
   // Strict-prompts house rule (Versus only). Persisted, default OFF.
   const strictPrompts = ref(DEFAULT_STRICT_PROMPTS);
-  void loadStrictPrompts().then((on) => {
+  if (!skipLoad) void loadStrictPrompts().then((on) => {
     strictPrompts.value = on;
     if (game.value) game.value.setStrictPromptsEnabled(on);
   });
@@ -244,7 +325,7 @@ export function useGame(opts: UseGameOptions = {}) {
 
   // AI skill (Versus only). Persisted, default 3 (Hard).
   const aiSkill = ref<AiSkillLevel>(DEFAULT_AI_SKILL);
-  void loadAiSkill().then((level) => {
+  if (!skipLoad) void loadAiSkill().then((level) => {
     aiSkill.value = level;
     if (controller.value) controller.value.setAiSkill(level);
   });
@@ -254,9 +335,9 @@ export function useGame(opts: UseGameOptions = {}) {
     if (controller.value) controller.value.setAiSkill(level);
   };
 
-  // Prompt-size display preference. Live — applies to the current round without restart.
+  // Prompt-size display preference. Live, applies to the current round without restart.
   const promptSize = ref<PromptSize>(DEFAULT_PROMPT_SIZE);
-  void loadPromptSize().then((v) => { promptSize.value = v; });
+  if (!skipLoad) void loadPromptSize().then((v) => { promptSize.value = v; });
   const setPromptSize = (v: PromptSize) => {
     promptSize.value = v;
     savePromptSize(v);
@@ -264,7 +345,7 @@ export function useGame(opts: UseGameOptions = {}) {
 
   // Floating prompt+count popover size preference. 'off' hides the popovers entirely.
   const promptInfoSize = ref<PromptInfoSize>(DEFAULT_PROMPT_INFO_SIZE);
-  void loadPromptInfoSize().then((v) => { promptInfoSize.value = v; });
+  if (!skipLoad) void loadPromptInfoSize().then((v) => { promptInfoSize.value = v; });
   const setPromptInfoSize = (v: PromptInfoSize) => {
     promptInfoSize.value = v;
     savePromptInfoSize(v);
@@ -274,7 +355,7 @@ export function useGame(opts: UseGameOptions = {}) {
   // global keydown listener lives in PlayView; this ref just stores the toggle so
   // the settings UI + the listener can read the same source of truth.
   const drawKeyEnabled = ref(DEFAULT_DRAW_KEY_ENABLED);
-  void loadDrawKeyEnabled().then((on) => { drawKeyEnabled.value = on; });
+  if (!skipLoad) void loadDrawKeyEnabled().then((on) => { drawKeyEnabled.value = on; });
   const setDrawKeyEnabled = (on: boolean) => {
     drawKeyEnabled.value = on;
     saveDrawKeyEnabled(on);
@@ -286,7 +367,7 @@ export function useGame(opts: UseGameOptions = {}) {
   const chantRecitalSpeed = ref<ChantRecitalSpeed>(DEFAULT_CHANT_RECITAL_SPEED);
   /** Current per-step ms derived from `chantRecitalSpeed`. 0 = skip. */
   const recitalStepMs = computed(() => RECITAL_STEP_MS_BY_SPEED[chantRecitalSpeed.value]);
-  void loadChantRecitalSpeed().then((v) => {
+  if (!skipLoad) void loadChantRecitalSpeed().then((v) => {
     chantRecitalSpeed.value = v;
     controller.value.setRecitalPacing(recitalStepMs.value);
   });
@@ -305,13 +386,13 @@ export function useGame(opts: UseGameOptions = {}) {
   const rebuildIfCustomDeckActive = () => {
     if (modeCaps(mode.value).hasCustomDeck && state.status === 'idle') initGame();
   };
-  // Async preference loads — if the game was initialized with defaults before these
+  // Async preference loads, if the game was initialized with defaults before these
   // resolve, rebuild so the persisted composition/hand size take effect.
-  void loadPlaygroundComposition().then((c) => {
+  if (!skipLoad) void loadPlaygroundComposition().then((c) => {
     playgroundComposition.value = c;
     rebuildIfCustomDeckActive();
   });
-  void loadPlaygroundHandSize().then((n) => {
+  if (!skipLoad) void loadPlaygroundHandSize().then((n) => {
     playgroundHandSize.value = n;
     rebuildIfCustomDeckActive();
   });
@@ -342,7 +423,7 @@ export function useGame(opts: UseGameOptions = {}) {
   };
 
   /** Reset every Sound + Game + Display preference back to its canonical default.
-   *  Intentionally leaves the playground deck (composition + hand size) alone — that
+   *  Intentionally leaves the playground deck (composition + hand size) alone, that
    *  has its own dedicated reset, so a user who built a custom deck doesn't lose it
    *  when they reach for "Reset to defaults" to undo a stray display tweak.
    *
@@ -351,7 +432,7 @@ export function useGame(opts: UseGameOptions = {}) {
   const resetGeneralDefaults = () => {
     // Sound
     beatAudio.setMuted(DEFAULT_AUDIO_MUTED);
-    // Game (turn-based only — leave solo's seat count alone)
+    // Game (turn-based only, leave solo's seat count alone)
     if (modeCaps(mode.value).isTurnBased) {
       playerCount.value = DEFAULT_PLAYER_COUNT_TURN_BASED;
     }
@@ -411,10 +492,10 @@ export function useGame(opts: UseGameOptions = {}) {
   /** Recital step currently lit. Keyed by seat index → number of count units spoken so
    *  far AT that seat. Updated as the recital walks. */
   const chantRecitalStepsBySeat = ref<Map<number, number>>(new Map());
-  /** Speech bubble fired by the recital — one shout per beat step. Mirrors the existing
+  /** Speech bubble fired by the recital, one shout per beat step. Mirrors the existing
    *  `shouts` pattern in GameTable so we can reuse SpeechBubble. */
   const recitalShouts = ref<Record<number, { word: ChantWord; key: number }>>({});
-  /** Seat that's currently being recited at — used to glow that seat's popover. */
+  /** Seat that's currently being recited at, used to glow that seat's popover. */
   const chantRecitalCurrentSeat = ref<number | null>(null);
   /** The beat word being spoken at the current recital step. Updates per step so the
    *  ChantTriggerOverlay banner can display the chant lottery-style (cycling through
@@ -484,9 +565,9 @@ export function useGame(opts: UseGameOptions = {}) {
   const activeSeatIndex = ref<number>(-1);
 
   /**
-   * Flight queue — GameTable drains this on each push and starts a GSAP timeline per spec.
+   * Flight queue, GameTable drains this on each push and starts a GSAP timeline per spec.
    * Rects are captured here (synchronously inside the event listener) so the snapshot
-   * predates Vue's post-event re-render — the source seat is still at its pre-play layout
+   * predates Vue's post-event re-render, the source seat is still at its pre-play layout
    * when we read its bounding box.
    */
   const pendingFlights = ref<FlightSpec[]>([]);
@@ -508,7 +589,7 @@ export function useGame(opts: UseGameOptions = {}) {
   /**
    * Queue a card-flight from the winner's seat to each gift recipient's seat after
    * the Chant Power resolves. Reuses the existing 'draw' flight kind (cards landing
-   * in a hand) — the engine already moved the cards into recipient.hand by the time
+   * in a hand), the engine already moved the cards into recipient.hand by the time
    * versusChantPowerResolved fires, so we look them up there for the assetPath.
    */
   function queueFlightsForChantGifts(e: Extract<GameEvent, { kind: 'versusChantPowerResolved' }>): void {
@@ -581,7 +662,7 @@ export function useGame(opts: UseGameOptions = {}) {
   }
 
   function queueFlightForDraw(e: Extract<GameEvent, { kind: 'versusDraw' | 'soloDraw' }>): void {
-    if (!e.cardId) return; // empty-pile "pass" — nothing to fly
+    if (!e.cardId) return; // empty-pile "pass", nothing to fly
 
     const recipientId = e.kind === 'versusDraw' ? e.playerId : 'p1';
     const recipient = game.value.players.find((p) => p.id === recipientId);
@@ -622,7 +703,12 @@ export function useGame(opts: UseGameOptions = {}) {
       case 'versusPlay': {
         lastPlayedVirtualPos.value = game.value.chant.virtualPos;
         const pid = e.kind === 'versusPlay' ? e.playerId : 'p1';
-        if (isHumanEvent(pid)) beatAudio.fx('success');
+        if (isHumanEvent(pid)) {
+          // Solo slams climb the combo ladder via pitch, pulseStreak() runs
+          // immediately below, so the about-to-be streak is current + 1.
+          const pitchMul = e.kind === 'soloSlam' ? streakPitchMul(soloStreak.value + 1) : 1;
+          beatAudio.fx('success', { pitchMul });
+        }
         // BEAT ding on every play. If a card lands in front of the HUMAN (their turn is
         // now next), use the HIGH ding as a heads-up that they're up; otherwise use the
         // MIDDLE ding so each opponent-on-opponent play still has audible rhythm and the
@@ -632,12 +718,12 @@ export function useGame(opts: UseGameOptions = {}) {
           const targetIsHuman = !!target && !target.isAI;
           beatAudio.ding(targetIsHuman ? 'high' : 'middle');
         }
-        // Solo combo streak — every successful slam pulses the streak: increment +
+        // Solo combo streak, every successful slam pulses the streak: increment +
         // refill the depletion bar. Penalties break the streak (see soloPenalty
         // handler below). Drawing is neutral so the bar keeps depleting between
         // forced draws.
         if (e.kind === 'soloSlam') pulseStreak();
-        // Snapshot flight geometry synchronously — before Vue's re-render shifts the
+        // Snapshot flight geometry synchronously, before Vue's re-render shifts the
         // source seat's bounding box. The Game.emit happens after the card has moved
         // into its destination, so we can find the card on the target side too.
         queueFlightForPlay(e);
@@ -714,7 +800,7 @@ export function useGame(opts: UseGameOptions = {}) {
         chantRevealNoWinner.value = false;
         // No-winner: no chant-power-resolve will fire, so we tear down the overlay
         // ourselves after the recital plus a short tail so the landed banner is seen.
-        // Also release the engine's AI gate once the tail completes — the engine had
+        // Also release the engine's AI gate once the tail completes, the engine had
         // already setActiveSeat'd the receiver synchronously, but we hold the AI back
         // until the player has actually SEEN the recital land.
         if (e.winnerSeatIndex === null) {
@@ -738,7 +824,7 @@ export function useGame(opts: UseGameOptions = {}) {
             (game.value.endChantTriggerWindow?.());
           }, recitalMs + 1100);
         } else {
-          // Winner branch — schedule the burst-confetti reveal at recital end so it
+          // Winner branch, schedule the burst-confetti reveal at recital end so it
           // bursts AT the moment the lottery freezes on the winning beat, not while
           // the recital is still spinning.
           const stepMs = recitalStepMs.value;
@@ -803,7 +889,7 @@ export function useGame(opts: UseGameOptions = {}) {
         // seen. Also release the engine's AI cooldown gate so SimulationController
         // resumes scheduling normal AI ticks. Without this, the no-winner & winner
         // branches would diverge: winner case has pendingChantPower handling the
-        // timing, but the cleanup tail itself was unguarded — AI could fire plays
+        // timing, but the cleanup tail itself was unguarded, AI could fire plays
         // and shout bubbles before the trigger overlay finished fading.
         window.setTimeout(() => {
           chantTrigger.value = null;
@@ -818,7 +904,7 @@ export function useGame(opts: UseGameOptions = {}) {
         }, 600);
         break;
       case 'versusStrictPenalty':
-        // Same fail sting Solo penalties use — fires for ANY player so the human
+        // Same fail sting Solo penalties use, fires for ANY player so the human
         // can hear when an AI fumbles too (otherwise penalties are easy to miss).
         beatAudio.fx('fail');
         break;
@@ -872,10 +958,12 @@ export function useGame(opts: UseGameOptions = {}) {
     soloBonusMs.value = 0;
     soloLastFinalMs.value = null;
     soloIsNewBest.value = false;
-    // Streak — cancel raf and zero everything so a new round starts clean.
+    soloIsNewBestStreak.value = false;
+    // Streak, cancel raf and zero everything so a new round starts clean.
     if (soloStreakRafId !== null) { cancelAnimationFrame(soloStreakRafId); soloStreakRafId = null; }
     soloStreak.value = 0;
     soloStreakBarMs.value = 0;
+    soloStreakTiltDeg.value = 0;
     soloLastStreakBonus.value = null;
     pendingFlights.value = [];
     pendingSnapDraw.value = null;
@@ -906,7 +994,7 @@ export function useGame(opts: UseGameOptions = {}) {
     controller.value = ctrl;
 
     // Per-mode setup dispatch. This is intentionally a switch on mode identity (not
-    // capability flags) because each mode's setup signature differs — buildSoloDeck
+    // capability flags) because each mode's setup signature differs, buildSoloDeck
     // takes nothing, setupVersus takes playerCount, setupPlayground takes the custom
     // PlaygroundSetup. Adding a new mode = add a case here and a row to MODE_CAPS.
     const assignTurnBasedSeats = () => {
@@ -1001,7 +1089,7 @@ export function useGame(opts: UseGameOptions = {}) {
 
   /** Human's snap-drawn target choice. Pass the seat index the snap should land on.
    *  Standard mode accepts only the left/right neighbours; strict mode accepts any
-   *  non-self seat. The "Keep" option was deliberately removed — the holder must play
+   *  non-self seat. The "Keep" option was deliberately removed, the holder must play
    *  a matching drawn Snap (matches the rulebook's emphasis on the Snap superpower). */
   const submitSnapPlay = (playerId: PlayerId, targetSeatIndex: number) => {
     if (state.status !== 'running') return;
@@ -1077,9 +1165,14 @@ export function useGame(opts: UseGameOptions = {}) {
     soloStreak,
     soloStreakBarMs,
     soloStreakBarMaxMs: STREAK_BAR_MS,
+    soloStreakTiltDeg,
+    /** 0..3 tier matching the bonus ladder, drives combo-label sizing in PlayView. */
+    computeStreakTier,
     soloLastStreakBonus,
     soloRunning,
     soloBestTimeMs,
+    soloBestStreak,
+    soloIsNewBestStreak,
     soloLastFinalMs,
     soloIsNewBest,
     pendingFlights,

@@ -2,10 +2,10 @@
  * Tutorial scenario applier. Pins a `Game` instance into a known, reproducible state by
  * mutating it directly (the same pattern Vitest tests already use). This runs AFTER
  * `useGame.initGame()` so the engine's reactive `Card[]` proxies (drawPile, soloBases,
- * each player's hand + promptStack) are already in place — we mutate the wrapped arrays
+ * each player's hand + promptStack) are already in place, we mutate the wrapped arrays
  * in-place so Vue's tracking still fires.
  *
- * Cards are referenced by a compact `CardSpec` ({ word, prompt }) — the applier locates
+ * Cards are referenced by a compact `CardSpec` ({ word, prompt }), the applier locates
  * a real engine card matching the spec by pulling from any pool (deck, any hand, any
  * promptStack) so callers don't have to know where it lives. promptStack stubs are
  * built standalone since they don't need to be real engine-deck cards.
@@ -25,6 +25,13 @@ export interface CardSpec {
   prompt: CardPrompt;
   /** Route the engine's real Halo-Halo Chik to this slot (ignores word/prompt). */
   isHaloHalo?: boolean;
+  /** Mark this card as a Chant Chik (visual + triggers the Chant Trigger if closing). */
+  isChantChik?: boolean;
+  /** Override the count on stubs built for `promptStacks`. The Chant Trigger sums
+   *  `topPrompt.count` across all seats, orchestrated tutorial scenarios need
+   *  specific counts so the recital lands on a known beat. Pulled cards keep
+   *  their deck-assigned counts; this field only applies to stubs. */
+  count?: number;
 }
 
 export interface PromptStackEntry {
@@ -42,14 +49,19 @@ export interface SoloScenario {
   beat?: ChantWord;
   /** Set the active prompt on either base. Engine's soloActive* fields are pinned to match. */
   activePrompt?: { side: BaseSide; card: CardSpec };
-  /** Engine flag — pretend game has already opened, skipping the Halo-Halo gate. */
+  /** Engine flag, pretend game has already opened, skipping the Halo-Halo gate. */
   opened?: boolean;
+  /** Pin the top of the draw pile to a deterministic sequence. The FIRST entry
+   *  in the array will be drawn FIRST (engine uses `drawPile.pop()` so we push
+   *  these in reverse order onto the end). Used by the Solo tutorial to script
+   *  exactly which cards come out of the deck on each draw. */
+  deckTops?: CardSpec[];
 }
 
 export interface VersusScenario {
   /** Replace specific seats' hands. Seats not listed keep their `setupVersus` deal. */
   hands?: Record<number, CardSpec[]>;
-  /** Additively add cards to specific seats' hands. Pulled from the DRAW PILE only —
+  /** Additively add cards to specific seats' hands. Pulled from the DRAW PILE only -
    *  unlike `hands`, this never steals from other players. Used by tutorial setups to
    *  ensure a specific opponent has the card needed for an upcoming demo without
    *  disturbing existing hands. Silently skips a spec that isn't in the deck. */
@@ -61,15 +73,24 @@ export interface VersusScenario {
   /** Push cards onto specific players' promptStacks (last entry becomes the active prompt). */
   promptStacks?: PromptStackEntry[];
   /** Seat indices whose promptStacks should be RESET (emptied) before `promptStacks`
-   *  entries are pushed. Use this to keep tutorial steps internally consistent — the
+   *  entries are pushed. Use this to keep tutorial steps internally consistent, the
    *  applier is otherwise additive across steps. */
   clearPromptStacks?: number[];
   /** Pin the top of the draw pile (e.g. for a Snap-drawn demo). */
   deckTop?: CardSpec;
-  /** Engine flag — pretend game has already opened. */
+  /** Engine flag, pretend game has already opened. */
   opened?: boolean;
   /** Set chainSourceSeatIndex so a subsequent forced-draw bounces back here. */
   chainSourceSeatIndex?: number | null;
+  /** Restart the beat-selection phase with this seat picking first. Used by the
+   *  Versus tutorial so the player (seat 0) leads the picks, without this the
+   *  original Halo-Halo holder (random) keeps the lead even after the tutorial
+   *  re-seeds Halo-Halo to the human. Also clears any previously-claimed beats. */
+  restartBeatSelectionFromSeat?: number;
+  /** Auto-complete the beat-selection phase so play can begin immediately. Used
+   *  by tutorial steps that come AFTER the beat-claim step, they need the
+   *  setup to be `'play'` so the BeatPickerOverlay doesn't block interaction. */
+  autoCompleteBeatSelection?: boolean;
 }
 
 // --------------------------------------------------------------------------------------
@@ -77,7 +98,7 @@ export interface VersusScenario {
 // --------------------------------------------------------------------------------------
 
 /** Engine internals we deliberately poke. Bypasses Game's `private` modifier on
- *  `fetchOwners` the same way the engine tests do — direct field write through an
+ *  `fetchOwners` the same way the engine tests do, direct field write through an
  *  unknown cast. Plain class fields, no proxies, so writes don't need triggerRef. */
 interface GameInternals {
   soloActiveCardId: string | null;
@@ -92,7 +113,7 @@ function asInternals(game: Game): GameInternals {
   return game as unknown as GameInternals;
 }
 
-/** Find-and-pull a real Card matching the spec from anywhere it could plausibly live —
+/** Find-and-pull a real Card matching the spec from anywhere it could plausibly live -
  *  deck, any hand, any promptStack. Halo-Halo routes through `pullHaloHalo`. */
 function pullCardAnywhere(game: Game, spec: CardSpec): Card | null {
   if (spec.isHaloHalo) return pullHaloHalo(game);
@@ -132,6 +153,10 @@ function buildStub(spec: CardSpec, suffix: string): Card {
     word: spec.word,
     prompt: spec.prompt,
     isHaloHalo: spec.isHaloHalo ?? false,
+    isChantChik: spec.isChantChik ?? false,
+    /** Count for Chant Trigger math. Defaults to 0, orchestrated steps must
+     *  pin a value explicitly via `spec.count`. */
+    count: spec.count ?? 0,
     matchesBeat(beat: ChantWord): boolean {
       return beat === spec.word;
     },
@@ -192,6 +217,17 @@ export function applySoloScenario(game: Game, scenario: SoloScenario): void {
   if (scenario.opened !== undefined) {
     g.opened = scenario.opened;
   }
+
+  if (scenario.deckTops) {
+    // First entry should be drawn first → push them in REVERSE onto the end of
+    // drawPile (engine's `pop()` consumes the last element). Pull each card
+    // from anywhere it currently lives so the seeding is robust against the
+    // deal having scattered them across hands/bases already.
+    for (let i = scenario.deckTops.length - 1; i >= 0; i--) {
+      const card = pullCardAnywhere(game, scenario.deckTops[i]);
+      if (card) game.drawPile.push(card);
+    }
+  }
 }
 
 export function applyVersusScenario(game: Game, scenario: VersusScenario): void {
@@ -222,7 +258,7 @@ export function applyVersusScenario(game: Game, scenario: VersusScenario): void 
       for (const spec of specs) {
         // Prefer the draw pile so we don't disturb existing hands. If the deck doesn't
         // have the card (e.g. it was dealt out during setupVersus), fall back to other
-        // seats' hands — but never the target's own hand. This guarantees the tutorial
+        // seats' hands, but never the target's own hand. This guarantees the tutorial
         // demo can find the card it needs, at the cost of occasionally moving a card
         // from one AI to another (invisible to the player).
         const matches = (c: { word: string; prompt: string; isHaloHalo: boolean }) =>
@@ -291,5 +327,31 @@ export function applyVersusScenario(game: Game, scenario: VersusScenario): void 
 
   if (scenario.chainSourceSeatIndex !== undefined) {
     g.chainSourceSeatIndex = scenario.chainSourceSeatIndex;
+  }
+
+  if (scenario.restartBeatSelectionFromSeat !== undefined) {
+    // Re-init beat selection with the specified seat as the first picker. Emit
+    // the picker-changed event so useGame's `currentBeatPickerSeat` ref re-syncs
+    // (otherwise the BeatPickerOverlay would stay on whoever was picking before).
+    // `emit` and `beatPickOrder` are private on Game; cast pattern matches the
+    // other internals here.
+    const gPrivate = game as unknown as {
+      emit: (e: import('@/game/types').GameEvent) => void;
+      beatPickOrder: number[];
+    };
+    game.initBeatSelection(scenario.restartBeatSelectionFromSeat, game.players.length);
+    gPrivate.emit({
+      kind: 'versusBeatPickerChanged',
+      seatIndex: gPrivate.beatPickOrder[0] ?? null,
+    });
+  }
+
+  if (scenario.autoCompleteBeatSelection) {
+    if (game.setupPhase === 'beat-selection') {
+      game.autoCompleteBeatSelection();
+      // setupPhase flipped to 'play' inside that call; useGame listens for
+      // `versusSetupCompleted` (which claimBeat already fires on the final pick)
+      // so the overlay clears organically.
+    }
   }
 }

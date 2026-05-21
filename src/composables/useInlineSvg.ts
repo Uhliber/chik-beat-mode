@@ -22,7 +22,7 @@ const FILLED_ELEMENTS = ['path', 'circle', 'ellipse', 'rect', 'polygon', 'polyli
 
 function recolor(svgText: string): string {
   let out = svgText;
-  // 1. Strip <style>…</style> blocks — these often hold the dark fill via class selectors
+  // 1. Strip <style>…</style> blocks, these often hold the dark fill via class selectors
   //    that won't apply consistently when the SVG is injected via v-html.
   out = out.replace(/<style[\s\S]*?<\/style>/gi, '');
   // 2. Inline style fill / stroke → currentColor.
@@ -48,7 +48,7 @@ function recolor(svgText: string): string {
 
 async function loadSvgRaw(url: string): Promise<string> {
   // CRITICAL: cache the RECOLORED output, not the raw fetch. Earlier this cached the
-  // raw-text promise — the first caller awaited then recolored locally, but every
+  // raw-text promise, the first caller awaited then recolored locally, but every
   // subsequent caller got the cache hit and returned the raw text (bypassing recolor).
   // Result: most popovers rendered black because they shared the same SVG URL with an
   // earlier "first caller" that pulled the raw stream first.

@@ -128,7 +128,7 @@ describe('Beat selection', () => {
   });
 });
 
-describe('Chant Trigger — opening Halo-Halo never triggers', () => {
+describe('Chant Trigger, opening Halo-Halo never triggers', () => {
   it('opening Halo-Halo (even if Chant Chik variant existed) does not fire the trigger', () => {
     const g = new Game(seededRng(7));
     g.setupVersus(4);
@@ -143,7 +143,7 @@ describe('Chant Trigger — opening Halo-Halo never triggers', () => {
   });
 });
 
-describe('Chant Trigger — closing Chant Chik fires', () => {
+describe('Chant Trigger, closing Chant Chik fires', () => {
   it('a closing Chant Chik played on beat index 6 fires the trigger', () => {
     const g = new Game(seededRng(7));
     g.setupVersus(4);
@@ -190,10 +190,10 @@ describe('Chant Trigger — closing Chant Chik fires', () => {
   });
 });
 
-describe('Chant Trigger — landed beat math', () => {
+describe('Chant Trigger, landed beat math', () => {
   // Regression: the engine used `BEAT_ORDER[total % 7]` for the landed beat, but
   // BEAT_ORDER[0] is OPENING chik (rulebook treats mod=0 as CLOSING chik). Result
-  // was off-by-one — e.g. total=23 visually landed on wally (the 23rd count) but
+  // was off-by-one, e.g. total=23 visually landed on wally (the 23rd count) but
   // awarded power to the hindo owner. These tests pin the rulebook mapping.
   //
   // Rulebook table (sum mod 7 → landed):
@@ -242,7 +242,7 @@ describe('Chant Trigger — landed beat math', () => {
     const { landed } = runTriggerWithTotal(7);
     expect(landed).toBe('chik');
   });
-  it('total=8 (mod 7 = 1) lands on OPENING Chik — no winner', () => {
+  it('total=8 (mod 7 = 1) lands on OPENING Chik, no winner', () => {
     const { landed, winnerSeat } = runTriggerWithTotal(8);
     expect(landed).toBe('no-winner-opening');
     expect(winnerSeat).toBeNull();
@@ -251,17 +251,17 @@ describe('Chant Trigger — landed beat math', () => {
     const { landed } = runTriggerWithTotal(9);
     expect(landed).toBe('wally');
   });
-  it('total=23 (mod 7 = 2) lands on Wally — was hindo under the off-by-one bug', () => {
+  it('total=23 (mod 7 = 2) lands on Wally, was hindo under the off-by-one bug', () => {
     const { landed } = runTriggerWithTotal(23);
     expect(landed).toBe('wally');
   });
-  it('total=18 (mod 7 = 4) lands on Pop — matches the rulebook example', () => {
+  it('total=18 (mod 7 = 4) lands on Pop, matches the rulebook example', () => {
     const { landed } = runTriggerWithTotal(18);
     expect(landed).toBe('pop');
   });
 });
 
-describe('Chant Power — give-cards validation', () => {
+describe('Chant Power, give-cards validation', () => {
   let g: Game;
   beforeEach(() => {
     g = new Game(seededRng(7));

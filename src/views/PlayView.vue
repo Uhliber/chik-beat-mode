@@ -59,8 +59,11 @@ const {
   soloStreak,
   soloStreakBarMs,
   soloStreakBarMaxMs,
+  soloStreakTiltDeg,
+  computeStreakTier,
   soloLastStreakBonus,
   soloBestTimeMs,
+  soloBestStreak,
   soloLastFinalMs,
   soloIsNewBest,
   pendingFlights,
@@ -115,7 +118,14 @@ const {
   setChantRecitalSpeed,
   drawKeyEnabled,
   setDrawKeyEnabled,
-} = useGame({ initialMode });
+} = useGame({
+  initialMode,
+  // Tutorial mode: ignore the player's saved prefs so the walk-through always
+  // runs with canonical defaults (medium prompts, default speed, strict off,
+  // etc). Without this, a player who normally plays at XL prompts gets a
+  // tutorial layout where the deck is covered by their own XL prompt card.
+  skipPrefsLoad: route.query.tutorial === '1' && (initialMode === 'solo' || initialMode === 'versus'),
+});
 
 // Tutorial mode: ?tutorial=1 query flips this on. Solo and Versus each have their own
 // scripted walk-through. Playground is a tutorial-less sandbox. When active, the
@@ -135,7 +145,7 @@ const tutorial = isTutorial.value
     })
   : null;
 
-// Tutorial completion flags — surfaced into the in-game GuideCard so the "Start
+// Tutorial completion flags, surfaced into the in-game GuideCard so the "Start
 // tutorial" button can flip to "Replay tutorial" once done.
 const tutorialCompletion = ref({ solo: false, versus: false });
 void loadTutorialCompletion().then((c) => { tutorialCompletion.value = c; });
@@ -160,7 +170,7 @@ function onTutorialFinish() {
 }
 
 // Reactive snap-card + drawer + legal targets for the SnapDrawnOverlay. Both human
-// and AI's pending snaps surface the overlay — for the AI the chips are read-only and
+// and AI's pending snaps surface the overlay, for the AI the chips are read-only and
 // the engine's `pendingSnapPickedTarget` indicates which one the AI is about to commit.
 const pendingSnapCard = computed(() => {
   const p = pendingSnapDraw.value;
@@ -192,6 +202,11 @@ const pendingSnapAiPick = computed<number | null>(() => {
   return controller.value?.pendingSnapPickedTarget ?? null;
 });
 function onSnapChooseTarget(targetSeatIndex: number) {
+  // Same input-gate as the main play handlers, but the tutorial-blocks check
+  // is intentionally NOT applied to the snap step itself (versus-snap has an
+  // expect: snapPlay matcher and runs in 'awaiting-input' phase, which the
+  // gate already allows).
+  if (tutorialBlocksInput()) return;
   const p = pendingSnapDraw.value;
   if (!p) return;
   submitSnapPlay(p.playerId, targetSeatIndex);
@@ -199,12 +214,12 @@ function onSnapChooseTarget(targetSeatIndex: number) {
 
 // ---- v1.2 Beat picker + Chant Power UI glue ----
 
-/** Player labels by seat index — used by both BeatPickerOverlay and ChantPowerModal. */
+/** Player labels by seat index, used by both BeatPickerOverlay and ChantPowerModal. */
 const playerLabels = computed(() => game.value.players.map((p) => p.id));
 const playerAi = computed(() => game.value.players.map((p) => p.isAI));
 
 /** Show the beat picker overlay during setup phase, but only after the user has
- *  hit Start — the overlay is part of "starting the game", not part of the idle
+ *  hit Start, the overlay is part of "starting the game", not part of the idle
  *  table. While idle, the table sits behind the central Start CTA undisturbed. */
 const beatPickerVisible = computed(
   () => setupPhase.value === 'beat-selection' && state.status === 'running',
@@ -215,6 +230,11 @@ const beatPickerInteractive = computed(() => {
   return !game.value.players[seat]?.isAI;
 });
 function onBeatPick(beat: import('@/game/types').ChantWord) {
+  // Same input-gate as other player actions, the BeatPickerOverlay shows
+  // during narrative steps too (because setupPhase is still beat-selection),
+  // so without this guard the player could claim a beat mid-intro and skip
+  // the dedicated "claim a beat" tutorial step entirely.
+  if (tutorialBlocksInput()) return;
   const seat = currentBeatPickerSeat.value;
   if (seat == null || seat < 0) return;
   const player = game.value.players[seat];
@@ -255,14 +275,14 @@ const { isMobile } = useResponsive();
 const { fx } = useBeatAudio();
 
 /** Whether to render the How-to-Play card floating on the table. Resolves the user's
- *  saved preference if any (true/false), otherwise falls back to the platform default —
+ *  saved preference if any (true/false), otherwise falls back to the platform default -
  *  desktop sees the floating guide, mobile keeps the table clean. The user can override
  *  either way from Settings > Display > "Guide on table". */
 const guideOnTable = computed(() => guideOnTablePref.value ?? !isMobile.value);
 
 /** Pre-open emphasis flag for the Halo-Halo Chik. True until the game has actually
  *  been opened (= the Halo-Halo has been played for the first time). This covers Solo
- *  before the first slam, and Versus both before AND after pressing Start — so the
+ *  before the first slam, and Versus both before AND after pressing Start, so the
  *  card keeps glowing once the round begins, right up until the player plays it.
  *
  *  `game.opened` is a plain (non-reactive) field on the engine; touching `state.version`
@@ -281,7 +301,7 @@ function onShowGuide() {
   closeSheet();           // closes both the mobile sheet and the desktop side panel
   guideModalOpen.value = true;
 }
-/** Mode capability flags — branch on these instead of `mode === 'versus'` etc. so
+/** Mode capability flags, branch on these instead of `mode === 'versus'` etc. so
  *  adding a new mode is a one-row edit to MODE_CAPS rather than a hunt across files. */
 const caps = computed(() => modeCaps(mode.value));
 
@@ -299,59 +319,94 @@ function formatSoloTime(ms: number): string {
 const soloDisplayMs = computed(() => Math.max(0, soloElapsedMs.value + soloPenaltyMs.value - soloBonusMs.value));
 const soloDisplay = computed(() => formatSoloTime(soloDisplayMs.value));
 const soloBestDisplay = computed(() =>
-  soloBestTimeMs.value === null ? '—' : formatSoloTime(soloBestTimeMs.value),
+  soloBestTimeMs.value === null ? '-' : formatSoloTime(soloBestTimeMs.value),
+);
+const soloBestStreakDisplay = computed(() =>
+  soloBestStreak.value === null || soloBestStreak.value <= 0 ? '-' : `×${soloBestStreak.value}`,
 );
 
-// Floating "±Ns" bubbles — penalties (red, "+2s") and bonuses (green, "-1s" or
-// "-Ns combo"). Same animation/position, distinguished by `tone`.
-interface TimeBubble { id: number; label: string; tone: 'penalty' | 'bonus'; }
+// Floating "+Ns" bubbles next to the timer, PENALTIES ONLY. Bonuses dock at the
+// combo bar instead (see comboBubbles below) so the player's eye stays on the
+// combo bar where the run is being built.
+interface TimeBubble { id: number; label: string; }
 const penaltyBubbles = ref<TimeBubble[]>([]);
 let penaltyBubbleId = 0;
-function pushBubble(label: string, tone: 'penalty' | 'bonus') {
+function pushPenaltyBubble(label: string) {
   const id = ++penaltyBubbleId;
-  penaltyBubbles.value.push({ id, label, tone });
+  penaltyBubbles.value.push({ id, label });
   setTimeout(() => {
     penaltyBubbles.value = penaltyBubbles.value.filter((b) => b.id !== id);
   }, 1400);
 }
+
+// Bonus bubbles, docked at the right end of the combo bar, where the player's
+// attention already lives during a run. Same lifetime as penalty bubbles.
+const comboBubbles = ref<TimeBubble[]>([]);
+let comboBubbleId = 0;
+function pushComboBubble(label: string) {
+  const id = ++comboBubbleId;
+  comboBubbles.value.push({ id, label });
+  setTimeout(() => {
+    comboBubbles.value = comboBubbles.value.filter((b) => b.id !== id);
+  }, 1400);
+}
+
 watch(
   () => state.events.length,
   (n, prev) => {
     if (!caps.value.isTimeAttack) return;
     const from = prev ?? 0;
     if (n <= from) return;
-    // Walk EVERY new event in this batch — soloSlam often fires alongside soloBonus
+    // Walk EVERY new event in this batch, soloSlam often fires alongside soloBonus
     // and chantAdvanced in the same synchronous emit burst, so peeking only at the
     // tail-most event would miss the bonus.
     for (let i = from; i < n; i++) {
       const ev = state.events[i] as GameEvent | undefined;
       if (!ev) continue;
       if (ev.kind === 'soloPenalty') {
-        pushBubble(`+${(ev.penaltyMs / 1000).toFixed(0)}s`, 'penalty');
+        pushPenaltyBubble(`+${(ev.penaltyMs / 1000).toFixed(0)}s`);
       } else if (ev.kind === 'soloBonus') {
-        pushBubble(`−${(ev.bonusMs / 1000).toFixed(0)}s`, 'bonus');
+        // Bonuses (chant-chik closing, etc) dock at the combo bar.
+        pushComboBubble(`−${(ev.bonusMs / 1000).toFixed(0)}s`);
       }
     }
   },
 );
 
-// Streak bonus bubble — fires when a streak finalizes (bar depletes or penalty
-// breaks it). Watches the ref's `id` so each finalization spawns one bubble.
-// Tiered bonus pays out in whole seconds (1s/2s/3s) so the bubble label is
-// always a clean integer.
+// Streak bonus bubble, fires when a streak finalizes (bar depletes / penalty
+// breaks it / drip every 5 slams past tier 3). Always docks at the combo bar.
 watch(
   () => soloLastStreakBonus.value?.id,
   (id) => {
     if (!id || !caps.value.isTimeAttack) return;
     const b = soloLastStreakBonus.value;
     if (!b) return;
-    pushBubble(`−${Math.round(b.bonusMs / 1000)}s`, 'bonus');
+    pushComboBubble(`−${Math.round(b.bonusMs / 1000)}s`);
   },
 );
 
 /** Streak bar fill ratio for the HUD bar (0..1). 0 when no streak in flight. */
 const soloStreakFill = computed(() =>
   soloStreakBarMaxMs > 0 ? soloStreakBarMs.value / soloStreakBarMaxMs : 0,
+);
+/** 0..3 tier driving the combo-label size class (`is-tier-1` etc). Matches the
+ *  bonus ladder so the visual escalation tracks the pitch escalation in audio. */
+const soloStreakTier = computed(() => computeStreakTier(soloStreak.value));
+
+/** Tutorial step 10 ("solo-combo-bar") needs the combo bar visible for the
+ *  player to see what we're describing, but a fresh tutorial player hasn't
+ *  built a streak yet (or it's already decayed). Force a demo rendering with
+ *  a placeholder ×3 combo and a half-filled bar while that step is active. */
+const comboDemoActive = computed(() =>
+  tutorial?.currentStep.value?.id === 'solo-combo-bar',
+);
+const displayStreak = computed(() => comboDemoActive.value ? 3 : soloStreak.value);
+const displayStreakFill = computed(() => comboDemoActive.value ? 0.55 : soloStreakFill.value);
+const displayStreakTier = computed(() =>
+  comboDemoActive.value ? computeStreakTier(3) : soloStreakTier.value,
+);
+const displayStreakTilt = computed(() =>
+  comboDemoActive.value ? -4 : soloStreakTiltDeg.value,
 );
 
 watch(playerCount, () => {
@@ -360,17 +415,32 @@ watch(playerCount, () => {
 
 const onRestart = () => { fx('tap'); initGame(); };
 
+/** Block player actions while the tutorial is showing narrative copy (intro phase)
+ *  or playing a scripted demo. Without this gate, a player could slam Halo-Halo
+ *  during the welcome screen, advancing engine state past what the next step
+ *  expects and stranding the tutorial in a broken position. Only steps with an
+ *  `expect` matcher should accept input; the controller flips phase to
+ *  'awaiting-input' for exactly those steps. */
+function tutorialBlocksInput(): boolean {
+  if (!tutorial) return false;
+  if (!tutorial.active.value) return false;
+  return tutorial.phase.value !== 'awaiting-input';
+}
+
 const onSoloSlam = (payload: { cardId: string; baseSide: BaseSide }) => {
+  if (tutorialBlocksInput()) return;
   submitSoloAction({ type: 'slam', cardId: payload.cardId, baseSide: payload.baseSide });
 };
 
 const onVersusPlay = (payload: { cardId: string; targetSeatIndex: number }) => {
+  if (tutorialBlocksInput()) return;
   const human = game.value.players.find((p) => !p.isAI);
   if (!human) return;
   submitVersusAction(human.id, { type: 'play', cardId: payload.cardId, targetSeatIndex: payload.targetSeatIndex });
 };
 
 const onDrawDeckClick = () => {
+  if (tutorialBlocksInput()) return;
   if (!caps.value.isTurnBased) {
     submitSoloAction({ type: 'draw' });
   } else {
@@ -384,7 +454,7 @@ const onDrawDeckClick = () => {
 // user pref (enabled by default) so anyone who hates global keyboard binds can
 // turn it off. Ignored when:
 //  - any text input has focus (so D in chat/inputs types a letter normally),
-//  - a key modifier is held (Cmd/Ctrl/Alt/Meta — preserves browser shortcuts),
+//  - a key modifier is held (Cmd/Ctrl/Alt/Meta, preserves browser shortcuts),
 //  - the round isn't running (idle/paused/ended).
 function onKeydown(ev: KeyboardEvent) {
   if (!drawKeyEnabled.value) return;
@@ -403,7 +473,7 @@ onMounted(() => { window.addEventListener('keydown', onKeydown); });
 onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown); });
 
 // Mobile bottom sheets + desktop side panel both flow through these openSheet/closeSheet
-// helpers — the 'controls' sheet is the new SettingsPanel (replaces the old ControlPanel).
+// helpers, the 'controls' sheet is the new SettingsPanel (replaces the old ControlPanel).
 const sheetOpen = ref<'none' | 'log' | 'controls'>('none');
 function openSheet(which: 'log' | 'controls') { sheetOpen.value = which; }
 function closeSheet() { sheetOpen.value = 'none'; }
@@ -423,8 +493,8 @@ function onSettingsRestart() {
   onRestart();
 }
 
-// Toast for "settings change won't apply until next round". Some settings — player count
-// and the Playground deck knobs — only take effect on initGame(); the engine auto-runs
+// Toast for "settings change won't apply until next round". Some settings, player count
+// and the Playground deck knobs, only take effect on initGame(); the engine auto-runs
 // initGame() when the round is idle (see useGame: rebuildIfCustomDeckActive + the
 // playerCount watch below), so during idle there's nothing to nag about. For running or
 // paused rounds, we snapshot these on settings open and show a toast on close if any
@@ -456,7 +526,7 @@ watch(settingsOpen, (isOpen) => {
     };
     return;
   }
-  // Closing the panel — diff against the snapshot.
+  // Closing the panel, diff against the snapshot.
   if (!settingsSnapshot) return;
   const snap = settingsSnapshot;
   settingsSnapshot = null;
@@ -471,7 +541,7 @@ watch(settingsOpen, (isOpen) => {
 });
 
 /** Primary action used only by the centre "Start / Play Again" CTA (Versus + Playground).
- *  Solo has no Start button — players auto-start by slamming their pulsing Halo-Halo —
+ *  Solo has no Start button, players auto-start by slamming their pulsing Halo-Halo -
  *  so this handler is intentionally Versus-shaped. */
 function onPrimary() {
   fx('tap');
@@ -480,8 +550,8 @@ function onPrimary() {
 }
 
 /** Dedicated Pause/Resume handler for the top-header pause button. Always safe to call
- *  even when status falls outside the running/paused window — the underlying useGame
- *  pause/resume are no-ops otherwise — but the button is gated in the template anyway. */
+ *  even when status falls outside the running/paused window, the underlying useGame
+ *  pause/resume are no-ops otherwise, but the button is gated in the template anyway. */
 function onPauseResume() {
   fx('tap');
   if (state.status === 'running') pause();
@@ -529,7 +599,7 @@ function onPauseOverlayTap() {
         </div>
       </div>
       <!-- Right-side header actions: mute / restart / primary / settings-cog.
-           Replaces the old inline ControlPanel pill — players + speed now live in
+           Replaces the old inline ControlPanel pill, players + speed now live in
            the dedicated SettingsPanel reachable via the cog. -->
       <div class="flex items-center gap-2">
         <button
@@ -554,7 +624,7 @@ function onPauseOverlayTap() {
             <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
           </svg>
         </button>
-        <!-- Pause / Resume — own dedicated control. Hidden in idle / opening / ended
+        <!-- Pause / Resume, own dedicated control. Hidden in idle / opening / ended
              states (nothing to pause); flips icon based on whether we're running. -->
         <button
           v-if="state.status === 'running' || state.status === 'paused'"
@@ -676,7 +746,7 @@ function onPauseOverlayTap() {
       </div>
     </header>
 
-    <!-- Versus / Playground chant ticker — top-centre on both mobile and desktop. Solo
+    <!-- Versus / Playground chant ticker, top-centre on both mobile and desktop. Solo
          has its own ticker inline with the timer (see below). The vertical offset is
          taller on desktop (sits below the header) and shorter on mobile (where the
          header is more compact). -->
@@ -722,17 +792,21 @@ function onPauseOverlayTap() {
     >
       <div
         class="relative flex items-center gap-3 px-5 py-2 rounded-2xl bg-cream-soft/95 shadow-lg ring-1 ring-black/10"
+        data-tutorial-target="solo-hud"
       >
         <span class="solo-timer text-coral-deep leading-none">{{ soloDisplay }}</span>
         <span class="flex flex-col items-start justify-center leading-tight">
           <span class="text-[10px] font-bold uppercase tracking-widest text-stone-500">Best</span>
           <span class="solo-best text-stone-700">{{ soloBestDisplay }}</span>
         </span>
+        <span class="flex flex-col items-start justify-center leading-tight">
+          <span class="text-[10px] font-bold uppercase tracking-widest text-stone-500">Top</span>
+          <span class="solo-best text-stone-700">{{ soloBestStreakDisplay }}</span>
+        </span>
         <div
           v-for="b in penaltyBubbles"
           :key="b.id"
           class="solo-penalty-bubble"
-          :class="{ 'is-bonus': b.tone === 'bonus' }"
         >
           {{ b.label }}
         </div>
@@ -756,28 +830,62 @@ function onPauseOverlayTap() {
       </div>
     </div>
 
-    <main class="absolute inset-0 isolate" :style="{ paddingTop: isMobile ? '116px' : '0' }">
-      <!-- Combo streak bar floats above the deck in Solo, where the player's eye
-           already lives during a run. Only renders while a streak is in flight
-           (count > 0). Pointer-events disabled — the bar is purely informational
-           and shouldn't intercept clicks on the underlying deck. -->
-      <Transition
-        enter-from-class="opacity-0 translate-y-1"
-        enter-active-class="transition duration-200"
-        leave-active-class="transition duration-200"
-        leave-to-class="opacity-0 translate-y-1"
+    <main
+      class="absolute inset-0 isolate"
+      :class="{ 'is-time-attack': caps.isTimeAttack }"
+      :style="{ paddingTop: isMobile ? '116px' : '0' }"
+    >
+      <!-- Solo combo strip, pinned to the bottom of the play area where it's
+           always in the player's peripheral vision. Two SEPARATE elements:
+           - .solo-streak-area: mounts the combo chip; slow fade out so the
+             cash-in pop is visible during the leave.
+           - .solo-streak-bubbles: bonus bubble track docked to the right of
+             where the chip lives, positioned independently of the chip so the
+             cash-in bubble doesn't reflow to center when the chip unmounts.
+           Pointer-events disabled throughout, purely informational. -->
+      <div
+        v-if="caps.isTimeAttack"
+        class="solo-streak-area"
+        data-tutorial-target="combo-bar"
+        aria-hidden="true"
+      >
+        <Transition name="solo-streak-fade">
+          <div
+            v-if="soloStreak > 0 || comboDemoActive"
+            class="solo-streak"
+          >
+            <span class="solo-streak-label">
+              Combo
+              <!-- Fixed-size slot reserves baseline space; the multiplier inside is
+                   absolutely-positioned so larger tiers visually overflow the chip
+                   without pushing its height. -->
+              <span class="solo-streak-mult-slot">
+                <span
+                  class="solo-streak-mult"
+                  :class="`is-tier-${displayStreakTier}`"
+                  :style="{ transform: `translate(-50%, -50%) rotate(${displayStreakTilt}deg)` }"
+                >×{{ displayStreak }}</span>
+              </span>
+            </span>
+            <div class="solo-streak-bar" title="Combo streak, refills on each slam">
+              <div class="solo-streak-bar-fill" :style="{ width: (displayStreakFill * 100) + '%' }" />
+            </div>
+          </div>
+        </Transition>
+      </div>
+      <TransitionGroup
+        v-if="caps.isTimeAttack"
+        name="solo-combo-bubble"
+        tag="div"
+        class="solo-streak-bubbles"
+        aria-hidden="true"
       >
         <div
-          v-if="caps.isTimeAttack && soloStreak > 0"
-          class="solo-streak"
-          aria-hidden="true"
-        >
-          <span class="solo-streak-label">Combo ×{{ soloStreak }}</span>
-          <div class="solo-streak-bar" title="Combo streak — refills on each slam">
-            <div class="solo-streak-bar-fill" :style="{ width: (soloStreakFill * 100) + '%' }" />
-          </div>
-        </div>
-      </Transition>
+          v-for="b in comboBubbles"
+          :key="b.id"
+          class="solo-combo-bubble"
+        >{{ b.label }}</div>
+      </TransitionGroup>
 
       <GameTable
         :game="game"
@@ -826,16 +934,20 @@ function onPauseOverlayTap() {
         @pick="onBeatPick"
       />
 
-      <!-- v1.2 Chant Power modal — only for the human winner. -->
+      <!-- v1.2 Chant Power modal, only for the human winner.
+           During the Versus tutorial's chant-power step the "Keep all cards"
+           no-op is blocked, the player must actually give cards to learn the
+           mechanic. Outside the tutorial keeping is always allowed. -->
       <ChantPowerModal
         :visible="chantPowerVisibleForHuman"
         :hand="chantPowerHumanHand"
         :recipient-seats="chantPowerRecipientSeats"
         :player-labels="playerLabels"
+        :require-gift="tutorial?.currentStep.value?.id === 'versus-chant-power'"
         @resolve="onChantPowerResolve"
       />
 
-      <!-- Subtle burst confetti at the chant-power winner's seat — fires at the
+      <!-- Subtle burst confetti at the chant-power winner's seat, fires at the
            moment the lottery banner freezes on the winning beat. Distinct from the
            game-over confetti so it doesn't read as "they won the game". -->
       <ChantConfetti
@@ -849,7 +961,7 @@ function onPauseOverlayTap() {
       @resume="onPauseOverlayTap"
     />
 
-    <!-- Big central Start / Play Again CTA for Versus — only shown when nothing is in
+    <!-- Big central Start / Play Again CTA for Versus, only shown when nothing is in
          flight, so it never covers the deck/cards mid-game. With the top-header Start
          button removed, this is the only "begin" affordance for Versus + Playground. -->
     <div
@@ -969,7 +1081,12 @@ function onPauseOverlayTap() {
       />
     </SidePanel>
 
+    <!-- Suppress the Winner overlay during the tutorial: it sits at z-50 with
+         pointer-events: auto, which blocks the tutorial card (z-26) entirely.
+         The tutorial drives its own end-of-run flow via the Next button and
+         the final `versus-done` / `solo-finish` narrative steps. -->
     <WinnerOverlay
+      v-if="!isTutorial"
       :winner-id="winnerId"
       :title="caps.isTimeAttack ? 'Cleared!' : undefined"
       :headline="caps.isTimeAttack && soloLastFinalMs !== null ? formatSoloTime(soloLastFinalMs) : undefined"
@@ -979,9 +1096,9 @@ function onPauseOverlayTap() {
     />
 
     <!-- Snap-drawn surfaces inline on the deck via SnapDrawnOverlay (mounted INSIDE
-         GameTable above) — replaces the previous modal chooser. -->
+         GameTable above), replaces the previous modal chooser. -->
 
-    <!-- Tutorial overlay — bottom speech card + spotlight backdrop. Only mounts when
+    <!-- Tutorial overlay, bottom speech card + spotlight backdrop. Only mounts when
          ?tutorial=1 is in the route. Collapses while the SnapDrawnOverlay is up so the
          chooser chips stay reachable. -->
     <TutorialOverlay
@@ -1000,7 +1117,7 @@ function onPauseOverlayTap() {
       @finish="onTutorialFinish"
     />
 
-    <!-- "How to play" modal — opened from Settings > Display > How to play. Renders the
+    <!-- "How to play" modal, opened from Settings > Display > How to play. Renders the
          same GuideContent the floating GuideCard uses, in a centred backdrop. Lets the
          user reach the rules without the floating card cluttering the table. -->
     <Teleport to="body">
@@ -1083,27 +1200,27 @@ function onPauseOverlayTap() {
   background: var(--color-coral);
   transform: rotate(45deg);
 }
-/* Bonus variant — green pill for time credits (chant chik closing, combo streak).
- * Same animation/position as penalty; just recoloured to a hindo-style green so
- * the player instinctively reads it as "good thing happened". */
-.solo-penalty-bubble.is-bonus {
-  background: var(--color-hindo);
-  box-shadow: 0 6px 14px rgba(80, 140, 95, 0.4);
-}
-.solo-penalty-bubble.is-bonus::after {
-  background: var(--color-hindo);
-}
-
-/* Combo streak bar — floats above the deck on the table so the player's eye
- * already lives there during a run. Centered horizontally; vertical offset puts
- * it just above the central deck area (~38% from top works for both desktop and
- * mobile portrait layouts). */
-.solo-streak {
+/* Solo combo strip, fixed-bottom container that hosts the bar and a separate
+ * bubble track. Sits below the human's hand (which is lifted via `.is-time-attack
+ * :deep(.hand-wrapper)` further down). Container is non-interactive; children
+ * stand on their own. */
+.solo-streak-area {
   position: absolute;
   left: 50%;
-  top: 35%;
-  transform: translate(-50%, -50%);
+  bottom: 16px;
+  transform: translateX(-50%);
   z-index: 18;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+@media (max-width: 767px) {
+  .solo-streak-area {
+    bottom: max(10px, env(safe-area-inset-bottom));
+  }
+}
+.solo-streak {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1112,14 +1229,87 @@ function onPauseOverlayTap() {
   background: rgba(252, 246, 230, 0.95);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.22);
   pointer-events: none;
+  /* Tier-3 combo numbers can be 2× the chip height, let them visibly overflow
+   * the rounded pill instead of stretching it. */
+  overflow: visible;
+}
+/* Bonus bubble track, pinned at a FIXED offset right of play-area center, at
+ * the same bottom as the combo chip. Deliberately NOT a child of .solo-streak-area
+ * so when the chip unmounts during fade-out, this track's coordinate space is
+ * unaffected (otherwise the bubble reflows to center because the chip's width
+ * collapses to 0). The 110px left offset places it just outside the chip's
+ * right edge (chip is ~200px wide, half = 100px, +10px gap). */
+.solo-streak-bubbles {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  margin-left: 110px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  pointer-events: none;
+  z-index: 18;
 }
 @media (max-width: 767px) {
-  .solo-streak {
-    /* On mobile, the table is shifted down for the header. Nudge accordingly so
-     * the bar still sits just above the deck rather than behind the chant ticker. */
-    top: 40%;
+  .solo-streak-bubbles {
+    bottom: max(10px, env(safe-area-inset-bottom));
   }
 }
+.solo-combo-bubble {
+  padding: 3px 9px;
+  border-radius: 9999px;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-weight: 800;
+  font-size: 0.85rem;
+  color: #fff8ee;
+  background: var(--color-hindo);
+  box-shadow: 0 4px 10px rgba(80, 140, 95, 0.4);
+  white-space: nowrap;
+  position: relative;
+}
+/* Speech-bubble tail pointing back at the combo bar. */
+.solo-combo-bubble::before {
+  content: '';
+  position: absolute;
+  left: -4px;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  background: var(--color-hindo);
+  transform: translateY(-50%) rotate(45deg);
+}
+
+/* Combo bar fade, slow leave so the cash-in pop is visible during dismissal.
+ * Enter is snappy. */
+.solo-streak-fade-enter-active {
+  transition: opacity 180ms ease-out, transform 180ms ease-out;
+}
+.solo-streak-fade-leave-active {
+  transition: opacity 600ms ease-in, transform 600ms ease-in;
+}
+.solo-streak-fade-enter-from,
+.solo-streak-fade-leave-to {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+/* Combo bonus bubble in/out. Slide in from the bar's edge; fade up and out. */
+.solo-combo-bubble-enter-active {
+  transition: opacity 180ms ease-out, transform 220ms cubic-bezier(.2, .7, .2, 1);
+}
+.solo-combo-bubble-leave-active {
+  transition: opacity 360ms ease-in, transform 360ms ease-in;
+}
+.solo-combo-bubble-enter-from {
+  opacity: 0;
+  transform: translateX(-8px) scale(0.7);
+}
+.solo-combo-bubble-leave-to {
+  opacity: 0;
+  transform: translateY(-8px) scale(0.95);
+}
+
 .solo-streak-label {
   font-family: var(--font-body);
   font-weight: 800;
@@ -1128,6 +1318,88 @@ function onPauseOverlayTap() {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+/* Reserved baseline slot for the multiplier, sized to match the "Combo" text
+ * height so the pill stays its original height regardless of which tier the
+ * combo is in. The actual number is absolutely-positioned inside, free to
+ * overflow vertically + horizontally without affecting layout. */
+.solo-streak-mult-slot {
+  position: relative;
+  display: inline-block;
+  width: 1.6em;
+  height: 1em;
+  vertical-align: middle;
+}
+/* The ×N number itself. Sized in stages by streak tier; positioned at the slot's
+ * center and translated -50%/-50% (combined with the inline rotate) so larger
+ * tiers grow outward from the chip rather than pushing it. Tilt is randomized
+ * on every slam via the inline `rotate(...)`. */
+.solo-streak-mult {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  font-size: 0.78rem;
+  line-height: 1;
+  font-weight: 900;
+  white-space: nowrap;
+  transform-origin: 50% 50%;
+  transition: font-size 140ms ease-out, color 140ms ease-out, transform 180ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  will-change: transform;
+  /* Table-cream outline so the number stays readable when it overflows onto
+   * card art, the chip, or any busy background, using the table tone keeps it
+   * on-theme rather than introducing pure white. `-webkit-text-stroke` gives a
+   * true scaling outline in WebKit/Blink; the 8-direction text-shadow is the
+   * Firefox fallback (and stacks nicely with the coral glow on tier 2+ via the
+   * later shadow layers). */
+  -webkit-text-stroke: 2px var(--color-table);
+  paint-order: stroke fill;
+  text-shadow:
+    -1px -1px 0 var(--color-table),
+     1px -1px 0 var(--color-table),
+    -1px  1px 0 var(--color-table),
+     1px  1px 0 var(--color-table),
+     0   -1px 0 var(--color-table),
+     0    1px 0 var(--color-table),
+    -1px  0   0 var(--color-table),
+     1px  0   0 var(--color-table);
+}
+.solo-streak-mult.is-tier-1 {
+  font-size: 1.05rem;
+  -webkit-text-stroke-width: 2.5px;
+}
+.solo-streak-mult.is-tier-2 {
+  font-size: 1.5rem;
+  color: var(--color-coral-deep);
+  -webkit-text-stroke-width: 3px;
+  text-shadow:
+    -2px -2px 0 var(--color-table),
+     2px -2px 0 var(--color-table),
+    -2px  2px 0 var(--color-table),
+     2px  2px 0 var(--color-table),
+     0   -2px 0 var(--color-table),
+     0    2px 0 var(--color-table),
+    -2px  0   0 var(--color-table),
+     2px  0   0 var(--color-table),
+     0    0   6px rgba(232, 90, 79, 0.35);
+}
+.solo-streak-mult.is-tier-3 {
+  font-size: 2.1rem;
+  color: var(--color-coral-deep);
+  -webkit-text-stroke-width: 4px;
+  text-shadow:
+    -3px -3px 0 var(--color-table),
+     3px -3px 0 var(--color-table),
+    -3px  3px 0 var(--color-table),
+     3px  3px 0 var(--color-table),
+     0   -3px 0 var(--color-table),
+     0    3px 0 var(--color-table),
+    -3px  0   0 var(--color-table),
+     3px  0   0 var(--color-table),
+     0    0   10px rgba(232, 90, 79, 0.55),
+     0    0   18px rgba(232, 90, 79, 0.35);
 }
 .solo-streak-bar {
   width: 90px;
@@ -1211,9 +1483,9 @@ function onPauseOverlayTap() {
   box-shadow: 0 4px 10px rgba(0, 0, 0, 0.28);
   transform-origin: top center;
   /* Three-stage animation system:
-   *  1. solo-start-hint-in   — one-shot pop-in for entry (transform + opacity).
-   *  2. solo-start-hint-pulse — infinite opacity throb (no transform contention).
-   *  3. solo-start-hint-emphasis — every 5s, a quick wiggle nudges the eye back to the
+   *  1. solo-start-hint-in  , one-shot pop-in for entry (transform + opacity).
+   *  2. solo-start-hint-pulse, infinite opacity throb (no transform contention).
+   *  3. solo-start-hint-emphasis, every 5s, a quick wiggle nudges the eye back to the
    *     hint if the player still hasn't slammed. Delayed 5s so the first emphasis fires
    *     5s after the entrance; the keyframes are calm for ~90% of each cycle and only
    *     the last 10% does the wiggle, keeping the rest of the time visually quiet. */
@@ -1249,7 +1521,7 @@ function onPauseOverlayTap() {
 }
 /* Periodic emphasis: most of the 5s cycle stays at scale(1), then a quick three-beat
  * wobble at the END nudges the eye back to the pill. Because the animation has a 5s
- * delay AND a 5s duration, the wobble lands at t=5s, t=10s, t=15s ... — once for every
+ * delay AND a 5s duration, the wobble lands at t=5s, t=10s, t=15s ..., once for every
  * 5s the player has been idle. */
 @keyframes solo-start-hint-emphasis {
   0%, 88%, 100% { transform: scale(1); }
@@ -1312,7 +1584,7 @@ function onPauseOverlayTap() {
   width: min(100%, 480px);
   height: min(88dvh, 720px);
   border-radius: 18px;
-  /* No `overflow: hidden` here — the close button is absolutely positioned at `top: -32px`
+  /* No `overflow: hidden` here, the close button is absolutely positioned at `top: -32px`
    * (sitting just above the card, matching the table-guide mobile modal), and clipping
    * the card would hide it. GuideContent has no background of its own and `.guide-grid`
    * scrolls internally, so the card's rounded corners still render correctly. */

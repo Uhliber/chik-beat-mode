@@ -2,9 +2,9 @@ import type { CardPrompt, ChantWord, BaseSide } from './types';
 
 /**
  * v1.1+: every card carries a numeric `count` (0–10) used only when the Chant Trigger
- * fires. v1.1 also introduced the Chant Chik variant (`isChantChik = true`) — visually
+ * fires. v1.1 also introduced the Chant Chik variant (`isChantChik = true`), visually
  * a Chik card, but when it CLOSES a chant sequence it fires the trigger. The Halo-Halo
- * Chik is a regular Free Chik with count 5 — it never has isChantChik.
+ * Chik is a regular Free Chik with count 5, it never has isChantChik.
  *
  * Art set: the v1.1 art under `/new/` encodes count + chant-chik distinction directly in
  * the filename, e.g. `right-chik-4.png`, `right-chant-chik-6.png`, `fetch-riki-7.png`.
@@ -35,7 +35,7 @@ export class Card {
   }
 
   /** True iff this card's chant word matches the current chant beat. Chant Chik cards
-   *  still match the Chik beat — they're a variant of Chik, not a separate word. */
+   *  still match the Chik beat, they're a variant of Chik, not a separate word. */
   matchesBeat(beat: ChantWord): boolean {
     return this.word === beat;
   }

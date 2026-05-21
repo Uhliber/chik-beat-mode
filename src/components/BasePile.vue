@@ -13,12 +13,12 @@ const props = defineProps<{
   secondaryLabel?: string;
   /** When true, the pile glows to indicate it's the current drop target. */
   highlighted?: boolean;
-  /** Card IDs that are currently flying in — hidden until landing. */
+  /** Card IDs that are currently flying in, hidden until landing. */
   hiddenIds?: Set<string>;
-  /** Visible card width in px — applied uniformly to every card in the pile so the top
+  /** Visible card width in px, applied uniformly to every card in the pile so the top
    *  card always sits cleanly atop a same-size stack (no mismatched edges). */
   cardWidth?: number;
-  /** When true, the top card is rendered cropped to its upper half with a soft fade —
+  /** When true, the top card is rendered cropped to its upper half with a soft fade -
    *  used by the Extra Large promptSize so a huge card doesn't overflow the layout. */
   topCardCropTop?: boolean;
   /** How many top cards to render. Older cards are completely hidden behind the top card. */
@@ -45,12 +45,12 @@ const visible = computed(() => {
   return cards.slice(-visibleTop.value);
 });
 
-/** Per-card stack-thickness offset (px). Tiny — just enough to imply layering. */
+/** Per-card stack-thickness offset (px). Tiny, just enough to imply layering. */
 const PEEK_PX = 1.5;
 
 /**
  * Deterministic pseudo-random 0..1 from a card id. We need stable jitter per card so the
- * pile doesn't reshuffle on every re-render — `Math.random` here would visibly twitch each
+ * pile doesn't reshuffle on every re-render, `Math.random` here would visibly twitch each
  * frame Vue updates the parent. FNV-1a is fast, well-distributed, and trivially seedable.
  */
 function hash01(s: string, seed = 0): number {
@@ -62,7 +62,7 @@ function hash01(s: string, seed = 0): number {
   return (h >>> 0) / 4294967295;
 }
 
-/** Per-card jitter ranges. Subtle — too much rotation reads as "card art is crooked" rather
+/** Per-card jitter ranges. Subtle, too much rotation reads as "card art is crooked" rather
  *  than "stack of real cards". */
 const JITTER_ROT_DEG = 5;  // ±2.5°
 const JITTER_PX = 3;       // ±1.5px

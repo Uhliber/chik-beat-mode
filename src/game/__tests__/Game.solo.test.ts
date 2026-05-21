@@ -90,7 +90,7 @@ describe('Game (Solo)', () => {
     g.submitSoloAction({ type: 'slam', cardId: leftWally!.id, baseSide: 'left' });
     expect(g.soloActivePrompt).toBe('left');
 
-    // Pull in a RIGHT-typed Hindo and slam it on LEFT base. Card's own prompt is right —
+    // Pull in a RIGHT-typed Hindo and slam it on LEFT base. Card's own prompt is right -
     // but the gate is on the PREVIOUS prompt (left), so left base is required. Legal.
     let rightHindo = g.players[0].hand.find((c) => c.prompt === 'right' && c.word === 'hindo');
     if (!rightHindo) {
@@ -155,7 +155,7 @@ describe('Game (Solo)', () => {
     const { Card: CardCtor } = await import('../Card');
     const halo = g.players[0].hand.find((c) => c.isHaloHalo)!;
     g.submitSoloAction({ type: 'slam', cardId: halo.id, baseSide: 'left' });
-    // After halo-halo the chant is at index 1 (wally). Don't advance — play a
+    // After halo-halo the chant is at index 1 (wally). Don't advance, play a
     // chant chik on a non-chik beat would be wrong-beat anyway, so we need to
     // land on the OPENING chik (index 0, after looping). Advance through the
     // chant once to land back on opening chik.
@@ -164,7 +164,7 @@ describe('Game (Solo)', () => {
     g.players[0].hand.push(chantChik);
     events.length = 0;
     g.submitSoloAction({ type: 'slam', cardId: chantChik.id, baseSide: 'left' });
-    // Plays successfully (chik matches chik beat) but NO bonus — only closing chik fires it.
+    // Plays successfully (chik matches chik beat) but NO bonus, only closing chik fires it.
     expect(events.find((e) => e.kind === 'soloBonus')).toBeUndefined();
   });
 

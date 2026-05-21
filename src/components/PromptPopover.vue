@@ -5,7 +5,7 @@
  * readable size, recolored to the prompt card's chant word color.
  *
  * During a Chant Trigger recital, a "counter pip" is highlighted on each player as
- * the chant counts up — `recitalStep` is the count owed to this seat so far (i.e. how
+ * the chant counts up, `recitalStep` is the count owed to this seat so far (i.e. how
  * many of this seat's count value have been "spoken" during the recital so far). The
  * pip fills cleanly to show progress; the seat with `recitalActive=true` glows.
  *
@@ -20,7 +20,7 @@ import type { PromptInfoSize } from '@/composables/userPreferences';
 
 const props = defineProps<{
   card: Card | null;
-  /** Display size — 'off' hides the popover. */
+  /** Display size, 'off' hides the popover. */
   size?: PromptInfoSize;
   /** What to render. 'combined' = prompt icon + count icon side-by-side (AI seats).
    *  'icon' = prompt icon only (human, anchored LEFT of the prompt card).
@@ -36,7 +36,7 @@ const mode = computed<'combined' | 'icon' | 'count'>(() => props.mode ?? 'combin
 const showIcon = computed(() => mode.value === 'combined' || mode.value === 'icon');
 const showCount = computed(() => mode.value === 'combined' || mode.value === 'count');
 
-/** Tier scales — each step roughly 1.4× the previous. Small ≈ the legacy XS size. */
+/** Tier scales, each step roughly 1.4× the previous. Small ≈ the legacy XS size. */
 const SIZE_PX: Record<Exclude<PromptInfoSize, 'off'>, { icon: number; count: number; gap: number; padX: number; padY: number }> = {
   small:  { icon: 22, count: 20, gap: 5,  padX: 8,  padY: 5 },
   medium: { icon: 32, count: 28, gap: 7,  padX: 10, padY: 6 },
@@ -45,7 +45,7 @@ const SIZE_PX: Record<Exclude<PromptInfoSize, 'off'>, { icon: number; count: num
 const sizePx = computed(() => SIZE_PX[(effectiveSize.value === 'off' ? 'medium' : effectiveSize.value)]);
 
 /** Inline style for the popover container.
- *  - combined (AI): horizontal pill — gap + asymmetric padding.
+ *  - combined (AI): horizontal pill, gap + asymmetric padding.
  *  - icon / count (HUMAN): force a circular badge with explicit symmetric dimensions
  *    matching the icon size + padding. The fixed width/height beats trying to coerce
  *    a flex pill into a circle with aspect-ratio. */

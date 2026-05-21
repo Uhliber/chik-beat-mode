@@ -7,7 +7,7 @@
  * /settings route reached from the main menu) import from here so the two
  * surfaces can never drift on defaults or storage keys. Crucially, the
  * "Reset to defaults" actions in either surface end up resetting the same
- * values — without this shared module they were silently diverging
+ * values, without this shared module they were silently diverging
  * (different guide-on-table behaviour on mobile, missing player-count /
  * speed resets from the menu, etc.).
  */
@@ -31,6 +31,7 @@ const CHANT_RECITAL_SPEED_VALUES: readonly ChantRecitalSpeed[] = ['slow', 'norma
 /* ====================== Capacitor Preferences keys ====================== */
 export const PREF_KEYS = {
   soloBestTime: 'chik-solo-best-time-ms',
+  soloBestStreak: 'chik-solo-best-streak',
   wispEnabled: 'chik-wisp-enabled',
   strictPrompts: 'chik-strict-prompts',
   aiSkill: 'chik-ai-skill',
@@ -44,9 +45,9 @@ export const PREF_KEYS = {
   drawKeyEnabled: 'chik-draw-key-enabled',
 } as const;
 
-/* ===== Canonical defaults — used at load-time AND by "Reset to defaults" ===== */
+/* ===== Canonical defaults, used at load-time AND by "Reset to defaults" ===== */
 
-/** Audio mute is not persisted (lives in the useBeatAudio singleton) — included
+/** Audio mute is not persisted (lives in the useBeatAudio singleton), included
  *  here only so a reset has one canonical value to write through `setMuted`. */
 export const DEFAULT_AUDIO_MUTED = false;
 export const DEFAULT_WISP_ENABLED = true;
@@ -102,6 +103,24 @@ export function saveSoloBestTime(ms: number): void {
   void Preferences.set({ key: PREF_KEYS.soloBestTime, value: String(Math.round(ms)) }).catch(() => undefined);
 }
 
+/* ====================== Solo best (highest) combo ====================== */
+/** Highest combo streak ever reached across all Solo Time Attack runs.
+ *  Persisted independently of best time, a player who never beats their
+ *  fastest run can still see their highest streak grow over time. */
+export async function loadSoloBestStreak(): Promise<number | null> {
+  try {
+    const { value } = await Preferences.get({ key: PREF_KEYS.soloBestStreak });
+    if (!value) return null;
+    const n = Number(value);
+    return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
+  } catch {
+    return null;
+  }
+}
+export function saveSoloBestStreak(n: number): void {
+  void Preferences.set({ key: PREF_KEYS.soloBestStreak, value: String(Math.round(n)) }).catch(() => undefined);
+}
+
 /* =============================== Wisp =============================== */
 export const loadWispEnabled = () => readBool(PREF_KEYS.wispEnabled, DEFAULT_WISP_ENABLED);
 export const saveWispEnabled = (on: boolean) => writeBool(PREF_KEYS.wispEnabled, on);
@@ -111,7 +130,7 @@ export const loadEventLogEnabled = () => readBool(PREF_KEYS.eventLogEnabled, DEF
 export const saveEventLogEnabled = (on: boolean) => writeBool(PREF_KEYS.eventLogEnabled, on);
 
 /* ========================== Guide-on-table ========================== */
-/** Tri-state: explicitly true, explicitly false, or `null` (no preference set —
+/** Tri-state: explicitly true, explicitly false, or `null` (no preference set -
  *  the consumer should fall back to a platform-aware default). */
 export async function loadGuideOnTable(): Promise<boolean | null> {
   try {

@@ -6,7 +6,7 @@ import type { ChantWord } from '@/game/types';
 const props = defineProps<{
   /**
    * Continuous virtual position of the most-recently-played beat. The ticker's CENTER cell
-   * shows this word — matching the glowing card on the table. null = no slam yet.
+   * shows this word, matching the glowing card on the table. null = no slam yet.
    */
   lastPlayedPos: number | null;
   /** Continuous virtual position of the chant's NEXT REQUIRED beat. */

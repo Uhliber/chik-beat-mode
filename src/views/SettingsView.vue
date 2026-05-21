@@ -4,12 +4,12 @@
  * used in-game so there's a single source of truth for what "settings" looks like.
  *
  * We don't have an active game here, so player count / speed / restart / back-to-menu
- * are hidden — only Audio, Display (turn indicator), and About remain meaningful.
+ * are hidden, only Audio, Display (turn indicator), and About remain meaningful.
  *
  * IMPORTANT: every preference read, write, and DEFAULT here goes through
  * `composables/userPreferences`. That module is the same one `useGame` uses, so the
  * standalone view and the in-game settings panel can never disagree on storage keys
- * or default values — including for "Reset to defaults".
+ * or default values, including for "Reset to defaults".
  */
 import { computed, ref } from 'vue';
 import { useRouter } from 'vue-router';
@@ -44,7 +44,7 @@ const { audioMuted, setMuted } = useBeatAudio();
 
 const wispEnabled = ref(DEFAULT_WISP_ENABLED);
 const eventLogEnabled = ref(DEFAULT_EVENT_LOG_ENABLED);
-/** Tri-state mirror of the persisted preference. `null` = "no explicit pref set" — the
+/** Tri-state mirror of the persisted preference. `null` = "no explicit pref set", the
  *  view-layer `guideOnTable` computed below resolves it to the platform-aware default
  *  (desktop on, mobile off), so a reset behaves identically here and in the in-game
  *  settings panel. */

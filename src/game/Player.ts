@@ -7,7 +7,7 @@ export class Player {
   readonly seatIndex: number;
   hand: Card[] = [];
   /**
-   * Versus only — cards played in front of this player. Older cards stay stacked underneath
+   * Versus only, cards played in front of this player. Older cards stay stacked underneath
    * but are inert; only the top card acts as the active prompt.
    */
   promptStack: Card[] = [];
@@ -34,12 +34,12 @@ export class Player {
     return this.hand.find((c) => c.matchesBeat(beat)) ?? null;
   }
 
-  /** Versus only — the card currently sitting face-up in front of this player. */
+  /** Versus only, the card currently sitting face-up in front of this player. */
   get topPrompt(): Card | null {
     return this.promptStack.length > 0 ? this.promptStack[this.promptStack.length - 1] : null;
   }
 
-  /** Versus only — what prompt is currently dictating this player's next play. */
+  /** Versus only, what prompt is currently dictating this player's next play. */
   get effectivePrompt(): CardPrompt | null {
     return this.topPrompt?.prompt ?? null;
   }
