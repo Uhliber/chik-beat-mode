@@ -108,6 +108,9 @@ export function useGame(opts: UseGameOptions = {}) {
   // ---- Solo timer state ----
   const soloElapsedMs = ref(0);
   const soloPenaltyMs = ref(0);
+  /** Total accumulated time credit from bonuses (chant-chik closing, combo streak,
+   *  etc). Subtracted from the displayed clock by PlayView. */
+  const soloBonusMs = ref(0);
   const soloRunning = ref(false);
   const soloBestTimeMs = ref<number | null>(null);
   const soloLastFinalMs = ref<number | null>(null);
@@ -115,6 +118,75 @@ export function useGame(opts: UseGameOptions = {}) {
   void loadSoloBestTime().then((ms) => {
     if (ms !== null) soloBestTimeMs.value = ms;
   });
+
+  // ---- Solo combo-streak state ----
+  //
+  // Each consecutive legal slam refills a streak bar; the bar drains over
+  // STREAK_BAR_MS wall-clock time. When the bar empties (or a penalty hits) the
+  // accumulated streak converts to a time credit and the streak resets.
+  //
+  // Drawing a card is NEUTRAL — the bar keeps depleting but the streak doesn't
+  // break. Penalties break the streak immediately. The bonus formula rewards
+  // sustained play without ballooning the time savings:
+  //
+  //   bonus(streak) = max(0, streak - STREAK_MIN_TO_AWARD + 1) × PER_STREAK_MS
+  //
+  //   streak  3 →   200ms       streak 10 → 1600ms
+  //   streak  5 →   600ms       streak 15 → 2600ms
+  //   streak  7 →  1000ms       streak 20 → 3600ms
+  const STREAK_BAR_MS = 3000;
+  const STREAK_MIN_TO_AWARD = 3;
+  const PER_STREAK_BONUS_MS = 200;
+  const soloStreak = ref(0);
+  /** Remaining bar fill in ms (0..STREAK_BAR_MS). 0 = bar empty, no streak. */
+  const soloStreakBarMs = ref(0);
+  let soloStreakRafId: number | null = null;
+  let soloStreakLastTickAt = 0;
+  /** Most recent streak bonus awarded — drives a one-shot bubble in PlayView. */
+  const soloLastStreakBonus = ref<{ id: number; streak: number; bonusMs: number } | null>(null);
+  let nextStreakBonusId = 1;
+
+  function computeStreakBonus(streak: number): number {
+    if (streak < STREAK_MIN_TO_AWARD) return 0;
+    return (streak - STREAK_MIN_TO_AWARD + 1) * PER_STREAK_BONUS_MS;
+  }
+
+  function finalizeStreak(): void {
+    const s = soloStreak.value;
+    if (s >= STREAK_MIN_TO_AWARD) {
+      const bonusMs = computeStreakBonus(s);
+      soloBonusMs.value += bonusMs;
+      soloLastStreakBonus.value = { id: nextStreakBonusId++, streak: s, bonusMs };
+      beatAudio.ding('high');
+    }
+    soloStreak.value = 0;
+    soloStreakBarMs.value = 0;
+    if (soloStreakRafId !== null) {
+      cancelAnimationFrame(soloStreakRafId);
+      soloStreakRafId = null;
+    }
+  }
+
+  function pulseStreak(): void {
+    soloStreak.value += 1;
+    soloStreakBarMs.value = STREAK_BAR_MS;
+    soloStreakLastTickAt = performance.now();
+    if (soloStreakRafId === null) {
+      const tick = () => {
+        if (soloStreakBarMs.value <= 0) {
+          soloStreakRafId = null;
+          finalizeStreak();
+          return;
+        }
+        const now = performance.now();
+        const dt = now - soloStreakLastTickAt;
+        soloStreakLastTickAt = now;
+        soloStreakBarMs.value = Math.max(0, soloStreakBarMs.value - dt);
+        soloStreakRafId = requestAnimationFrame(tick);
+      };
+      soloStreakRafId = requestAnimationFrame(tick);
+    }
+  }
 
   // Turn-indicator wisp (Versus only). Persisted, default ON.
   const wispEnabled = ref(DEFAULT_WISP_ENABLED);
@@ -532,6 +604,11 @@ export function useGame(opts: UseGameOptions = {}) {
           const targetIsHuman = !!target && !target.isAI;
           beatAudio.ding(targetIsHuman ? 'high' : 'middle');
         }
+        // Solo combo streak — every successful slam pulses the streak: increment +
+        // refill the depletion bar. Penalties break the streak (see soloPenalty
+        // handler below). Drawing is neutral so the bar keeps depleting between
+        // forced draws.
+        if (e.kind === 'soloSlam') pulseStreak();
         // Snapshot flight geometry synchronously — before Vue's re-render shifts the
         // source seat's bounding box. The Game.emit happens after the card has moved
         // into its destination, so we can find the card on the target side too.
@@ -547,6 +624,16 @@ export function useGame(opts: UseGameOptions = {}) {
         if (modeCaps(mode.value).isTimeAttack) {
           soloPenaltyMs.value += e.penaltyMs;
           beatAudio.fx('fail');
+          // Mistake → end the streak immediately. finalizeStreak() awards any
+          // pending bonus first, then resets.
+          finalizeStreak();
+        }
+        break;
+      case 'soloBonus':
+        if (modeCaps(mode.value).isTimeAttack) {
+          soloBonusMs.value += e.bonusMs;
+          // High-pitch ding to differentiate bonus from the regular slam success.
+          beatAudio.ding('high');
         }
         break;
       case 'chantAdvanced':
@@ -705,7 +792,12 @@ export function useGame(opts: UseGameOptions = {}) {
       case 'winner':
         if (modeCaps(mode.value).isTimeAttack) {
           stopSoloTimer();
-          const final = soloElapsedMs.value + soloPenaltyMs.value;
+          // Cash in any in-flight streak before computing the final time. Without
+          // this, a player who finished the round mid-streak would lose the
+          // accumulated bonus to the bar's eventual depletion (which never fires
+          // after the game ends).
+          finalizeStreak();
+          const final = Math.max(0, soloElapsedMs.value + soloPenaltyMs.value - soloBonusMs.value);
           soloLastFinalMs.value = final;
           if (soloBestTimeMs.value === null || final < soloBestTimeMs.value) {
             soloBestTimeMs.value = final;
@@ -744,8 +836,14 @@ export function useGame(opts: UseGameOptions = {}) {
     stopSoloTimer();
     soloElapsedMs.value = 0;
     soloPenaltyMs.value = 0;
+    soloBonusMs.value = 0;
     soloLastFinalMs.value = null;
     soloIsNewBest.value = false;
+    // Streak — cancel raf and zero everything so a new round starts clean.
+    if (soloStreakRafId !== null) { cancelAnimationFrame(soloStreakRafId); soloStreakRafId = null; }
+    soloStreak.value = 0;
+    soloStreakBarMs.value = 0;
+    soloLastStreakBonus.value = null;
     pendingFlights.value = [];
     pendingSnapDraw.value = null;
     setupPhase.value = 'play';
@@ -942,6 +1040,11 @@ export function useGame(opts: UseGameOptions = {}) {
     lastPlayedVirtualPos,
     soloElapsedMs,
     soloPenaltyMs,
+    soloBonusMs,
+    soloStreak,
+    soloStreakBarMs,
+    soloStreakBarMaxMs: STREAK_BAR_MS,
+    soloLastStreakBonus,
     soloRunning,
     soloBestTimeMs,
     soloLastFinalMs,

@@ -60,6 +60,10 @@ export type SoloAction =
 
 export type SoloPenaltyReason = 'wrong-base' | 'wrong-beat' | 'unnecessary-draw';
 
+/** Solo bonus reasons — flip side of penalties. Each triggers a green time-credit
+ *  bubble. Extensible: future bonuses (perfect-run, fast-finish, etc.) drop in here. */
+export type SoloBonusReason = 'chant-chik-closing';
+
 export type SoloActionResult =
   | { type: 'opened'; cardId: string; baseSide: BaseSide }
   | { type: 'success'; cardId: string; baseSide: BaseSide }
@@ -121,6 +125,7 @@ export type GameEvent =
   | { kind: 'soloSlam'; cardId: string; baseSide: BaseSide; cardWord: ChantWord; cardPrompt: CardPrompt }
   | { kind: 'soloDraw'; cardId: string }
   | { kind: 'soloPenalty'; reason: SoloPenaltyReason; cardId?: string; baseSide?: BaseSide; penaltyMs: number }
+  | { kind: 'soloBonus'; reason: SoloBonusReason; bonusMs: number; cardId?: string; baseSide?: BaseSide }
   // Versus events
   | { kind: 'versusPlay'; playerId: PlayerId; cardId: string; targetSeatIndex: number; cardWord: ChantWord; cardPrompt: CardPrompt }
   | { kind: 'versusDraw'; playerId: PlayerId; cardId: string | null; from: 'pile' | 'hand'; fromPlayerId?: PlayerId }

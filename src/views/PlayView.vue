@@ -55,6 +55,11 @@ const {
   lastPlayedVirtualPos,
   soloElapsedMs,
   soloPenaltyMs,
+  soloBonusMs,
+  soloStreak,
+  soloStreakBarMs,
+  soloStreakBarMaxMs,
+  soloLastStreakBonus,
   soloBestTimeMs,
   soloLastFinalMs,
   soloIsNewBest,
@@ -288,27 +293,61 @@ function formatSoloTime(ms: number): string {
   return `${m}:${s.toString().padStart(2, '0')}.${cs.toString().padStart(2, '0')}`;
 }
 
-const soloDisplayMs = computed(() => soloElapsedMs.value + soloPenaltyMs.value);
+/** Displayed time = elapsed + penalties − bonuses, clamped to zero. */
+const soloDisplayMs = computed(() => Math.max(0, soloElapsedMs.value + soloPenaltyMs.value - soloBonusMs.value));
 const soloDisplay = computed(() => formatSoloTime(soloDisplayMs.value));
 const soloBestDisplay = computed(() =>
   soloBestTimeMs.value === null ? '—' : formatSoloTime(soloBestTimeMs.value),
 );
 
-// Floating "+Ns" bubbles — one per soloPenalty event.
-const penaltyBubbles = ref<{ id: number; label: string }[]>([]);
+// Floating "±Ns" bubbles — penalties (red, "+2s") and bonuses (green, "-1s" or
+// "-Ns combo"). Same animation/position, distinguished by `tone`.
+interface TimeBubble { id: number; label: string; tone: 'penalty' | 'bonus'; }
+const penaltyBubbles = ref<TimeBubble[]>([]);
 let penaltyBubbleId = 0;
+function pushBubble(label: string, tone: 'penalty' | 'bonus') {
+  const id = ++penaltyBubbleId;
+  penaltyBubbles.value.push({ id, label, tone });
+  setTimeout(() => {
+    penaltyBubbles.value = penaltyBubbles.value.filter((b) => b.id !== id);
+  }, 1400);
+}
 watch(
   () => state.events.length,
   (n, prev) => {
-    if (!caps.value.isTimeAttack || n <= (prev ?? 0)) return;
-    const ev = state.events[state.events.length - 1] as GameEvent | undefined;
-    if (ev?.kind !== 'soloPenalty') return;
-    const id = ++penaltyBubbleId;
-    penaltyBubbles.value.push({ id, label: `+${(ev.penaltyMs / 1000).toFixed(0)}s` });
-    setTimeout(() => {
-      penaltyBubbles.value = penaltyBubbles.value.filter((b) => b.id !== id);
-    }, 1400);
+    if (!caps.value.isTimeAttack) return;
+    const from = prev ?? 0;
+    if (n <= from) return;
+    // Walk EVERY new event in this batch — soloSlam often fires alongside soloBonus
+    // and chantAdvanced in the same synchronous emit burst, so peeking only at the
+    // tail-most event would miss the bonus.
+    for (let i = from; i < n; i++) {
+      const ev = state.events[i] as GameEvent | undefined;
+      if (!ev) continue;
+      if (ev.kind === 'soloPenalty') {
+        pushBubble(`+${(ev.penaltyMs / 1000).toFixed(0)}s`, 'penalty');
+      } else if (ev.kind === 'soloBonus') {
+        pushBubble(`−${(ev.bonusMs / 1000).toFixed(0)}s`, 'bonus');
+      }
+    }
   },
+);
+
+// Streak bonus bubble — fires when a streak finalizes (bar depletes or penalty
+// breaks it). Watches the ref's `id` so each finalization spawns one bubble.
+watch(
+  () => soloLastStreakBonus.value?.id,
+  (id) => {
+    if (!id || !caps.value.isTimeAttack) return;
+    const b = soloLastStreakBonus.value;
+    if (!b) return;
+    pushBubble(`−${(b.bonusMs / 1000).toFixed(1)}s ×${b.streak} COMBO`, 'bonus');
+  },
+);
+
+/** Streak bar fill ratio for the HUD bar (0..1). 0 when no streak in flight. */
+const soloStreakFill = computed(() =>
+  soloStreakBarMaxMs > 0 ? soloStreakBarMs.value / soloStreakBarMaxMs : 0,
 );
 
 watch(playerCount, () => {
@@ -667,10 +706,30 @@ function onPauseOverlayTap() {
           v-for="b in penaltyBubbles"
           :key="b.id"
           class="solo-penalty-bubble"
+          :class="{ 'is-bonus': b.tone === 'bonus' }"
         >
           {{ b.label }}
         </div>
       </div>
+
+      <!-- Combo streak bar. Surfaces only while a streak is in flight (count > 0)
+           and depletes over ~3s wall-clock per slam. Each successful slam refills
+           it; on depletion or penalty the streak finalizes and converts to a time
+           credit (bubble fires above via the streak watcher). -->
+      <Transition
+        enter-from-class="opacity-0 translate-y-1"
+        enter-active-class="transition duration-200"
+        leave-active-class="transition duration-200"
+        leave-to-class="opacity-0 translate-y-1"
+      >
+        <div v-if="soloStreak > 0" class="solo-streak">
+          <span class="solo-streak-label">Combo ×{{ soloStreak }}</span>
+          <div class="solo-streak-bar" :title="`Combo streak — bar refills on each slam`">
+            <div class="solo-streak-bar-fill" :style="{ width: (soloStreakFill * 100) + '%' }" />
+          </div>
+        </div>
+      </Transition>
+
       <div class="pointer-events-none">
         <ChantTicker
           :last-played-pos="lastPlayedVirtualPos"
@@ -978,6 +1037,7 @@ function onPauseOverlayTap() {
   box-shadow: 0 6px 14px rgba(220, 80, 60, 0.45);
   animation: solo-penalty-pop 1.4s cubic-bezier(.2, .7, .2, 1) forwards;
   pointer-events: none;
+  white-space: nowrap;
 }
 .solo-penalty-bubble::after {
   content: '';
@@ -988,6 +1048,50 @@ function onPauseOverlayTap() {
   height: 10px;
   background: var(--color-coral);
   transform: rotate(45deg);
+}
+/* Bonus variant — green pill for time credits (chant chik closing, combo streak).
+ * Same animation/position as penalty; just recoloured to a hindo-style green so
+ * the player instinctively reads it as "good thing happened". */
+.solo-penalty-bubble.is-bonus {
+  background: var(--color-hindo);
+  box-shadow: 0 6px 14px rgba(80, 140, 95, 0.4);
+}
+.solo-penalty-bubble.is-bonus::after {
+  background: var(--color-hindo);
+}
+
+/* Combo streak bar — appears under the timer pill while a streak is in flight. */
+.solo-streak {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  background: rgba(252, 246, 230, 0.92);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+}
+.solo-streak-label {
+  font-family: var(--font-body);
+  font-weight: 800;
+  font-size: 0.72rem;
+  color: var(--color-coral-deep);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.solo-streak-bar {
+  width: 90px;
+  height: 6px;
+  border-radius: 9999px;
+  background: rgba(60, 40, 30, 0.16);
+  overflow: hidden;
+}
+.solo-streak-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--color-coral), var(--color-coral-deep));
+  border-radius: 9999px;
+  transition: width 80ms linear;
 }
 @keyframes solo-penalty-pop {
   0%   { opacity: 0; transform: translate(0, 6px) scale(0.6); }

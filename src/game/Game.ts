@@ -25,6 +25,9 @@ import type {
 type Listener = (e: GameEvent) => void;
 
 const SOLO_PENALTY_MS = 2000;
+/** Time credit for slamming a Chant Chik card on the closing-chik beat (chant index
+ *  6 before advance). One per qualifying slam; UI shows a green -1s bubble. */
+const SOLO_CHANT_CHIK_CLOSING_BONUS_MS = 1000;
 
 /** Which Solo bases are legal NEXT, given the prompt of the most-recently-slammed card.
  *  Solo's direction gate flipped in v1.1: it's now the PREVIOUS card's prompt that
@@ -422,6 +425,22 @@ export class Game {
       // Legal slam.
       this.applySoloSlam(card, action.baseSide);
       this.emit({ kind: 'soloSlam', cardId: card.id, baseSide: action.baseSide, cardWord: card.word, cardPrompt: card.prompt });
+
+      // Chant Chik closing bonus — if this slam is a Chant Chik AND it lands on
+      // the closing-chik beat (chant.currentIndex === 6 BEFORE the upcoming
+      // advance), the player earns a -1s time credit. Solo mode doesn't actually
+      // resolve a Chant Trigger (no opponents to walk), so this is a pure timing
+      // bonus that rewards the player for setting up + cashing the chant chik.
+      if (card.isChantChik && this.chant.currentIndex === 6) {
+        this.emit({
+          kind: 'soloBonus',
+          reason: 'chant-chik-closing',
+          bonusMs: SOLO_CHANT_CHIK_CLOSING_BONUS_MS,
+          cardId: card.id,
+          baseSide: action.baseSide,
+        });
+      }
+
       this.advanceChant();
 
       // Win check.
