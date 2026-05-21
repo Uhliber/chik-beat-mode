@@ -18,6 +18,7 @@ import PauseOverlay from '@/components/PauseOverlay.vue';
 import TutorialOverlay from '@/components/TutorialOverlay.vue';
 import BeatPickerOverlay from '@/components/BeatPickerOverlay.vue';
 import ChantPowerModal from '@/components/ChantPowerModal.vue';
+import ChantConfetti from '@/components/ChantConfetti.vue';
 import IconVolume from '@/components/icons/IconVolume.vue';
 import { useGame } from '@/composables/useGame';
 import { useBeatAudio } from '@/composables/useBeatAudio';
@@ -95,6 +96,9 @@ const {
   chantRecitalStepsBySeat,
   chantRecitalCurrentSeat,
   chantRecitalCurrentBeat,
+  chantRecitalTick,
+  chantRevealWinnerSeat,
+  chantRevealNoWinner,
   chantStartStepBySeat,
   recitalShouts,
   pendingChantPower,
@@ -709,6 +713,8 @@ function onPauseOverlayTap() {
         :chant-trigger-winner-seat="chantTrigger?.winnerSeatIndex ?? null"
         :chant-trigger-receiver-seat="chantTrigger?.receiverSeatIndex ?? null"
         :chant-recital-current-beat="chantRecitalCurrentBeat"
+        :chant-recital-tick="chantRecitalTick"
+        :chant-no-winner-revealed="chantRevealNoWinner"
         :chant-recital-steps-by-seat="chantRecitalStepsBySeat"
         :chant-recital-current-seat="chantRecitalCurrentSeat"
         :chant-start-step-by-seat="chantStartStepBySeat"
@@ -738,6 +744,14 @@ function onPauseOverlayTap() {
         :recipient-seats="chantPowerRecipientSeats"
         :player-labels="playerLabels"
         @resolve="onChantPowerResolve"
+      />
+
+      <!-- Subtle burst confetti at the chant-power winner's seat — fires at the
+           moment the lottery banner freezes on the winning beat. Distinct from the
+           game-over confetti so it doesn't read as "they won the game". -->
+      <ChantConfetti
+        v-if="chantRevealWinnerSeat !== null"
+        :anchor-selector="`[data-seat-index='${chantRevealWinnerSeat}']`"
       />
     </main>
 

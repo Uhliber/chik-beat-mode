@@ -25,6 +25,12 @@ const props = defineProps<{
    *  cycles through beats live during the recital, then naturally freezes on the
    *  LAST step's beat (which is the landed beat). */
   currentBeat: ChantWord | null;
+  /** Monotonic step counter; used as the lottery banner's transition key so the
+   *  flip animation re-fires even when consecutive steps land on the same beat
+   *  word (e.g. closing chik → opening chik). */
+  tick?: number;
+  /** True after a no-winner chant has landed — show the "No beat owner" subtitle. */
+  noWinnerRevealed?: boolean;
 }>();
 
 const beatLabel = computed(() => props.currentBeat ? props.currentBeat.toUpperCase() : '');
@@ -198,13 +204,22 @@ const maskPath = computed(() => {
       </svg>
 
       <!-- Lottery banner: a single big beat word that re-renders per recital step.
-           The :key on the inner span forces Vue to remount the element each beat
-           change so the flip animation re-fires — gives the lottery wheel its
-           ticking, slot-machine feel. Once the recital ends, this freezes on
-           whatever the final beat was (which IS the landed beat). -->
+           The :key on the inner span uses the per-step `tick` (not the word) so the
+           flip animation re-fires even when consecutive steps land on the same word
+           — chik → chik used to silently skip the transition because the key didn't
+           change. Once the recital ends, this freezes on whatever the final beat
+           was (which IS the landed beat). -->
       <div v-if="currentBeat" ref="bannerEl" class="lottery-banner" :class="beatWordClass">
         <Transition name="lottery" mode="out-in">
-          <span :key="currentBeat" class="lottery-word">{{ beatLabel }}</span>
+          <span :key="tick ?? currentBeat" class="lottery-word">{{ beatLabel }}</span>
+        </Transition>
+        <Transition
+          enter-from-class="opacity-0"
+          enter-active-class="transition duration-260"
+          leave-active-class="transition duration-200"
+          leave-to-class="opacity-0"
+        >
+          <div v-if="noWinnerRevealed" class="lottery-subtitle">No beat owner</div>
         </Transition>
       </div>
     </div>
@@ -235,6 +250,7 @@ const maskPath = computed(() => {
   top: 50%;
   transform: translate(-50%, -50%);
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   padding: 12px 26px;
@@ -244,6 +260,15 @@ const maskPath = computed(() => {
   animation: banner-in 360ms cubic-bezier(.2, .8, .2, 1);
   min-width: 200px;
   min-height: 60px;
+}
+.lottery-subtitle {
+  margin-top: 4px;
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 0.78rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(60, 40, 30, 0.62);
 }
 .lottery-word {
   font-family: var(--font-display);

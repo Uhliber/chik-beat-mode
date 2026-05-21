@@ -321,6 +321,16 @@ export function useGame(opts: UseGameOptions = {}) {
    *  beats live), then freezes on the LANDED beat once the recital ends. Reset to
    *  null when a new trigger fires. */
   const chantRecitalCurrentBeat = ref<ChantWord | null>(null);
+  /** Monotonic step counter for the recital (increments by 1 per step). Drives the
+   *  lottery banner's <Transition> key so the flip animation re-fires even when the
+   *  same beat word is spoken twice in a row (e.g. closing chik → opening chik).
+   *  Without it, Vue would see no key change and skip the transition entirely. */
+  const chantRecitalTick = ref(0);
+  /** Once the recital finishes, this carries the winner seat index (or null if the
+   *  chant landed on an unclaimed/opening beat). Drives the burst-confetti overlay
+   *  and the "No beat owner" subtitle. Cleared on trigger teardown. */
+  const chantRevealWinnerSeat = ref<number | null>(null);
+  const chantRevealNoWinner = ref(false);
   /** Map of seat → the global recital step at which that seat's run BEGAN. Derived
    *  from the trigger's perSeatCounts + receiverSeatIndex; used by ChantPips to know
    *  which beat word each lit pip represents (chik / wally / hindo / …). Empty unless
@@ -579,6 +589,9 @@ export function useGame(opts: UseGameOptions = {}) {
         recitalShouts.value = {};
         chantRecitalCurrentSeat.value = null;
         chantRecitalCurrentBeat.value = null;
+        chantRecitalTick.value = 0;
+        chantRevealWinnerSeat.value = null;
+        chantRevealNoWinner.value = false;
         // No-winner: no chant-power-resolve will fire, so we tear down the overlay
         // ourselves after the recital plus a short tail so the landed banner is seen.
         // Also release the engine's AI gate once the tail completes — the engine had
@@ -587,14 +600,33 @@ export function useGame(opts: UseGameOptions = {}) {
         if (e.winnerSeatIndex === null) {
           const stepMs = recitalStepMs.value;
           const recitalMs = stepMs === 0 ? 0 : e.total * stepMs;
+          // Right as the recital lands on the (unclaimed) beat: surface the
+          // "No beat owner" subtitle and play the penalty fail sound so the
+          // player gets a clear "nothing happened" cue.
+          window.setTimeout(() => {
+            chantRevealNoWinner.value = true;
+            beatAudio.fx('fail');
+          }, recitalMs);
           window.setTimeout(() => {
             chantTrigger.value = null;
             chantRecitalStepsBySeat.value = new Map();
             chantRecitalCurrentSeat.value = null;
             chantRecitalCurrentBeat.value = null;
+            chantRecitalTick.value = 0;
+            chantRevealNoWinner.value = false;
             recitalShouts.value = {};
             (game.value.endChantTriggerWindow?.());
           }, recitalMs + 1100);
+        } else {
+          // Winner branch — schedule the burst-confetti reveal at recital end so it
+          // bursts AT the moment the lottery freezes on the winning beat, not while
+          // the recital is still spinning.
+          const stepMs = recitalStepMs.value;
+          const recitalMs = stepMs === 0 ? 0 : e.total * stepMs;
+          const winnerSeat = e.winnerSeatIndex;
+          window.setTimeout(() => {
+            chantRevealWinnerSeat.value = winnerSeat;
+          }, recitalMs);
         }
         break;
       }
@@ -609,6 +641,11 @@ export function useGame(opts: UseGameOptions = {}) {
           chantRecitalStepsBySeat.value = next;
           chantRecitalCurrentSeat.value = seatIndex;
           chantRecitalCurrentBeat.value = beatWord;
+          // Bump the per-step tick so the lottery banner's <Transition> key
+          // changes even when consecutive steps land on the same beat word
+          // (e.g. closing chik → opening chik). Without this, the slot-machine
+          // flip animation silently skips those repeats.
+          chantRecitalTick.value = step + 1;
           const prevKey = recitalShouts.value[seatIndex]?.key ?? 0;
           recitalShouts.value = {
             ...recitalShouts.value,
@@ -652,6 +689,10 @@ export function useGame(opts: UseGameOptions = {}) {
           chantTrigger.value = null;
           chantRecitalStepsBySeat.value = new Map();
           chantRecitalCurrentSeat.value = null;
+          chantRecitalCurrentBeat.value = null;
+          chantRecitalTick.value = 0;
+          chantRevealWinnerSeat.value = null;
+          chantRevealNoWinner.value = false;
           recitalShouts.value = {};
           (game.value.endChantTriggerWindow?.());
         }, 600);
@@ -716,6 +757,9 @@ export function useGame(opts: UseGameOptions = {}) {
     recitalShouts.value = {};
     chantRecitalCurrentSeat.value = null;
     chantRecitalCurrentBeat.value = null;
+    chantRecitalTick.value = 0;
+    chantRevealWinnerSeat.value = null;
+    chantRevealNoWinner.value = false;
     pendingChantPower.value = null;
 
     const g = new Game();
@@ -944,6 +988,9 @@ export function useGame(opts: UseGameOptions = {}) {
     chantRecitalStepsBySeat,
     chantRecitalCurrentSeat,
     chantRecitalCurrentBeat,
+    chantRecitalTick,
+    chantRevealWinnerSeat,
+    chantRevealNoWinner,
     chantStartStepBySeat,
     recitalShouts,
     pendingChantPower,

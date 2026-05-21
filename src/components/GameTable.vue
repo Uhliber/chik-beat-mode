@@ -57,6 +57,10 @@ const props = defineProps<{
   chantTriggerReceiverSeat?: number | null;
   /** Beat being spoken at the current recital step (drives the lottery banner). */
   chantRecitalCurrentBeat?: ChantWord | null;
+  /** Per-step monotonic counter for the lottery banner transition key. */
+  chantRecitalTick?: number;
+  /** True once a no-winner chant has landed; drives "No beat owner" subtitle. */
+  chantNoWinnerRevealed?: boolean;
   /** Per-seat recital state. Step counter & shouts driven by useGame. */
   chantRecitalStepsBySeat?: Map<number, number>;
   chantRecitalCurrentSeat?: number | null;
@@ -506,6 +510,8 @@ function dispatchFlight(spec: FlightSpec): void {
     <ChantTriggerOverlay
       :active="!!chantTriggerActive"
       :current-beat="chantRecitalCurrentBeat ?? null"
+      :tick="chantRecitalTick ?? 0"
+      :no-winner-revealed="chantNoWinnerRevealed ?? false"
     />
 
     <!-- Slam wheel overlay (during aim) -->
