@@ -228,21 +228,18 @@ watch(
       />
     </div>
 
-    <!-- Chant Trigger recital pips — arc beside the player. Counter-rotated so the
-         arc reads upright for the human regardless of which side of the table this
-         seat sits on. -->
-    <div
+    <!-- Chant Trigger recital pips — arc beside the player. Intentionally NOT
+         counter-rotated: the pips fan around each seat in their natural orientation
+         (matching the rotated prompt card), so the arc visually wraps each player
+         from "their" side of the table rather than always cresting toward the
+         screen-top. The popover counter-rotation handles legibility for the icons. -->
+    <ChantPips
       v-if="promptStack.length > 0"
-      class="chant-pips-anchor"
-      :style="counterRotate ? { transform: counterRotate } : undefined"
-    >
-      <ChantPips
-        :count="promptStack[promptStack.length - 1].count"
-        :lit="chantPipsLit ?? 0"
-        :active="chantTriggerInFlight ?? false"
-        :start-step="chantPipsStartStep ?? 0"
-      />
-    </div>
+      :count="promptStack[promptStack.length - 1].count"
+      :lit="chantPipsLit ?? 0"
+      :active="chantTriggerInFlight ?? false"
+      :start-step="chantPipsStartStep ?? 0"
+    />
 
     <!-- Prompt stack: cards face-up sitting in front of this player. The top one is the
          active prompt; older cards stack underneath but are inert. The human's own pile
