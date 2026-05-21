@@ -136,10 +136,8 @@
   50%      { transform: scale(1.15); opacity: 1; }
 }
 
-/* Chant Trigger ambiance: darkens the table during a chant resolve so the spotlight
- * overlay + recital read clearly. Applied to the GameTable root; restored when the
- * trigger overlay tears down. The spotlight vignette is owned by ChantTriggerOverlay. */
-.ambiance-chant-resolve {
-  filter: brightness(0.62) saturate(0.92);
-  transition: filter 320ms ease-out;
-}
+/* Chant Trigger ambiance: handled entirely by the SVG mask in ChantTriggerOverlay
+ * (evenodd punch-outs around the lottery banner + per-seat count spotlights).
+ * Keeping no brightness/saturate filter here means the highlighted elements retain
+ * their true colors — important for the chant-word tints on pips, popovers, and the
+ * lottery banner. */

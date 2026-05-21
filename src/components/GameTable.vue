@@ -405,7 +405,6 @@ function dispatchFlight(spec: FlightSpec): void {
 <template>
   <div
     class="relative w-full h-full flex items-end justify-center"
-    :class="{ 'ambiance-chant-resolve': chantTriggerActive }"
     data-game-table
   >
     <!-- 1. The tabletop — perspective-tilted rounded rect at the back of the stacking

@@ -180,10 +180,7 @@ watch(
 <template>
   <div class="relative flex flex-col items-center gap-1">
     <!-- Speech bubble — pops above the player when they shout a chant word as they play. -->
-    <div
-      class="absolute -top-8 left-1/2 -translate-x-1/2 z-30 pointer-events-none"
-      :class="{ 'is-chant-bright-bubble': chantTriggerInFlight }"
-    >
+    <div class="absolute -top-8 left-1/2 -translate-x-1/2 z-30 pointer-events-none">
       <SpeechBubble
         :word="shouted ?? null"
         :visible="showBubble"
@@ -276,6 +273,7 @@ watch(
       class="count-spotlight"
       :class="{ 'is-active': chantTriggerInFlight }"
       :style="{ transform: spotlightTransform }"
+      :data-chant-spotlight="player.seatIndex"
     >
       <PromptPopover
         :card="promptStack[promptStack.length - 1]"
@@ -497,9 +495,9 @@ watch(
 /* Recital count spotlight — large count badge anchored at the seat group's center.
  * The transform is computed inline so we can interpolate between "small + hidden"
  * (chant inactive) and "large + centered" (chant active) with a single CSS shape.
- * Brightness compensation punches through the GameTable's ambiance filter (parent
- * has brightness(0.62); 1.7 multiplier brings this back to ~1.05 for emphasis).
- * Hidden by default via opacity:0 so it doesn't overlap normal UI. */
+ * The ChantTriggerOverlay's SVG mask punches a hole around this element so it pops
+ * through the dim backdrop while keeping its true chant-word color. Hidden by
+ * default via opacity:0 so it doesn't overlap normal UI. */
 .count-spotlight {
   position: absolute;
   left: 50%;
@@ -507,20 +505,12 @@ watch(
   z-index: 40;
   pointer-events: none;
   opacity: 0;
-  filter: brightness(1.7) saturate(1.2) drop-shadow(0 6px 14px rgba(0, 0, 0, 0.5));
+  filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.5));
   transform-origin: center center;
   transition: transform 380ms cubic-bezier(.2, .8, .2, 1), opacity 280ms ease;
 }
 .count-spotlight.is-active {
   opacity: 1;
-}
-
-/* Brightness-bump the recital pips + speech bubble so they punch through the
- * darkened GameTable filter during a chant trigger. The flag is the same one
- * that drives the count spotlight (chantTriggerInFlight). */
-.chant-pips.is-recital-bright,
-.is-chant-bright-bubble {
-  filter: brightness(1.6) saturate(1.1);
 }
 
 /* Human's three-piece layout: [prompt-icon] [prompt-card] [count-icon]. Flex centers
