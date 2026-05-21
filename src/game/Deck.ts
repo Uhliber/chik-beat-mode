@@ -40,6 +40,9 @@ export function buildSoloDeck(): Card[] {
   const pushSolo = (id: string, prompt: CardPrompt, word: ChantWord, dupIndex: number, isHaloHalo = false) => {
     cards.push(new Card({ id, prompt, word, isHaloHalo, count: countFor(word, prompt, dupIndex) }));
   };
+  const pushSoloChantChik = (id: string, prompt: CardPrompt, dupIndex: number) => {
+    cards.push(new Card({ id, prompt, word: 'chik', isChantChik: true, count: countFor('chik', prompt, dupIndex) }));
+  };
 
   // Left: 6 Chik + 3 each of the others
   for (let i = 0; i < 6; i++) pushSolo(`solo-left-chik-${i}`, 'left', 'chik', i);
@@ -53,9 +56,15 @@ export function buildSoloDeck(): Card[] {
     for (let i = 0; i < 3; i++) pushSolo(`solo-right-${w}-${i}`, 'right', w, i);
   }
 
-  // Free: Halo-Halo Chik + 3 Chik + 2 each of the others
+  // Free: Halo-Halo Chik + 3 Chant Chik (free) + 2 each of the others.
+  //
+  // The 3 generic Free Chik slots use the CHANT CHIK variant because there is no
+  // `free-chik-${count}.png` asset in /new/ — only the Halo-Halo card carries a
+  // Free + Chik (regular) face (`free-chik-halohalo-5.png`). Without this swap the
+  // remaining 3 Free Chik cards would 404 their image. Solo mode doesn't use the
+  // Chant Trigger so isChantChik is purely visual here.
   pushSolo('halohalo-chik', 'free', 'chik', 0, true);
-  for (let i = 0; i < 3; i++) pushSolo(`solo-free-chik-${i}`, 'free', 'chik', i);
+  for (let i = 0; i < 3; i++) pushSoloChantChik(`solo-free-chant-chik-${i}`, 'free', i);
   for (const w of otherWords) {
     for (let i = 0; i < 2; i++) pushSolo(`solo-free-${w}-${i}`, 'free', w, i);
   }

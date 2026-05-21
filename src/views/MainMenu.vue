@@ -46,20 +46,25 @@ function openSettings() {
     </header>
 
     <!-- Middle: primary actions. Each item rides its own stagger delay so the menu
-         lands one beat at a time — title → tagline → Solo → Versus → Login → footer. -->
+         lands one beat at a time — title → tagline → Versus AI → Solo → Login → footer.
+         Versus AI is the primary play mode; Solo (time attack) sits below as a side
+         path with a muted subtitle to telegraph its nature. -->
     <main class="flex flex-col items-stretch w-full max-w-xs gap-4 px-6">
       <button
         type="button"
         class="menu-btn menu-btn-primary menu-stagger"
         style="--stagger-delay: 320ms;"
-        @click="startSolo"
-      >Solo</button>
+        @click="startVersus"
+      >Versus AI</button>
       <button
         type="button"
-        class="menu-btn menu-btn-primary menu-stagger"
+        class="menu-btn menu-btn-primary menu-stagger menu-btn-stacked"
         style="--stagger-delay: 420ms;"
-        @click="startVersus"
-      >Versus</button>
+        @click="startSolo"
+      >
+        <span class="menu-btn-label">Solo</span>
+        <span class="menu-btn-subtext">Time Attack</span>
+      </button>
       <button
         v-if="FLAGS.playgroundEnabled"
         type="button"
@@ -127,6 +132,30 @@ function openSettings() {
   background: var(--color-cream-soft);
   color: var(--color-coral-deep);
   box-shadow: 0 6px 14px rgba(0, 0, 0, 0.22);
+}
+
+/* Stacked-label variant — label on top, muted subtext below. Used by Solo so it
+ * reads as "Solo: time attack" without expanding the row's overall height too much. */
+.menu-btn-stacked {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding-top: 0.7rem;
+  padding-bottom: 0.7rem;
+  line-height: 1.05;
+}
+.menu-btn-label {
+  font-size: 0.95rem;
+  letter-spacing: 0.12em;
+}
+.menu-btn-subtext {
+  font-size: 0.7rem;
+  letter-spacing: 0.18em;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: rgba(201, 84, 59, 0.6);
 }
 .menu-btn-ghost {
   background: transparent;
