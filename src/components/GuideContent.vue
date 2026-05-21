@@ -65,8 +65,9 @@ defineEmits<{
             <p>Prompt is <strong>Free</strong> → either base works.</p>
           </li>
         </ul>
-        <p><strong>3.</strong> Drag back to centre to cancel a slam in progress. If no beat-matching card is in hand, <strong>click the deck</strong> to draw.</p>
+        <p><strong>3.</strong> Drag back to centre to cancel a slam in progress. If no beat-matching card is in hand, <strong>click the deck</strong> (or press <kbd class="guide-kbd">D</kbd>) to draw.</p>
         <p>The card you just played becomes the new Prompt — its own type (Left/Right/Free) sets the next direction.</p>
+        <p class="hint-line">Tip: the <kbd class="guide-kbd">D</kbd> draw shortcut can be turned off in Settings → Display.</p>
       </section>
 
       <section class="section">
@@ -133,9 +134,10 @@ defineEmits<{
         <p>
           <strong>1.</strong> Check your prompt — the card stacked in front of you. Its type (Left / Right / Free / Stop / Snap / Fetch) dictates which opponents are legal targets.<br />
           <strong>2.</strong> Drag a beat-matching card onto a legal seat (legal seats glow). Drag back to centre to cancel.<br />
-          <strong>3.</strong> If no legal play exists, click the deck to draw — your turn ends.
+          <strong>3.</strong> If no legal play exists, click the deck (or press <kbd class="guide-kbd">D</kbd>) to draw — your turn ends.
         </p>
         <p>Whatever card you play becomes the recipient's new prompt.</p>
+        <p class="hint-line">Tip: the <kbd class="guide-kbd">D</kbd> draw shortcut can be turned off in Settings → Display.</p>
       </section>
 
       <section class="section">
@@ -397,5 +399,25 @@ defineEmits<{
   color: var(--color-cream-soft);
   font-size: 2.4cqw;
   font-weight: 800;
+}
+
+/* Keyboard shortcut pip inline in body copy — looks like a key cap. */
+.guide-kbd {
+  display: inline-block;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-weight: 700;
+  font-size: 2.2cqw;
+  padding: 0.2cqw 0.9cqw;
+  margin: 0 0.2cqw;
+  border-radius: 0.7cqw;
+  background: rgba(60, 40, 30, 0.08);
+  color: var(--color-coral-deep);
+  box-shadow: inset 0 -0.4cqw 0 rgba(0, 0, 0, 0.08);
+}
+.hint-line {
+  margin-top: 0.6cqw !important;
+  font-size: 2.35cqw !important;
+  color: rgba(60, 40, 30, 0.55) !important;
+  font-style: italic;
 }
 </style>

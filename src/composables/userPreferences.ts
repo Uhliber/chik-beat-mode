@@ -41,6 +41,7 @@ export const PREF_KEYS = {
   eventLogEnabled: 'chik-event-log-enabled',
   guideOnTable: 'chik-guide-on-table',
   chantRecitalSpeed: 'chik-chant-recital-speed',
+  drawKeyEnabled: 'chik-draw-key-enabled',
 } as const;
 
 /* ===== Canonical defaults — used at load-time AND by "Reset to defaults" ===== */
@@ -58,6 +59,10 @@ export const DEFAULT_AI_SKILL: AiSkillLevel = 3;
 export const DEFAULT_PROMPT_SIZE: PromptSize = 'medium';
 export const DEFAULT_PROMPT_INFO_SIZE: PromptInfoSize = 'medium';
 export const DEFAULT_CHANT_RECITAL_SPEED: ChantRecitalSpeed = 'normal';
+/** Whether pressing the "D" key triggers a deck draw (same as clicking the deck).
+ *  Defaults ON so keyboard users get the shortcut out of the box; mobile users
+ *  who never see it can safely ignore the toggle. */
+export const DEFAULT_DRAW_KEY_ENABLED = true;
 export const DEFAULT_SPEED = 1;
 /** Versus / Playground default seat count. Solo is locked to 1 by setMode. */
 export const DEFAULT_PLAYER_COUNT_TURN_BASED = 4;
@@ -197,6 +202,10 @@ export const RECITAL_STEP_MS_BY_SPEED: Record<ChantRecitalSpeed, number> = {
   fast:   180,
   skip:   0,
 };
+
+/* ====================== Deck-draw keyboard shortcut ====================== */
+export const loadDrawKeyEnabled = () => readBool(PREF_KEYS.drawKeyEnabled, DEFAULT_DRAW_KEY_ENABLED);
+export const saveDrawKeyEnabled = (on: boolean) => writeBool(PREF_KEYS.drawKeyEnabled, on);
 
 /* ======================== Playground composition ======================== */
 export async function loadPlaygroundComposition(): Promise<PlaygroundComposition> {

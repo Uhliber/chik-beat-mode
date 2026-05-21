@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import type { GameEvent, BaseSide, CardPrompt, PlaygroundComposition } from '@/game/types';
 import type { SimMode } from '@/game/SimulationController';
@@ -113,6 +113,8 @@ const {
   setPromptInfoSize,
   chantRecitalSpeed,
   setChantRecitalSpeed,
+  drawKeyEnabled,
+  setDrawKeyEnabled,
 } = useGame({ initialMode });
 
 // Tutorial mode: ?tutorial=1 query flips this on. Solo and Versus each have their own
@@ -377,6 +379,28 @@ const onDrawDeckClick = () => {
     submitVersusAction(human.id, { type: 'draw' });
   }
 };
+
+// Keyboard shortcut: "D" draws from the deck (same as clicking it). Gated by the
+// user pref (enabled by default) so anyone who hates global keyboard binds can
+// turn it off. Ignored when:
+//  - any text input has focus (so D in chat/inputs types a letter normally),
+//  - a key modifier is held (Cmd/Ctrl/Alt/Meta — preserves browser shortcuts),
+//  - the round isn't running (idle/paused/ended).
+function onKeydown(ev: KeyboardEvent) {
+  if (!drawKeyEnabled.value) return;
+  if (ev.key !== 'd' && ev.key !== 'D') return;
+  if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+  if (state.status !== 'running') return;
+  const target = ev.target as HTMLElement | null;
+  if (target) {
+    const tag = target.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable) return;
+  }
+  ev.preventDefault();
+  onDrawDeckClick();
+}
+onMounted(() => { window.addEventListener('keydown', onKeydown); });
+onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown); });
 
 // Mobile bottom sheets + desktop side panel both flow through these openSheet/closeSheet
 // helpers — the 'controls' sheet is the new SettingsPanel (replaces the old ControlPanel).
@@ -871,6 +895,7 @@ function onPauseOverlayTap() {
         :prompt-size="promptSize"
         :prompt-info-size="promptInfoSize"
         :chant-recital-speed="chantRecitalSpeed"
+        :draw-key-enabled="drawKeyEnabled"
         :strict-prompts="strictPrompts"
         :ai-skill="aiSkill"
         :player-count="playerCount"
@@ -885,6 +910,7 @@ function onPauseOverlayTap() {
         @update:prompt-size="setPromptSize"
         @update:prompt-info-size="setPromptInfoSize"
         @update:chant-recital-speed="setChantRecitalSpeed"
+        @update:draw-key-enabled="setDrawKeyEnabled"
         @update:strict-prompts="setStrictPrompts"
         @update:ai-skill="setAiSkill"
         @update:player-count="setPlayerCount"
@@ -914,6 +940,7 @@ function onPauseOverlayTap() {
         :prompt-size="promptSize"
         :prompt-info-size="promptInfoSize"
         :chant-recital-speed="chantRecitalSpeed"
+        :draw-key-enabled="drawKeyEnabled"
         :strict-prompts="strictPrompts"
         :ai-skill="aiSkill"
         :player-count="playerCount"
@@ -928,6 +955,7 @@ function onPauseOverlayTap() {
         @update:prompt-size="setPromptSize"
         @update:prompt-info-size="setPromptInfoSize"
         @update:chant-recital-speed="setChantRecitalSpeed"
+        @update:draw-key-enabled="setDrawKeyEnabled"
         @update:strict-prompts="setStrictPrompts"
         @update:ai-skill="setAiSkill"
         @update:player-count="setPlayerCount"

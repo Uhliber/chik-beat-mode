@@ -40,6 +40,7 @@ const props = defineProps<{
   promptSize?: 'small' | 'medium' | 'large' | 'xl';
   promptInfoSize?: PromptInfoSize;
   chantRecitalSpeed?: ChantRecitalSpeed;
+  drawKeyEnabled?: boolean;
   appVersion?: string;
 }>();
 
@@ -60,6 +61,7 @@ const emit = defineEmits<{
   (e: 'update:prompt-size', v: 'small' | 'medium' | 'large' | 'xl'): void;
   (e: 'update:prompt-info-size', v: PromptInfoSize): void;
   (e: 'update:chant-recital-speed', v: ChantRecitalSpeed): void;
+  (e: 'update:draw-key-enabled', v: boolean): void;
   (e: 'restart'): void;
   (e: 'back-to-menu'): void;
 }>();
@@ -312,6 +314,20 @@ const deckSufficient = computed(() => deckTotal.value >= minDeckNeeded.value);
           :options="chantRecitalSpeedOptions"
           aria-label="Chant recital speed"
           @update:model-value="(v) => emit('update:chant-recital-speed', v as ChantRecitalSpeed)"
+        />
+      </SettingsRow>
+      <SettingsRow description="Press D to draw from the deck instead of clicking it.">
+        <template #icon>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="5" width="18" height="14" rx="2" />
+            <path d="M9 9h6M9 13h4" />
+          </svg>
+        </template>
+        <template #label>Draw shortcut (D)</template>
+        <SettingsToggle
+          :model-value="drawKeyEnabled ?? true"
+          aria-label="Draw shortcut"
+          @update:model-value="(v) => emit('update:draw-key-enabled', v)"
         />
       </SettingsRow>
       <SettingsRow description="Show the running event log (desktop sidebar / mobile sheet).">

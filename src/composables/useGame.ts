@@ -17,6 +17,7 @@ import {
   DEFAULT_PROMPT_SIZE,
   DEFAULT_PROMPT_INFO_SIZE,
   DEFAULT_CHANT_RECITAL_SPEED,
+  DEFAULT_DRAW_KEY_ENABLED,
   DEFAULT_SPEED,
   DEFAULT_STRICT_PROMPTS,
   DEFAULT_WISP_ENABLED,
@@ -29,6 +30,7 @@ import {
   loadPromptSize,
   loadPromptInfoSize,
   loadChantRecitalSpeed,
+  loadDrawKeyEnabled,
   RECITAL_STEP_MS_BY_SPEED,
   loadSoloBestTime,
   loadStrictPrompts,
@@ -41,6 +43,7 @@ import {
   savePromptSize,
   savePromptInfoSize,
   saveChantRecitalSpeed,
+  saveDrawKeyEnabled,
   saveSoloBestTime,
   saveStrictPrompts,
   saveWispEnabled,
@@ -135,6 +138,11 @@ export function useGame(opts: UseGameOptions = {}) {
   //   streak 6–9  → −2s
   //   streak 10+  → −3s (max)
   const STREAK_BAR_MS = 3000;
+  /** Time credit added back to the streak bar when the player draws LEGALLY from the
+   *  deck. Compensates for the "search the hand for the next playable card" pause —
+   *  without it, a streak would silently die during a fishing turn. 400ms = enough
+   *  to survive 2-3 consecutive draws but not so much that the bar feels free. */
+  const STREAK_DRAW_GRACE_MS = 400;
   const soloStreak = ref(0);
   /** Remaining bar fill in ms (0..STREAK_BAR_MS). 0 = bar empty, no streak. */
   const soloStreakBarMs = ref(0);
@@ -186,6 +194,14 @@ export function useGame(opts: UseGameOptions = {}) {
       };
       soloStreakRafId = requestAnimationFrame(tick);
     }
+  }
+
+  /** Add a small grace credit to the streak bar — fired when the player draws a
+   *  card legally (no penalty). Only does anything if a streak is currently in
+   *  flight; a draw alone never STARTS a streak. */
+  function pulseStreakDraw(): void {
+    if (soloStreak.value === 0 || soloStreakRafId === null) return;
+    soloStreakBarMs.value = Math.min(STREAK_BAR_MS, soloStreakBarMs.value + STREAK_DRAW_GRACE_MS);
   }
 
   // Turn-indicator wisp (Versus only). Persisted, default ON.
@@ -252,6 +268,16 @@ export function useGame(opts: UseGameOptions = {}) {
   const setPromptInfoSize = (v: PromptInfoSize) => {
     promptInfoSize.value = v;
     savePromptInfoSize(v);
+  };
+
+  // Keyboard "D" shortcut for drawing from the deck. Persisted, default ON. The
+  // global keydown listener lives in PlayView; this ref just stores the toggle so
+  // the settings UI + the listener can read the same source of truth.
+  const drawKeyEnabled = ref(DEFAULT_DRAW_KEY_ENABLED);
+  void loadDrawKeyEnabled().then((on) => { drawKeyEnabled.value = on; });
+  const setDrawKeyEnabled = (on: boolean) => {
+    drawKeyEnabled.value = on;
+    saveDrawKeyEnabled(on);
   };
 
   // Speed of the Chant Trigger recital animation: slow / normal / fast / skip. The
@@ -348,6 +374,8 @@ export function useGame(opts: UseGameOptions = {}) {
     savePromptInfoSize(DEFAULT_PROMPT_INFO_SIZE);
     chantRecitalSpeed.value = DEFAULT_CHANT_RECITAL_SPEED;
     saveChantRecitalSpeed(DEFAULT_CHANT_RECITAL_SPEED);
+    drawKeyEnabled.value = DEFAULT_DRAW_KEY_ENABLED;
+    saveDrawKeyEnabled(DEFAULT_DRAW_KEY_ENABLED);
     // Guide-on-table: clear the explicit preference so it follows the platform default
     // again (desktop on, mobile off). Persistence layer treats null as "not set".
     guideOnTablePref.value = DEFAULT_GUIDE_ON_TABLE_PREF;
@@ -618,6 +646,11 @@ export function useGame(opts: UseGameOptions = {}) {
       case 'versusDraw':
       case 'soloDraw': {
         queueFlightForDraw(e);
+        // Solo: legal draws extend the streak bar by a small grace amount so a
+        // legitimate "fishing for a beat-matching card" turn doesn't murder the
+        // streak. Penalty draws (unnecessary-draw) come through soloPenalty and
+        // break the streak as usual.
+        if (e.kind === 'soloDraw') pulseStreakDraw();
         break;
       }
       case 'soloPenalty':
@@ -1103,6 +1136,8 @@ export function useGame(opts: UseGameOptions = {}) {
     setPromptInfoSize,
     chantRecitalSpeed,
     setChantRecitalSpeed,
+    drawKeyEnabled,
+    setDrawKeyEnabled,
   };
 }
 
