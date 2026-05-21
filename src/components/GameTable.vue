@@ -451,6 +451,7 @@ function dispatchFlight(spec: FlightSpec): void {
           :chant-pips-start-step="chantStartStepBySeat?.get(p.seatIndex) ?? 0"
           :chant-trigger-in-flight="chantTriggerActive ?? false"
           :prompt-info-size="promptInfoSize"
+          :seat-rotation="seats[i]?.rotation ?? 0"
         />
       </div>
     </template>

@@ -44,6 +44,26 @@ const SIZE_PX: Record<Exclude<PromptInfoSize, 'off'>, { icon: number; count: num
 };
 const sizePx = computed(() => SIZE_PX[(effectiveSize.value === 'off' ? 'medium' : effectiveSize.value)]);
 
+/** Inline style for the popover container.
+ *  - combined (AI): horizontal pill — gap + asymmetric padding.
+ *  - icon / count (HUMAN): force a circular badge with explicit symmetric dimensions
+ *    matching the icon size + padding. The fixed width/height beats trying to coerce
+ *    a flex pill into a circle with aspect-ratio. */
+const popoverStyle = computed(() => {
+  const s = sizePx.value;
+  if (mode.value === 'combined') {
+    return { gap: s.gap + 'px', padding: `${s.padY}px ${s.padX}px` };
+  }
+  // Single-icon modes: padX is also forced to padY so the result is a true circle.
+  const iconPx = mode.value === 'icon' ? s.icon : s.count;
+  const side = iconPx + s.padY * 2;
+  return {
+    width: side + 'px',
+    height: side + 'px',
+    padding: `${s.padY}px`,
+  };
+});
+
 const wordClass = computed(() => (props.card ? `word-${props.card.word}` : ''));
 const promptUrl = computed(() => (props.card ? `/new/prompt-${props.card.prompt}.svg` : null));
 const countUrl = computed(() => (props.card ? `/new/count-${props.card.count}.svg` : null));
@@ -56,10 +76,7 @@ const countSvg = useInlineSvg(countUrl);
     v-if="isVisible"
     class="prompt-popover"
     :class="[wordClass, `mode-${mode}`, { 'is-recital': recitalActive }]"
-    :style="{
-      gap: sizePx.gap + 'px',
-      padding: `${sizePx.padY}px ${sizePx.padX}px`,
-    }"
+    :style="popoverStyle"
   >
     <div
       v-if="showIcon"
@@ -80,7 +97,6 @@ const countSvg = useInlineSvg(countUrl);
 .prompt-popover {
   display: inline-flex;
   align-items: center;
-  border-radius: 9999px;
   background: var(--color-cream-soft);
   color: var(--word-color, var(--color-coral));
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
@@ -88,6 +104,21 @@ const countSvg = useInlineSvg(countUrl);
   position: relative;
   transition: transform 180ms cubic-bezier(.2, .8, .2, 1), box-shadow 220ms ease;
 }
+
+/* The combined pill (AI opponents) stretches to fit both icons inside a pill shape. */
+.prompt-popover.mode-combined {
+  border-radius: 9999px;
+}
+
+/* Single-icon modes (HUMAN split popovers) render as a coin-style circular badge.
+ * Width/height are set inline (popoverStyle) so the dimensions are guaranteed equal;
+ * border-radius rounds them into a perfect circle. */
+.prompt-popover.mode-icon,
+.prompt-popover.mode-count {
+  border-radius: 9999px;
+  justify-content: center;
+}
+
 .prompt-popover.is-recital {
   z-index: 35;
   transform: scale(1.12);

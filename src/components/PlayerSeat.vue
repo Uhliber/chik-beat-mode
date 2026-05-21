@@ -66,6 +66,12 @@ const props = defineProps<{
   isBeatPicker?: boolean;
   /** Display size for the floating prompt+count popover beside the active prompt. */
   promptInfoSize?: PromptInfoSize;
+  /** Degrees the parent seat container is rotated (desktop radial layout rotates
+   *  opponent seats so their cards face the table). Set to 0 for the human seat and
+   *  for layouts that don't rotate (mobile semicircle). Used to counter-rotate the
+   *  popover + pip overlays so they stay UPRIGHT for the human player to read,
+   *  regardless of where the opponent is sitting. */
+  seatRotation?: number;
 }>();
 
 const emit = defineEmits<{
@@ -131,6 +137,13 @@ const haloHaloIds = computed<Set<string>>(() => {
   return ids;
 });
 const cardPulse = (cardId: string): boolean => haloHaloIds.value.has(cardId);
+
+/** CSS transform that counter-rotates an overlay back to the human's reading frame.
+ *  Empty string = no counter-rotation needed (no parent rotation, or human seat). */
+const counterRotate = computed(() => {
+  const r = props.seatRotation ?? 0;
+  return r === 0 ? '' : `rotate(${-r}deg)`;
+});
 
 // SpeechBubble visibility: track the latest shoutKey, show for ~800ms then hide.
 const showBubble = ref(false);
@@ -215,16 +228,21 @@ watch(
       />
     </div>
 
-    <!-- Chant Trigger recital pips — semicircle arc above the prompt card. One pip per
-         count value on the active prompt; pips light up as the chant counts at this
-         seat. Hidden when there's no trigger in flight. -->
-    <ChantPips
+    <!-- Chant Trigger recital pips — arc beside the player. Counter-rotated so the
+         arc reads upright for the human regardless of which side of the table this
+         seat sits on. -->
+    <div
       v-if="promptStack.length > 0"
-      :count="promptStack[promptStack.length - 1].count"
-      :lit="chantPipsLit ?? 0"
-      :active="chantTriggerInFlight ?? false"
-      :start-step="chantPipsStartStep ?? 0"
-    />
+      class="chant-pips-anchor"
+      :style="counterRotate ? { transform: counterRotate } : undefined"
+    >
+      <ChantPips
+        :count="promptStack[promptStack.length - 1].count"
+        :lit="chantPipsLit ?? 0"
+        :active="chantTriggerInFlight ?? false"
+        :start-step="chantPipsStartStep ?? 0"
+      />
+    </div>
 
     <!-- Prompt stack: cards face-up sitting in front of this player. The top one is the
          active prompt; older cards stack underneath but are inert. The human's own pile
@@ -273,7 +291,10 @@ watch(
           :base-id="`seat-${player.seatIndex}`"
           :highlight-card-id="lastPlayedCardId"
         />
-        <div class="prompt-popover-anchor">
+        <div
+          class="prompt-popover-anchor"
+          :style="counterRotate ? { transform: `translateY(-50%) ${counterRotate}` } : undefined"
+        >
           <PromptPopover
             :card="promptStack[promptStack.length - 1]"
             :size="promptInfoSize ?? 'medium'"
