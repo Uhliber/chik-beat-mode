@@ -53,10 +53,10 @@ const props = defineProps<{
   currentBeatPickerSeat?: number | null;
   /** v1.2 Chant Trigger overlay state. */
   chantTriggerActive?: boolean;
-  chantTriggerLandedBeat?: ChantWord | 'no-winner-opening' | 'no-winner-unclaimed' | null;
   chantTriggerWinnerSeat?: number | null;
-  chantTriggerTotal?: number;
   chantTriggerReceiverSeat?: number | null;
+  /** Beat being spoken at the current recital step (drives the lottery banner). */
+  chantRecitalCurrentBeat?: ChantWord | null;
   /** Per-seat recital state. Step counter & shouts driven by useGame. */
   chantRecitalStepsBySeat?: Map<number, number>;
   chantRecitalCurrentSeat?: number | null;
@@ -500,14 +500,13 @@ function dispatchFlight(spec: FlightSpec): void {
       />
     </div>
 
-    <!-- Chant Trigger overlay (spotlight + banner). The clockwise recital itself is
-         driven by per-seat SpeechBubble pops via the shout merging above. -->
+    <!-- Chant Trigger overlay (spotlight + lottery banner). The clockwise recital is
+         driven by per-seat SpeechBubble pops via the shout merging above; the banner
+         displays whichever beat is being recited right now and naturally freezes on
+         the landed beat once recital ends. -->
     <ChantTriggerOverlay
       :active="!!chantTriggerActive"
-      :landed-beat="chantTriggerLandedBeat ?? null"
-      :winner-seat-index="chantTriggerWinnerSeat ?? null"
-      :total="chantTriggerTotal ?? 0"
-      :receiver-seat-index="chantTriggerReceiverSeat ?? null"
+      :current-beat="chantRecitalCurrentBeat ?? null"
     />
 
     <!-- Slam wheel overlay (during aim) -->

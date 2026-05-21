@@ -3,12 +3,12 @@
  * Visual layer for the Chant Trigger. When the engine emits versusChantTriggered:
  *  - the table darkens (filter applied via parent class)
  *  - a radial spotlight covers the center
- *  - the chant recites clockwise via SpeechBubbles, one beat per count
- *  - the landed beat owner's seat pulses
+ *  - the lottery banner spins through chant beats LIVE as the recital walks (one
+ *    beat word per recital step), eventually freezing on the landed beat
  *  - then ambiance restores
  *
- * The actual SpeechBubble hops are driven by the parent (GameTable) reading the shout
- * state per-seat; this overlay owns the spotlight + the on-landing pulse banner.
+ * The actual SpeechBubble hops + ChantPips are driven by per-seat state pushed from
+ * useGame; this overlay owns the spotlight + the lottery banner.
  */
 import { computed } from 'vue';
 import type { ChantWord } from '@/game/types';
@@ -16,27 +16,14 @@ import type { ChantWord } from '@/game/types';
 const props = defineProps<{
   /** True while a Chant Trigger is in flight. */
   active: boolean;
-  /** The landed beat, or 'no-winner-*' if nothing won. */
-  landedBeat: ChantWord | 'no-winner-opening' | 'no-winner-unclaimed' | null;
-  /** Seat that won the chant power, or null. */
-  winnerSeatIndex: number | null;
-  /** Total count summed across all active prompts. */
-  total: number;
-  /** Seat that received the Chant Chik (recital starts here). */
-  receiverSeatIndex: number | null;
+  /** The beat being spoken at the current recital step. Drives the lottery banner —
+   *  cycles through beats live during the recital, then naturally freezes on the
+   *  LAST step's beat (which is the landed beat). */
+  currentBeat: ChantWord | null;
 }>();
 
-const landedLabel = computed(() => {
-  if (!props.landedBeat) return '';
-  if (props.landedBeat === 'no-winner-opening') return 'OPENING CHIK — NO WINNER';
-  if (props.landedBeat === 'no-winner-unclaimed') return 'UNCLAIMED BEAT — NO WINNER';
-  return props.landedBeat.toUpperCase();
-});
-const landedWordClass = computed(() => {
-  const b = props.landedBeat;
-  if (!b || b === 'no-winner-opening' || b === 'no-winner-unclaimed') return '';
-  return `word-${b}`;
-});
+const beatLabel = computed(() => props.currentBeat ? props.currentBeat.toUpperCase() : '');
+const beatWordClass = computed(() => props.currentBeat ? `word-${props.currentBeat}` : '');
 </script>
 
 <template>
@@ -50,13 +37,15 @@ const landedWordClass = computed(() => {
       <!-- Spotlight: dark radial vignette with a clearer center over the table. -->
       <div class="chant-spotlight" />
 
-      <!-- Top banner: announces the chant total and (after landing) the result. -->
-      <div class="chant-banner">
-        <div class="chant-banner-eyebrow">CHANT TRIGGER</div>
-        <div class="chant-banner-total">×{{ total }}</div>
-        <div v-if="landedBeat" class="chant-banner-landed" :class="landedWordClass">
-          {{ landedLabel }}
-        </div>
+      <!-- Lottery banner: a single big beat word that re-renders per recital step.
+           The :key on the inner span forces Vue to remount the element each beat
+           change so the pop animation re-fires — gives the lottery wheel its
+           ticking, flip-card feel. Once the recital ends, this freezes on whatever
+           the final beat was (which IS the landed beat). -->
+      <div v-if="currentBeat" class="lottery-banner" :class="beatWordClass">
+        <Transition name="lottery" mode="out-in">
+          <span :key="currentBeat" class="lottery-word">{{ beatLabel }}</span>
+        </Transition>
       </div>
     </div>
   </Transition>
@@ -85,54 +74,54 @@ const landedWordClass = computed(() => {
   to   { opacity: 1; }
 }
 
-.chant-banner {
+/* Lottery banner — single beat word, large, centered up top. Brightness-bumped so
+ * it cuts through the GameTable's darkened ambiance filter (parent has
+ * brightness(0.62); banner multiplies back to ~1.0). */
+.lottery-banner {
   position: absolute;
   left: 50%;
-  top: 12%;
+  top: 11%;
   transform: translateX(-50%);
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 4px;
-  padding: 14px 26px;
+  justify-content: center;
+  padding: 18px 36px;
   border-radius: 22px;
-  background: rgba(20, 14, 10, 0.78);
-  color: var(--color-cream-soft);
-  text-align: center;
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+  background: rgba(20, 14, 10, 0.82);
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.55);
+  filter: brightness(1.6) saturate(1.15);
   animation: banner-in 360ms cubic-bezier(.2, .8, .2, 1);
+  /* Reserve space so the word swap doesn't reflow the whole banner. */
+  min-width: 280px;
+  min-height: 78px;
 }
-.chant-banner-eyebrow {
-  font-family: var(--font-subtitle);
-  font-size: 0.7rem;
-  letter-spacing: 0.32em;
-  font-weight: 800;
-  color: rgba(252, 246, 230, 0.7);
-}
-.chant-banner-total {
+.lottery-word {
   font-family: var(--font-display);
-  font-size: 2.4rem;
   font-weight: 700;
+  font-size: 3rem;
+  letter-spacing: 0.06em;
   line-height: 1;
+  color: var(--word-color, var(--color-cream-soft));
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.35);
+  display: inline-block;
 }
-.chant-banner-landed {
-  margin-top: 4px;
-  padding: 4px 14px;
-  border-radius: 9999px;
-  font-family: var(--font-display);
-  font-weight: 700;
-  font-size: 1rem;
-  letter-spacing: 0.18em;
-  background: var(--word-color, var(--color-coral));
-  color: var(--color-cream-soft);
-  animation: landed-in 320ms cubic-bezier(.2, .8, .2, 1);
-}
+
 @keyframes banner-in {
   from { opacity: 0; transform: translate(-50%, -16px) scale(0.85); }
   to   { opacity: 1; transform: translate(-50%, 0) scale(1); }
 }
-@keyframes landed-in {
-  from { opacity: 0; transform: scale(0.7); }
-  to   { opacity: 1; transform: scale(1); }
+
+/* Per-step lottery transition — slot-machine style flip. */
+.lottery-enter-active,
+.lottery-leave-active {
+  transition: transform 160ms cubic-bezier(.2, .8, .2, 1), opacity 140ms ease;
+}
+.lottery-enter-from {
+  opacity: 0;
+  transform: translateY(-12px) scale(0.9);
+}
+.lottery-leave-to {
+  opacity: 0;
+  transform: translateY(14px) scale(0.95);
 }
 </style>

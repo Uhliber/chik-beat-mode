@@ -316,6 +316,11 @@ export function useGame(opts: UseGameOptions = {}) {
   const recitalShouts = ref<Record<number, { word: ChantWord; key: number }>>({});
   /** Seat that's currently being recited at — used to glow that seat's popover. */
   const chantRecitalCurrentSeat = ref<number | null>(null);
+  /** The beat word being spoken at the current recital step. Updates per step so the
+   *  ChantTriggerOverlay banner can display the chant lottery-style (cycling through
+   *  beats live), then freezes on the LANDED beat once the recital ends. Reset to
+   *  null when a new trigger fires. */
+  const chantRecitalCurrentBeat = ref<ChantWord | null>(null);
   /** Map of seat → the global recital step at which that seat's run BEGAN. Derived
    *  from the trigger's perSeatCounts + receiverSeatIndex; used by ChantPips to know
    *  which beat word each lit pip represents (chik / wally / hindo / …). Empty unless
@@ -389,6 +394,39 @@ export function useGame(opts: UseGameOptions = {}) {
     const p = game.value.players.find((x) => x.id === playerId);
     return !!p && !p.isAI;
   };
+
+  /**
+   * Queue a card-flight from the winner's seat to each gift recipient's seat after
+   * the Chant Power resolves. Reuses the existing 'draw' flight kind (cards landing
+   * in a hand) — the engine already moved the cards into recipient.hand by the time
+   * versusChantPowerResolved fires, so we look them up there for the assetPath.
+   */
+  function queueFlightsForChantGifts(e: Extract<GameEvent, { kind: 'versusChantPowerResolved' }>): void {
+    const winnerSeat = e.winnerSeatIndex;
+    const fromRect = snapshotRect(`[data-seat-index="${winnerSeat}"]`);
+    if (!fromRect) return;
+    for (const gift of e.gifts) {
+      const toRect = snapshotRect(`[data-seat-index="${gift.recipientSeatIndex}"]`);
+      if (!toRect) continue;
+      const recipient = game.value.players[gift.recipientSeatIndex];
+      if (!recipient) continue;
+      for (const cardId of gift.cardIds) {
+        const card = recipient.hand.find((c) => c.id === cardId);
+        // Show the card face only when the human can plausibly want to see it: when
+        // the recipient is the human (their new card lands face-up in their fan).
+        const revealFace = !recipient.isAI && !!card;
+        pendingFlights.value.push({
+          id: nextFlightId++,
+          kind: 'draw',
+          cardId,
+          faceUrl: card?.assetPath ?? '',
+          fromRect,
+          toRect,
+          revealFace,
+        });
+      }
+    }
+  }
 
   function queueFlightForPlay(e: Extract<GameEvent, { kind: 'versusPlay' | 'soloSlam' }>): void {
     if (e.kind === 'versusPlay') {
@@ -540,6 +578,7 @@ export function useGame(opts: UseGameOptions = {}) {
         chantRecitalStepsBySeat.value = new Map();
         recitalShouts.value = {};
         chantRecitalCurrentSeat.value = null;
+        chantRecitalCurrentBeat.value = null;
         // No-winner: no chant-power-resolve will fire, so we tear down the overlay
         // ourselves after the recital plus a short tail so the landed banner is seen.
         // Also release the engine's AI gate once the tail completes — the engine had
@@ -552,6 +591,7 @@ export function useGame(opts: UseGameOptions = {}) {
             chantTrigger.value = null;
             chantRecitalStepsBySeat.value = new Map();
             chantRecitalCurrentSeat.value = null;
+            chantRecitalCurrentBeat.value = null;
             recitalShouts.value = {};
             (game.value.endChantTriggerWindow?.());
           }, recitalMs + 1100);
@@ -568,6 +608,7 @@ export function useGame(opts: UseGameOptions = {}) {
           next.set(seatIndex, (next.get(seatIndex) ?? 0) + 1);
           chantRecitalStepsBySeat.value = next;
           chantRecitalCurrentSeat.value = seatIndex;
+          chantRecitalCurrentBeat.value = beatWord;
           const prevKey = recitalShouts.value[seatIndex]?.key ?? 0;
           recitalShouts.value = {
             ...recitalShouts.value,
@@ -597,6 +638,10 @@ export function useGame(opts: UseGameOptions = {}) {
       }
       case 'versusChantPowerResolved':
         pendingChantPower.value = null;
+        // Animate the gifted cards flying from winner → recipients. Snap rects now,
+        // before the recipient hand re-fans on the next render and the seat anchor
+        // shifts. Reuses the standard 'draw' flight kind.
+        queueFlightsForChantGifts(e);
         // Tear down the trigger overlay after a brief beat so the landed banner is
         // seen. Also release the engine's AI cooldown gate so SimulationController
         // resumes scheduling normal AI ticks. Without this, the no-winner & winner
@@ -670,6 +715,7 @@ export function useGame(opts: UseGameOptions = {}) {
     chantRecitalStepsBySeat.value = new Map();
     recitalShouts.value = {};
     chantRecitalCurrentSeat.value = null;
+    chantRecitalCurrentBeat.value = null;
     pendingChantPower.value = null;
 
     const g = new Game();
@@ -897,6 +943,7 @@ export function useGame(opts: UseGameOptions = {}) {
     chantTrigger,
     chantRecitalStepsBySeat,
     chantRecitalCurrentSeat,
+    chantRecitalCurrentBeat,
     chantStartStepBySeat,
     recitalShouts,
     pendingChantPower,

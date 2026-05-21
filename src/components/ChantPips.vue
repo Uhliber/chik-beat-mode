@@ -92,13 +92,16 @@ const pips = computed<Pip[]>(() => {
 
 <style scoped>
 /* The container has no size of its own — pips are absolutely positioned via translate
- * so they fan around a baseline anchored to the parent (PlayerSeat). */
+ * so they fan around a baseline anchored to the parent (PlayerSeat). Brightness +
+ * saturate compensate the GameTable's ambiance filter so the pips remain readable
+ * through the darkened state. */
 .chant-pips {
   position: relative;
   width: 0;
   height: 0;
   pointer-events: none;
   z-index: 36;
+  filter: brightness(1.55) saturate(1.15);
 }
 
 .pip {

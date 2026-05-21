@@ -145,6 +145,15 @@ const counterRotate = computed(() => {
   return r === 0 ? '' : `rotate(${-r}deg)`;
 });
 
+/** Compose the count-spotlight transform: center on the seat, counter-rotate so the
+ *  badge reads upright for the player, then scale up when active or hide-small when
+ *  not. Single computed so the CSS transition has a continuous transform shape. */
+const spotlightTransform = computed(() => {
+  const scale = props.chantTriggerInFlight ? 1.7 : 0.5;
+  const rotate = counterRotate.value;
+  return `translate(-50%, -50%) ${rotate} scale(${scale})`.trim();
+});
+
 // SpeechBubble visibility: track the latest shoutKey, show for ~800ms then hide.
 //
 // CRITICAL: only fire the bubble when shoutKey STRICTLY INCREASES. The parent's
@@ -171,7 +180,10 @@ watch(
 <template>
   <div class="relative flex flex-col items-center gap-1">
     <!-- Speech bubble — pops above the player when they shout a chant word as they play. -->
-    <div class="absolute -top-8 left-1/2 -translate-x-1/2 z-30 pointer-events-none">
+    <div
+      class="absolute -top-8 left-1/2 -translate-x-1/2 z-30 pointer-events-none"
+      :class="{ 'is-chant-bright-bubble': chantTriggerInFlight }"
+    >
       <SpeechBubble
         :word="shouted ?? null"
         :visible="showBubble"
@@ -254,6 +266,25 @@ watch(
       :start-step="chantPipsStartStep ?? 0"
     />
 
+    <!-- Recital count spotlight — when the chant trigger fires, the count badge
+         scales up + centers on the seat so the player sees how much "value" each
+         seat contributes to the chant. Counter-rotated so it reads upright.
+         Always rendered (when there's a prompt to spotlight); opacity + scale
+         transition handles entry/exit so the badge animates in cleanly. -->
+    <div
+      v-if="promptStack.length > 0 && promptStack[promptStack.length - 1].count > 0"
+      class="count-spotlight"
+      :class="{ 'is-active': chantTriggerInFlight }"
+      :style="{ transform: spotlightTransform }"
+    >
+      <PromptPopover
+        :card="promptStack[promptStack.length - 1]"
+        size="large"
+        mode="count"
+        :recital-active="chantRecitalActive ?? false"
+      />
+    </div>
+
     <!-- Prompt stack: cards face-up sitting in front of this player. The top one is the
          active prompt; older cards stack underneath but are inert. The human's own pile
          is permanently ~30% larger than the opponents' piles so they can always read
@@ -285,7 +316,10 @@ watch(
           :base-id="`seat-${player.seatIndex}`"
           :highlight-card-id="lastPlayedCardId"
         />
+        <!-- The inline count badge hides during the chant trigger — the spotlight
+             count below takes over so attention focuses on the per-seat count. -->
         <PromptPopover
+          v-show="!chantTriggerInFlight"
           :card="promptStack[promptStack.length - 1]"
           :size="promptInfoSize ?? 'medium'"
           mode="count"
@@ -303,7 +337,8 @@ watch(
         />
         <!-- AI popovers: two circular badges side-by-side, anchored beside the card.
              Counter-rotated as a group so the prompt-then-count reading order stays
-             intact regardless of the seat's table-facing rotation. -->
+             intact regardless of the seat's table-facing rotation. The count badge
+             hides during chant trigger — the spotlight below takes over. -->
         <div
           class="prompt-popover-anchor ai-pair"
           :style="counterRotate ? { transform: `translateY(-50%) ${counterRotate}` } : undefined"
@@ -315,6 +350,7 @@ watch(
             :recital-active="chantRecitalActive ?? false"
           />
           <PromptPopover
+            v-show="!chantTriggerInFlight"
             :card="promptStack[promptStack.length - 1]"
             :size="promptInfoSize ?? 'medium'"
             mode="count"
@@ -456,6 +492,35 @@ watch(
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+
+/* Recital count spotlight — large count badge anchored at the seat group's center.
+ * The transform is computed inline so we can interpolate between "small + hidden"
+ * (chant inactive) and "large + centered" (chant active) with a single CSS shape.
+ * Brightness compensation punches through the GameTable's ambiance filter (parent
+ * has brightness(0.62); 1.7 multiplier brings this back to ~1.05 for emphasis).
+ * Hidden by default via opacity:0 so it doesn't overlap normal UI. */
+.count-spotlight {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 40;
+  pointer-events: none;
+  opacity: 0;
+  filter: brightness(1.7) saturate(1.2) drop-shadow(0 6px 14px rgba(0, 0, 0, 0.5));
+  transform-origin: center center;
+  transition: transform 380ms cubic-bezier(.2, .8, .2, 1), opacity 280ms ease;
+}
+.count-spotlight.is-active {
+  opacity: 1;
+}
+
+/* Brightness-bump the recital pips + speech bubble so they punch through the
+ * darkened GameTable filter during a chant trigger. The flag is the same one
+ * that drives the count spotlight (chantTriggerInFlight). */
+.chant-pips.is-recital-bright,
+.is-chant-bright-bubble {
+  filter: brightness(1.6) saturate(1.1);
 }
 
 /* Human's three-piece layout: [prompt-icon] [prompt-card] [count-icon]. Flex centers

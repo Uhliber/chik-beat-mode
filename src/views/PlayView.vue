@@ -94,6 +94,7 @@ const {
   chantTrigger,
   chantRecitalStepsBySeat,
   chantRecitalCurrentSeat,
+  chantRecitalCurrentBeat,
   chantStartStepBySeat,
   recitalShouts,
   pendingChantPower,
@@ -705,10 +706,9 @@ function onPauseOverlayTap() {
         :beats-by-seat="beatsBySeat"
         :current-beat-picker-seat="currentBeatPickerSeat"
         :chant-trigger-active="!!chantTrigger"
-        :chant-trigger-landed-beat="chantTrigger?.landedBeat ?? null"
         :chant-trigger-winner-seat="chantTrigger?.winnerSeatIndex ?? null"
-        :chant-trigger-total="chantTrigger?.total ?? 0"
         :chant-trigger-receiver-seat="chantTrigger?.receiverSeatIndex ?? null"
+        :chant-recital-current-beat="chantRecitalCurrentBeat"
         :chant-recital-steps-by-seat="chantRecitalStepsBySeat"
         :chant-recital-current-seat="chantRecitalCurrentSeat"
         :chant-start-step-by-seat="chantStartStepBySeat"
