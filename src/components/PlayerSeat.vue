@@ -266,10 +266,12 @@ watch(
     <!-- Recital count spotlight — when the chant trigger fires, the count badge
          scales up + centers on the seat so the player sees how much "value" each
          seat contributes to the chant. Counter-rotated so it reads upright.
-         Always rendered (when there's a prompt to spotlight); opacity + scale
-         transition handles entry/exit so the badge animates in cleanly. -->
+         Rendered for ANY seat with an active prompt — count=0 seats still spotlight
+         their "0" badge so the player sees the seat contributes nothing this round
+         (instead of just disappearing from the dim mask). Opacity + scale transition
+         handles entry/exit. -->
     <div
-      v-if="promptStack.length > 0 && promptStack[promptStack.length - 1].count > 0"
+      v-if="promptStack.length > 0"
       class="count-spotlight"
       :class="{ 'is-active': chantTriggerInFlight }"
       :style="{ transform: spotlightTransform }"
