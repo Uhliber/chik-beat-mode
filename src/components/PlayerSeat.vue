@@ -180,13 +180,10 @@ watch(
 <template>
   <div class="relative flex flex-col items-center gap-1">
     <!-- Speech bubble — pops above the player when they shout a chant word as they
-         play. Tagged with data-chant-bubble during the trigger so ChantTriggerOverlay
-         can include it in the spotlight mask (otherwise it disappears behind the
-         dim wash). -->
-    <div
-      class="absolute -top-8 left-1/2 -translate-x-1/2 z-30 pointer-events-none"
-      :data-chant-bubble="chantTriggerInFlight ? player.seatIndex : undefined"
-    >
+         play. During a chant trigger this sits BEHIND the dim wash (not spotlit) so
+         the bright count spotlights stay the focal element; the bubble still pops
+         per recital step but reads as ambient flavor. -->
+    <div class="absolute -top-8 left-1/2 -translate-x-1/2 z-30 pointer-events-none">
       <SpeechBubble
         :word="shouted ?? null"
         :visible="showBubble"
