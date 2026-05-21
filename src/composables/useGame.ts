@@ -15,6 +15,8 @@ import {
   DEFAULT_PLAYGROUND_COMPOSITION,
   DEFAULT_PLAYGROUND_HAND_SIZE,
   DEFAULT_PROMPT_SIZE,
+  DEFAULT_PROMPT_INFO_SIZE,
+  DEFAULT_SKIP_CHANT_RECITAL,
   DEFAULT_SPEED,
   DEFAULT_STRICT_PROMPTS,
   DEFAULT_WISP_ENABLED,
@@ -25,6 +27,8 @@ import {
   loadPlaygroundComposition,
   loadPlaygroundHandSize,
   loadPromptSize,
+  loadPromptInfoSize,
+  loadSkipChantRecital,
   loadSoloBestTime,
   loadStrictPrompts,
   loadWispEnabled,
@@ -34,14 +38,17 @@ import {
   savePlaygroundComposition,
   savePlaygroundHandSize,
   savePromptSize,
+  savePromptInfoSize,
+  saveSkipChantRecital,
   saveSoloBestTime,
   saveStrictPrompts,
   saveWispEnabled,
   type PromptSize,
+  type PromptInfoSize,
 } from './userPreferences';
 /** Re-exported for downstream callers that historically imported `PromptSize` from
  *  `useGame`. New code should import directly from `userPreferences`. */
-export type { PromptSize };
+export type { PromptSize, PromptInfoSize };
 
 /**
  * A queued card-flight, snapshotted at event-emission time. Carries pre-captured DOM
@@ -77,6 +84,9 @@ export interface GameViewState {
 }
 
 const MAX_LOG = 50;
+/** Per-step delay for the Chant Trigger recital animation. Tuned so a typical
+ *  ~20-count chant takes around 4s — slow enough to read, fast enough to not stall. */
+const RECITAL_STEP_MS = 280;
 
 export function useGame(opts: UseGameOptions = {}) {
   const initialMode: SimMode = opts.initialMode ?? 'versus';
@@ -165,6 +175,28 @@ export function useGame(opts: UseGameOptions = {}) {
     savePromptSize(v);
   };
 
+  // Floating prompt+count popover size preference. 'off' hides the popovers entirely.
+  const promptInfoSize = ref<PromptInfoSize>(DEFAULT_PROMPT_INFO_SIZE);
+  void loadPromptInfoSize().then((v) => { promptInfoSize.value = v; });
+  const setPromptInfoSize = (v: PromptInfoSize) => {
+    promptInfoSize.value = v;
+    savePromptInfoSize(v);
+  };
+
+  // Skip the chant-trigger recital animation — useful for fast play (or for users who
+  // don't want the spotlight + bubble walk between trigger and resolve). The controller
+  // mirrors the same setting so AI auto-resolve doesn't pre-empt the on-screen recital.
+  const skipChantRecital = ref(DEFAULT_SKIP_CHANT_RECITAL);
+  void loadSkipChantRecital().then((on) => {
+    skipChantRecital.value = on;
+    controller.value.setRecitalPacing(RECITAL_STEP_MS, on);
+  });
+  const setSkipChantRecital = (on: boolean) => {
+    skipChantRecital.value = on;
+    saveSkipChantRecital(on);
+    controller.value.setRecitalPacing(RECITAL_STEP_MS, on);
+  };
+
   // Custom-deck state (used by any mode whose caps.hasCustomDeck === true; only
   // 'playground' today). Persisted via Capacitor Preferences; default = canonical 56-card.
   const playgroundComposition = ref<PlaygroundComposition>({ ...DEFAULT_PLAYGROUND_COMPOSITION });
@@ -239,6 +271,10 @@ export function useGame(opts: UseGameOptions = {}) {
     saveEventLogEnabled(DEFAULT_EVENT_LOG_ENABLED);
     promptSize.value = DEFAULT_PROMPT_SIZE;
     savePromptSize(DEFAULT_PROMPT_SIZE);
+    promptInfoSize.value = DEFAULT_PROMPT_INFO_SIZE;
+    savePromptInfoSize(DEFAULT_PROMPT_INFO_SIZE);
+    skipChantRecital.value = DEFAULT_SKIP_CHANT_RECITAL;
+    saveSkipChantRecital(DEFAULT_SKIP_CHANT_RECITAL);
     // Guide-on-table: clear the explicit preference so it follows the platform default
     // again (desktop on, mobile off). Persistence layer treats null as "not set".
     guideOnTablePref.value = DEFAULT_GUIDE_ON_TABLE_PREF;
@@ -489,7 +525,7 @@ export function useGame(opts: UseGameOptions = {}) {
         // No-winner: no chant-power-resolve will fire, so we tear down the overlay
         // ourselves after the recital plus a short tail so the landed banner is seen.
         if (e.winnerSeatIndex === null) {
-          const recitalMs = e.total * 180;
+          const recitalMs = skipChantRecital.value ? 0 : e.total * RECITAL_STEP_MS;
           window.setTimeout(() => {
             chantTrigger.value = null;
             chantRecitalStepsBySeat.value = new Map();
@@ -500,11 +536,12 @@ export function useGame(opts: UseGameOptions = {}) {
         break;
       }
       case 'versusChantRecitedBeat': {
-        // Per-step animation: defer each step by ~180ms so the bubbles + popovers
-        // animate sequentially. Capture step locals to avoid stale closure refs.
-        const stepDelayMs = 180;
+        // Per-step animation: defer each step by RECITAL_STEP_MS so the bubbles +
+        // popovers animate sequentially. Skip the delay entirely when the user has
+        // turned the recital animation off (then the chant power resolves immediately).
+        const stepDelayMs = skipChantRecital.value ? 0 : RECITAL_STEP_MS;
         const { seatIndex, beatWord, step } = e;
-        window.setTimeout(() => {
+        const apply = () => {
           const next = new Map(chantRecitalStepsBySeat.value);
           next.set(seatIndex, (next.get(seatIndex) ?? 0) + 1);
           chantRecitalStepsBySeat.value = next;
@@ -514,16 +551,27 @@ export function useGame(opts: UseGameOptions = {}) {
             ...recitalShouts.value,
             [seatIndex]: { word: beatWord, key: prevKey + 1 },
           };
-        }, step * stepDelayMs);
+        };
+        if (stepDelayMs === 0) apply(); else window.setTimeout(apply, step * stepDelayMs);
         break;
       }
-      case 'versusChantPowerAwarded':
-        pendingChantPower.value = {
-          winnerSeatIndex: e.winnerSeatIndex,
-          receiverSeatIndex: e.receiverSeatIndex,
-          chantChikId: '',
-        };
+      case 'versusChantPowerAwarded': {
+        // The engine sets pendingChantPower synchronously, but we hold the UI mirror
+        // back until the recital animation completes so the user sees the chant land
+        // before the give-cards picker appears. SimulationController watches the same
+        // delay via its own queue so AI auto-resolve doesn't pre-empt the recital.
+        const trigger = chantTrigger.value;
+        const recitalMs = trigger && !skipChantRecital.value ? trigger.total * RECITAL_STEP_MS : 0;
+        const awardEvent = e;
+        window.setTimeout(() => {
+          pendingChantPower.value = {
+            winnerSeatIndex: awardEvent.winnerSeatIndex,
+            receiverSeatIndex: awardEvent.receiverSeatIndex,
+            chantChikId: '',
+          };
+        }, recitalMs + (skipChantRecital.value ? 200 : 800));
         break;
+      }
       case 'versusChantPowerResolved':
         pendingChantPower.value = null;
         // Tear down the trigger overlay after a brief beat so the landed banner is seen.
@@ -600,6 +648,7 @@ export function useGame(opts: UseGameOptions = {}) {
     ctrl.setOptions({ speed: speed.value });
     ctrl.setMode(mode.value);
     ctrl.setAiSkill(aiSkill.value);
+    ctrl.setRecitalPacing(RECITAL_STEP_MS, skipChantRecital.value);
     g.setStrictPromptsEnabled(strictPrompts.value);
     unsubGame = g.on(handleEvent);
     unsubStatus = ctrl.onStatusChange(handleStatus);
@@ -823,6 +872,10 @@ export function useGame(opts: UseGameOptions = {}) {
     pendingChantPower,
     submitBeatClaim,
     submitChantPowerResolve,
+    promptInfoSize,
+    setPromptInfoSize,
+    skipChantRecital,
+    setSkipChantRecital,
   };
 }
 

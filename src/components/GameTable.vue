@@ -42,6 +42,8 @@ const props = defineProps<{
   /** User's prompt-size preference. Threads through to PlayerSeat (Versus) and the Solo
    *  BasesArea so the active prompt scales to taste. */
   promptSize?: 'small' | 'medium' | 'large' | 'xl';
+  /** User's preferred size for the floating prompt+count popover ('off' = hide). */
+  promptInfoSize?: import('@/composables/userPreferences').PromptInfoSize;
   /** When true, the human's Halo-Halo Chik pulses + glows to invite the opening play.
    *  Parent (PlayView) flips this on during idle/opening status; off otherwise. */
   pulseHaloHalo?: boolean;
@@ -443,6 +445,7 @@ function dispatchFlight(spec: FlightSpec): void {
           :is-beat-picker="currentBeatPickerSeat === p.seatIndex"
           :chant-recital-active="chantTriggerActive && chantRecitalCurrentSeat === p.seatIndex"
           :chant-recital-step="chantRecitalStepsBySeat?.get(p.seatIndex) ?? -1"
+          :prompt-info-size="promptInfoSize"
         />
       </div>
     </template>
@@ -468,6 +471,7 @@ function dispatchFlight(spec: FlightSpec): void {
         :is-beat-picker="currentBeatPickerSeat === humanSeat.seatIndex"
         :chant-recital-active="chantTriggerActive && chantRecitalCurrentSeat === humanSeat.seatIndex"
         :chant-recital-step="chantRecitalStepsBySeat?.get(humanSeat.seatIndex) ?? -1"
+        :prompt-info-size="promptInfoSize"
         @card-aim-start="onAimStart"
       />
     </div>

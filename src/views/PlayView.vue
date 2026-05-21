@@ -98,6 +98,10 @@ const {
   pendingChantPower,
   submitBeatClaim,
   submitChantPowerResolve,
+  promptInfoSize,
+  setPromptInfoSize,
+  skipChantRecital,
+  setSkipChantRecital,
 } = useGame({ initialMode });
 
 // Tutorial mode: ?tutorial=1 query flips this on. Solo and Versus each have their own
@@ -186,10 +190,12 @@ function onSnapChooseTarget(targetSeatIndex: number) {
 const playerLabels = computed(() => game.value.players.map((p) => p.id));
 const playerAi = computed(() => game.value.players.map((p) => p.isAI));
 
-/** Show the beat picker overlay during setup phase. The overlay always shows whenever
- *  beat selection is active so the user can SEE the AI pick (with a "AI is picking…"
- *  label); chips are only clickable when it's the human's turn. */
-const beatPickerVisible = computed(() => setupPhase.value === 'beat-selection');
+/** Show the beat picker overlay during setup phase, but only after the user has
+ *  hit Start — the overlay is part of "starting the game", not part of the idle
+ *  table. While idle, the table sits behind the central Start CTA undisturbed. */
+const beatPickerVisible = computed(
+  () => setupPhase.value === 'beat-selection' && state.status === 'running',
+);
 const beatPickerInteractive = computed(() => {
   const seat = currentBeatPickerSeat.value;
   if (seat == null || seat < 0) return false;
@@ -693,6 +699,7 @@ function onPauseOverlayTap() {
         :pending-snap-interactive="pendingSnapIsHuman"
         :pending-snap-ai-pick="pendingSnapAiPick"
         :prompt-size="promptSize"
+        :prompt-info-size="promptInfoSize"
         :pulse-halo-halo="pulseHaloHalo"
         :beats-by-seat="beatsBySeat"
         :current-beat-picker-seat="currentBeatPickerSeat"
@@ -781,6 +788,8 @@ function onPauseOverlayTap() {
         :event-log-enabled="eventLogEnabled"
         :guide-on-table="guideOnTable"
         :prompt-size="promptSize"
+        :prompt-info-size="promptInfoSize"
+        :skip-chant-recital="skipChantRecital"
         :strict-prompts="strictPrompts"
         :ai-skill="aiSkill"
         :player-count="playerCount"
@@ -793,6 +802,8 @@ function onPauseOverlayTap() {
         @update:guide-on-table="setGuideOnTable"
         @show-guide="onShowGuide"
         @update:prompt-size="setPromptSize"
+        @update:prompt-info-size="setPromptInfoSize"
+        @update:skip-chant-recital="setSkipChantRecital"
         @update:strict-prompts="setStrictPrompts"
         @update:ai-skill="setAiSkill"
         @update:player-count="setPlayerCount"
@@ -820,6 +831,8 @@ function onPauseOverlayTap() {
         :event-log-enabled="eventLogEnabled"
         :guide-on-table="guideOnTable"
         :prompt-size="promptSize"
+        :prompt-info-size="promptInfoSize"
+        :skip-chant-recital="skipChantRecital"
         :strict-prompts="strictPrompts"
         :ai-skill="aiSkill"
         :player-count="playerCount"
@@ -832,6 +845,8 @@ function onPauseOverlayTap() {
         @update:guide-on-table="setGuideOnTable"
         @show-guide="onShowGuide"
         @update:prompt-size="setPromptSize"
+        @update:prompt-info-size="setPromptInfoSize"
+        @update:skip-chant-recital="setSkipChantRecital"
         @update:strict-prompts="setStrictPrompts"
         @update:ai-skill="setAiSkill"
         @update:player-count="setPlayerCount"

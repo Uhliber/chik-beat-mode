@@ -125,7 +125,7 @@ function confirm() {
             :class="{ 'is-selected': selectionMeta(card.id) !== null }"
             @click="toggleCard(card)"
           >
-            <CardView :card="card" :face-up="true" :width="72" :static-flip="true" />
+            <CardView :card="card" :face-up="true" :width="58" :static-flip="true" />
             <div v-if="selectionMeta(card.id)" class="cp-card-tag">
               <span class="cp-card-tag-order">#{{ selectionMeta(card.id)!.order }}</span>
               <span class="cp-card-tag-arrow">→</span>
@@ -145,53 +145,66 @@ function confirm() {
 </template>
 
 <style scoped>
+/**
+ * Bottom-anchored overlay (not a full-screen modal). Sits above the human's hand
+ * area so the rest of the table — opponents, prompts, hand sizes — remains fully
+ * visible. The user can read who has what before deciding where to send cards.
+ */
 .cp-modal {
   position: fixed;
-  inset: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
   z-index: 60;
   display: flex;
-  align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: 0 16px max(16px, env(safe-area-inset-bottom, 0px));
+  pointer-events: none;
 }
+/* No backdrop. The previous modal used a full opaque-ish overlay; the user explicitly
+ * wanted the table visible so they can strategize about recipients. */
 .cp-backdrop {
-  position: absolute;
-  inset: 0;
-  background: rgba(20, 14, 10, 0.7);
-  backdrop-filter: blur(3px);
+  display: none;
 }
 .cp-panel {
   position: relative;
   background: var(--color-cream-soft);
-  border-radius: 22px;
-  padding: 22px 26px 18px;
-  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.55);
+  border-radius: 22px 22px 14px 14px;
+  padding: 14px 22px 16px;
+  box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.45),
+              0 0 0 2px rgba(231, 89, 61, 0.55);
   max-width: 760px;
   width: 100%;
   text-align: center;
+  pointer-events: auto;
+  animation: cp-slide-up 320ms cubic-bezier(.2, .8, .2, 1) both;
+}
+@keyframes cp-slide-up {
+  from { opacity: 0; transform: translateY(28px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 .cp-title {
   font-family: var(--font-display);
   font-weight: 700;
-  font-size: 1.8rem;
+  font-size: 1.35rem;
   color: var(--color-coral-deep);
   line-height: 1.1;
   letter-spacing: 0.03em;
 }
 .cp-sub {
-  margin-top: 6px;
+  margin-top: 4px;
   font-family: var(--font-body);
-  font-size: 0.86rem;
+  font-size: 0.78rem;
   color: rgba(42, 29, 18, 0.78);
 }
 .cp-hand {
-  margin-top: 16px;
+  margin-top: 12px;
   display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+  flex-wrap: nowrap;
+  gap: 8px;
   justify-content: center;
-  max-height: 50vh;
-  overflow-y: auto;
+  overflow-x: auto;
+  padding: 4px 2px 12px;
 }
 .cp-card {
   position: relative;
@@ -231,19 +244,19 @@ function confirm() {
 .cp-card-tag-recipient { letter-spacing: 0.08em; }
 
 .cp-actions {
-  margin-top: 16px;
+  margin-top: 8px;
   display: flex;
   justify-content: center;
 }
 .cp-confirm {
-  padding: 10px 28px;
+  padding: 8px 24px;
   border-radius: 9999px;
   background: var(--color-coral-deep);
   color: var(--color-cream-soft);
   border: 0;
   font-family: var(--font-display);
   font-weight: 700;
-  font-size: 1.1rem;
+  font-size: 1rem;
   letter-spacing: 0.06em;
   cursor: pointer;
   box-shadow: 0 6px 14px rgba(0, 0, 0, 0.35);

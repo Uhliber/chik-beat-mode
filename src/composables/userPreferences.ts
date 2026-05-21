@@ -20,6 +20,10 @@ import type { PlaygroundComposition } from '@/game/types';
 export type PromptSize = 'small' | 'medium' | 'large' | 'xl';
 const PROMPT_SIZE_VALUES: readonly PromptSize[] = ['small', 'medium', 'large', 'xl'] as const;
 
+/* ===== Floating prompt+count info popover (off / small / medium / large) ===== */
+export type PromptInfoSize = 'off' | 'small' | 'medium' | 'large';
+const PROMPT_INFO_SIZE_VALUES: readonly PromptInfoSize[] = ['off', 'small', 'medium', 'large'] as const;
+
 /* ====================== Capacitor Preferences keys ====================== */
 export const PREF_KEYS = {
   soloBestTime: 'chik-solo-best-time-ms',
@@ -29,8 +33,10 @@ export const PREF_KEYS = {
   playgroundComposition: 'chik-playground-composition',
   playgroundHandSize: 'chik-playground-hand-size',
   promptSize: 'chik-prompt-size',
+  promptInfoSize: 'chik-prompt-info-size',
   eventLogEnabled: 'chik-event-log-enabled',
   guideOnTable: 'chik-guide-on-table',
+  skipChantRecital: 'chik-skip-chant-recital',
 } as const;
 
 /* ===== Canonical defaults — used at load-time AND by "Reset to defaults" ===== */
@@ -46,6 +52,8 @@ export const DEFAULT_GUIDE_ON_TABLE_PREF: boolean | null = null;
 export const DEFAULT_STRICT_PROMPTS = false;
 export const DEFAULT_AI_SKILL: AiSkillLevel = 3;
 export const DEFAULT_PROMPT_SIZE: PromptSize = 'medium';
+export const DEFAULT_PROMPT_INFO_SIZE: PromptInfoSize = 'medium';
+export const DEFAULT_SKIP_CHANT_RECITAL = false;
 export const DEFAULT_SPEED = 1;
 /** Versus / Playground default seat count. Solo is locked to 1 by setMode. */
 export const DEFAULT_PLAYER_COUNT_TURN_BASED = 4;
@@ -144,6 +152,26 @@ export async function loadPromptSize(): Promise<PromptSize> {
 export function savePromptSize(v: PromptSize): void {
   void Preferences.set({ key: PREF_KEYS.promptSize, value: v }).catch(() => undefined);
 }
+
+/* ====================== Prompt info popover size ====================== */
+export async function loadPromptInfoSize(): Promise<PromptInfoSize> {
+  try {
+    const { value } = await Preferences.get({ key: PREF_KEYS.promptInfoSize });
+    if (value && (PROMPT_INFO_SIZE_VALUES as readonly string[]).includes(value)) {
+      return value as PromptInfoSize;
+    }
+    return DEFAULT_PROMPT_INFO_SIZE;
+  } catch {
+    return DEFAULT_PROMPT_INFO_SIZE;
+  }
+}
+export function savePromptInfoSize(v: PromptInfoSize): void {
+  void Preferences.set({ key: PREF_KEYS.promptInfoSize, value: v }).catch(() => undefined);
+}
+
+/* ====================== Skip Chant Recital animation ====================== */
+export const loadSkipChantRecital = () => readBool(PREF_KEYS.skipChantRecital, DEFAULT_SKIP_CHANT_RECITAL);
+export const saveSkipChantRecital = (on: boolean) => writeBool(PREF_KEYS.skipChantRecital, on);
 
 /* ======================== Playground composition ======================== */
 export async function loadPlaygroundComposition(): Promise<PlaygroundComposition> {

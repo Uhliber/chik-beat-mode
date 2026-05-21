@@ -13,6 +13,7 @@ import SettingsSegmented from './settings/SettingsSegmented.vue';
 import IconVolume from './icons/IconVolume.vue';
 import type { SimMode, AiSkillLevel } from '@/game/SimulationController';
 import type { CardPrompt, PlaygroundComposition } from '@/game/types';
+import type { PromptInfoSize } from '@/composables/userPreferences';
 import { modeCaps } from '@/game/modes';
 
 const props = defineProps<{
@@ -37,6 +38,8 @@ const props = defineProps<{
    *  that can host the guide modal). */
   hideGuideAction?: boolean;
   promptSize?: 'small' | 'medium' | 'large' | 'xl';
+  promptInfoSize?: PromptInfoSize;
+  skipChantRecital?: boolean;
   appVersion?: string;
 }>();
 
@@ -55,6 +58,8 @@ const emit = defineEmits<{
   (e: 'reset-playground-defaults'): void;
   (e: 'reset-general-defaults'): void;
   (e: 'update:prompt-size', v: 'small' | 'medium' | 'large' | 'xl'): void;
+  (e: 'update:prompt-info-size', v: PromptInfoSize): void;
+  (e: 'update:skip-chant-recital', v: boolean): void;
   (e: 'restart'): void;
   (e: 'back-to-menu'): void;
 }>();
@@ -78,6 +83,12 @@ const promptSizeOptions = [
   { label: 'M',  value: 'medium' },
   { label: 'L',  value: 'large'  },
   { label: 'XL', value: 'xl'     },
+];
+const promptInfoSizeOptions = [
+  { label: 'Off', value: 'off'    },
+  { label: 'S',   value: 'small'  },
+  { label: 'M',   value: 'medium' },
+  { label: 'L',   value: 'large'  },
 ];
 
 const caps = computed(() => modeCaps(props.mode));
@@ -264,6 +275,36 @@ const deckSufficient = computed(() => deckTotal.value >= minDeckNeeded.value);
           :options="promptSizeOptions"
           aria-label="Prompt size"
           @update:model-value="(v) => emit('update:prompt-size', v as 'small' | 'medium' | 'large' | 'xl')"
+        />
+      </SettingsRow>
+      <SettingsRow description="Floating prompt + count badge beside each player's active prompt. Off hides them.">
+        <template #icon>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10" />
+            <line x1="12" y1="8" x2="12" y2="12" />
+            <line x1="12" y1="16" x2="12.01" y2="16" />
+          </svg>
+        </template>
+        <template #label>Prompt info badge</template>
+        <SettingsSegmented
+          :model-value="promptInfoSize ?? 'medium'"
+          :options="promptInfoSizeOptions"
+          aria-label="Prompt info badge"
+          @update:model-value="(v) => emit('update:prompt-info-size', v as PromptInfoSize)"
+        />
+      </SettingsRow>
+      <SettingsRow description="Skip the clockwise chant recital when a Chant Trigger fires. Off shows the animation (recommended).">
+        <template #icon>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="5 4 15 12 5 20 5 4" />
+            <line x1="19" y1="5" x2="19" y2="19" />
+          </svg>
+        </template>
+        <template #label>Skip chant recital</template>
+        <SettingsToggle
+          :model-value="skipChantRecital ?? false"
+          aria-label="Skip chant recital"
+          @update:model-value="(v) => emit('update:skip-chant-recital', v)"
         />
       </SettingsRow>
       <SettingsRow description="Show the running event log (desktop sidebar / mobile sheet).">

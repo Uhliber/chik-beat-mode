@@ -8,6 +8,7 @@ import { useResponsive } from '@/composables/useResponsive';
 import type { Player } from '@/game/Player';
 import type { Card } from '@/game/Card';
 import type { ChantWord } from '@/game/types';
+import type { PromptInfoSize } from '@/composables/userPreferences';
 
 const { width: viewportW, isMobile } = useResponsive();
 
@@ -58,6 +59,8 @@ const props = defineProps<{
   chantRecitalStep?: number;
   /** True while it's this seat's turn to claim a Beat Card in the setup phase. */
   isBeatPicker?: boolean;
+  /** Display size for the floating prompt+count popover beside the active prompt. */
+  promptInfoSize?: PromptInfoSize;
 }>();
 
 const emit = defineEmits<{
@@ -229,6 +232,7 @@ watch(
       <div class="prompt-popover-anchor">
         <PromptPopover
           :card="promptStack[promptStack.length - 1]"
+          :size="promptInfoSize ?? 'medium'"
           :recital-active="chantRecitalActive ?? false"
           :recital-step="chantRecitalStep ?? -1"
         />

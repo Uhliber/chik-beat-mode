@@ -75,6 +75,11 @@ export class SimulationController {
   private pendingBeatPickTimer: number | null = null;
   /** Timer for the AI's chant-power resolution. */
   private pendingChantPowerTimer: number | null = null;
+  /** Per-step delay used by the Chant Trigger recital. Kept in sync with the UI so
+   *  the AI's auto-resolve doesn't pre-empt the on-screen recital. */
+  private recitalStepMs = 280;
+  /** When true, AI auto-resolves the chant power immediately (no recital wait). */
+  private skipChantRecital = false;
 
   /**
    * Pick a Beat Card for an AI during setup. Random unclaimed beat — there's no
@@ -153,6 +158,12 @@ export class SimulationController {
 
   setAiSkill(level: AiSkillLevel): void {
     this.aiSkill = level;
+  }
+
+  /** Used by useGame to keep recital pacing + AI auto-resolve aligned with the UI prefs. */
+  setRecitalPacing(stepMs: number, skip: boolean): void {
+    this.recitalStepMs = stepMs;
+    this.skipChantRecital = skip;
   }
 
   getAiSkill(): AiSkillLevel {
@@ -278,12 +289,16 @@ export class SimulationController {
 
     // Pending Chant Power — winner must give up to 3 cards. Humans use the modal; AI
     // auto-resolves: pick highest-count cards from hand and target opponents with the
-    // largest hands.
+    // largest hands. Delay matches the on-screen recital so the AI doesn't pre-empt
+    // the chant animation.
     if (this.game.pendingChantPower) {
       const winnerSeat = this.game.pendingChantPower.winnerSeatIndex;
       const winner = this.game.players[winnerSeat];
       if (!winner || !winner.isAI) return; // human → UI submits
       if (this.pendingChantPowerTimer !== null) return;
+      const recitalLen = this.game.pendingChantRecital?.length ?? 0;
+      const recitalMs = this.skipChantRecital ? 0 : recitalLen * this.recitalStepMs;
+      const delay = recitalMs + (this.skipChantRecital ? 400 : 1100);
       this.pendingChantPowerTimer = window.setTimeout(() => {
         this.pendingChantPowerTimer = null;
         if (!this.game.pendingChantPower) { this.scheduleNext(); return; }
@@ -291,7 +306,7 @@ export class SimulationController {
         this.game.submitVersusAction(winner.id, { type: 'chant-power-resolve', gifts });
         if (this.game.winnerId) { this.setStatus('ended'); return; }
         this.scheduleNext();
-      }, 1100);
+      }, delay);
       return;
     }
 
