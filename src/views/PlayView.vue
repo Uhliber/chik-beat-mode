@@ -335,13 +335,15 @@ watch(
 
 // Streak bonus bubble — fires when a streak finalizes (bar depletes or penalty
 // breaks it). Watches the ref's `id` so each finalization spawns one bubble.
+// Tiered bonus pays out in whole seconds (1s/2s/3s) so the bubble label is
+// always a clean integer.
 watch(
   () => soloLastStreakBonus.value?.id,
   (id) => {
     if (!id || !caps.value.isTimeAttack) return;
     const b = soloLastStreakBonus.value;
     if (!b) return;
-    pushBubble(`−${(b.bonusMs / 1000).toFixed(1)}s ×${b.streak} COMBO`, 'bonus');
+    pushBubble(`−${Math.round(b.bonusMs / 1000)}s`, 'bonus');
   },
 );
 
@@ -712,24 +714,6 @@ function onPauseOverlayTap() {
         </div>
       </div>
 
-      <!-- Combo streak bar. Surfaces only while a streak is in flight (count > 0)
-           and depletes over ~3s wall-clock per slam. Each successful slam refills
-           it; on depletion or penalty the streak finalizes and converts to a time
-           credit (bubble fires above via the streak watcher). -->
-      <Transition
-        enter-from-class="opacity-0 translate-y-1"
-        enter-active-class="transition duration-200"
-        leave-active-class="transition duration-200"
-        leave-to-class="opacity-0 translate-y-1"
-      >
-        <div v-if="soloStreak > 0" class="solo-streak">
-          <span class="solo-streak-label">Combo ×{{ soloStreak }}</span>
-          <div class="solo-streak-bar" :title="`Combo streak — bar refills on each slam`">
-            <div class="solo-streak-bar-fill" :style="{ width: (soloStreakFill * 100) + '%' }" />
-          </div>
-        </div>
-      </Transition>
-
       <div class="pointer-events-none">
         <ChantTicker
           :last-played-pos="lastPlayedVirtualPos"
@@ -749,6 +733,28 @@ function onPauseOverlayTap() {
     </div>
 
     <main class="absolute inset-0 isolate" :style="{ paddingTop: isMobile ? '116px' : '0' }">
+      <!-- Combo streak bar floats above the deck in Solo, where the player's eye
+           already lives during a run. Only renders while a streak is in flight
+           (count > 0). Pointer-events disabled — the bar is purely informational
+           and shouldn't intercept clicks on the underlying deck. -->
+      <Transition
+        enter-from-class="opacity-0 translate-y-1"
+        enter-active-class="transition duration-200"
+        leave-active-class="transition duration-200"
+        leave-to-class="opacity-0 translate-y-1"
+      >
+        <div
+          v-if="caps.isTimeAttack && soloStreak > 0"
+          class="solo-streak"
+          aria-hidden="true"
+        >
+          <span class="solo-streak-label">Combo ×{{ soloStreak }}</span>
+          <div class="solo-streak-bar" title="Combo streak — refills on each slam">
+            <div class="solo-streak-bar-fill" :style="{ width: (soloStreakFill * 100) + '%' }" />
+          </div>
+        </div>
+      </Transition>
+
       <GameTable
         :game="game"
         :events="state.events"
@@ -1060,16 +1066,31 @@ function onPauseOverlayTap() {
   background: var(--color-hindo);
 }
 
-/* Combo streak bar — appears under the timer pill while a streak is in flight. */
+/* Combo streak bar — floats above the deck on the table so the player's eye
+ * already lives there during a run. Centered horizontally; vertical offset puts
+ * it just above the central deck area (~38% from top works for both desktop and
+ * mobile portrait layouts). */
 .solo-streak {
+  position: absolute;
+  left: 50%;
+  top: 35%;
+  transform: translate(-50%, -50%);
+  z-index: 18;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 10px;
+  padding: 5px 12px;
   border-radius: 9999px;
-  background: rgba(252, 246, 230, 0.92);
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.18);
+  background: rgba(252, 246, 230, 0.95);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.22);
   pointer-events: none;
+}
+@media (max-width: 767px) {
+  .solo-streak {
+    /* On mobile, the table is shifted down for the header. Nudge accordingly so
+     * the bar still sits just above the deck rather than behind the chant ticker. */
+    top: 40%;
+  }
 }
 .solo-streak-label {
   font-family: var(--font-body);

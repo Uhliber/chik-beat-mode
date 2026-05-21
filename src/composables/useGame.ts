@@ -126,17 +126,15 @@ export function useGame(opts: UseGameOptions = {}) {
   // accumulated streak converts to a time credit and the streak resets.
   //
   // Drawing a card is NEUTRAL — the bar keeps depleting but the streak doesn't
-  // break. Penalties break the streak immediately. The bonus formula rewards
-  // sustained play without ballooning the time savings:
+  // break. Penalties break the streak immediately. The bonus pays out in clean
+  // 1-second tiers (no decimals); the threshold ladder rewards sustained play
+  // without runaway bonuses:
   //
-  //   bonus(streak) = max(0, streak - STREAK_MIN_TO_AWARD + 1) × PER_STREAK_MS
-  //
-  //   streak  3 →   200ms       streak 10 → 1600ms
-  //   streak  5 →   600ms       streak 15 → 2600ms
-  //   streak  7 →  1000ms       streak 20 → 3600ms
+  //   streak 1–2  →  no bonus
+  //   streak 3–5  → −1s
+  //   streak 6–9  → −2s
+  //   streak 10+  → −3s (max)
   const STREAK_BAR_MS = 3000;
-  const STREAK_MIN_TO_AWARD = 3;
-  const PER_STREAK_BONUS_MS = 200;
   const soloStreak = ref(0);
   /** Remaining bar fill in ms (0..STREAK_BAR_MS). 0 = bar empty, no streak. */
   const soloStreakBarMs = ref(0);
@@ -147,14 +145,16 @@ export function useGame(opts: UseGameOptions = {}) {
   let nextStreakBonusId = 1;
 
   function computeStreakBonus(streak: number): number {
-    if (streak < STREAK_MIN_TO_AWARD) return 0;
-    return (streak - STREAK_MIN_TO_AWARD + 1) * PER_STREAK_BONUS_MS;
+    if (streak < 3) return 0;
+    if (streak < 6) return 1000;
+    if (streak < 10) return 2000;
+    return 3000;
   }
 
   function finalizeStreak(): void {
     const s = soloStreak.value;
-    if (s >= STREAK_MIN_TO_AWARD) {
-      const bonusMs = computeStreakBonus(s);
+    const bonusMs = computeStreakBonus(s);
+    if (bonusMs > 0) {
       soloBonusMs.value += bonusMs;
       soloLastStreakBonus.value = { id: nextStreakBonusId++, streak: s, bonusMs };
       beatAudio.ding('high');
