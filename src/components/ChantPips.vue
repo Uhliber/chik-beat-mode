@@ -27,6 +27,10 @@ const props = defineProps<{
    *  across the whole recital (not just per seat), so we need the global step offset
    *  at the moment this seat's run started. */
   startStep: number;
+  /** When true, render a full 360° ring instead of a shallow arc. Used when the pips
+   *  are placed INSIDE the count-spotlight wrapper so they orbit the scaled-up count
+   *  icon at the seat's center. */
+  orbit?: boolean;
 }>();
 
 const visible = computed(() => props.active && props.count > 0);
@@ -44,17 +48,41 @@ interface Pip {
 const pips = computed<Pip[]>(() => {
   const n = props.count;
   if (n <= 0) return [];
-  // Lay out pips in a shallow arc. The arc spans up to ~140° for many pips, but
-  // tightens for small counts. Center pip(s) are highest; outer pips fan down.
+  // Two layout modes:
+  //  - orbit: full 360° ring around the anchor point. Used when the pips sit inside
+  //    the count-spotlight wrapper, encircling the scaled-up count icon.
+  //  - arc (default): shallow fan up to ~140° anchored above a baseline. Used for
+  //    the normal seat-attached presentation outside the spotlight.
+  // First pip is placed at the TOP of the ring (or center of the arc) so the visual
+  // counter starts in a predictable spot regardless of count.
+  const out: Pip[] = [];
+  if (props.orbit) {
+    const radius = 50;                       // pre-scale; parent transform multiplies in
+    for (let i = 0; i < n; i++) {
+      const angle = (i / n) * Math.PI * 2 - Math.PI / 2;     // start at 12 o'clock
+      const arcX = Math.cos(angle) * radius;
+      const arcY = Math.sin(angle) * radius;
+      const beatIdx = (props.startStep + i) % BEAT_ORDER.length;
+      out.push({
+        index: i,
+        lit: i < props.lit,
+        fresh: i === props.lit - 1,
+        word: BEAT_ORDER[beatIdx],
+        arcX,
+        arcY,
+        rot: 0,
+      });
+    }
+    return out;
+  }
+  // Default shallow arc — kept for the prior layout, unused by current PlayerSeat.
   const spreadDeg = Math.min(140, 18 * n);
   const radius = Math.max(40, 14 * n);
-  const out: Pip[] = [];
   for (let i = 0; i < n; i++) {
-    const t = n === 1 ? 0 : (i / (n - 1)) - 0.5;             // -0.5 … +0.5
-    const angle = (t * spreadDeg) * (Math.PI / 180);          // radians from vertical
+    const t = n === 1 ? 0 : (i / (n - 1)) - 0.5;
+    const angle = (t * spreadDeg) * (Math.PI / 180);
     const arcX = Math.sin(angle) * radius;
-    const arcY = -Math.cos(angle) * radius;                   // negative = up from baseline
-    // Beat word for this pip = BEAT_ORDER[(startStep + i) % 7].
+    const arcY = -Math.cos(angle) * radius;
     const beatIdx = (props.startStep + i) % BEAT_ORDER.length;
     out.push({
       index: i,

@@ -179,8 +179,14 @@ watch(
 
 <template>
   <div class="relative flex flex-col items-center gap-1">
-    <!-- Speech bubble — pops above the player when they shout a chant word as they play. -->
-    <div class="absolute -top-8 left-1/2 -translate-x-1/2 z-30 pointer-events-none">
+    <!-- Speech bubble — pops above the player when they shout a chant word as they
+         play. Tagged with data-chant-bubble during the trigger so ChantTriggerOverlay
+         can include it in the spotlight mask (otherwise it disappears behind the
+         dim wash). -->
+    <div
+      class="absolute -top-8 left-1/2 -translate-x-1/2 z-30 pointer-events-none"
+      :data-chant-bubble="chantTriggerInFlight ? player.seatIndex : undefined"
+    >
       <SpeechBubble
         :word="shouted ?? null"
         :visible="showBubble"
@@ -250,26 +256,14 @@ watch(
       />
     </div>
 
-    <!-- Chant Trigger recital pips — arc beside the player. Intentionally NOT
-         counter-rotated: the pips fan around each seat in their natural orientation
-         (matching the rotated prompt card), so the arc visually wraps each player
-         from "their" side of the table rather than always cresting toward the
-         screen-top. The popover counter-rotation handles legibility for the icons. -->
-    <ChantPips
-      v-if="promptStack.length > 0"
-      :count="promptStack[promptStack.length - 1].count"
-      :lit="chantPipsLit ?? 0"
-      :active="chantTriggerInFlight ?? false"
-      :start-step="chantPipsStartStep ?? 0"
-    />
-
     <!-- Recital count spotlight — when the chant trigger fires, the count badge
          scales up + centers on the seat so the player sees how much "value" each
          seat contributes to the chant. Counter-rotated so it reads upright.
          Rendered for ANY seat with an active prompt — count=0 seats still spotlight
          their "0" badge so the player sees the seat contributes nothing this round
          (instead of just disappearing from the dim mask). Opacity + scale transition
-         handles entry/exit. -->
+         handles entry/exit. ChantPips lives INSIDE so they orbit the icon and share
+         the same spotlight hole. -->
     <div
       v-if="promptStack.length > 0"
       class="count-spotlight"
@@ -282,6 +276,13 @@ watch(
         size="large"
         mode="count"
         :recital-active="chantRecitalActive ?? false"
+      />
+      <ChantPips
+        :count="promptStack[promptStack.length - 1].count"
+        :lit="chantPipsLit ?? 0"
+        :active="chantTriggerInFlight ?? false"
+        :start-step="chantPipsStartStep ?? 0"
+        orbit
       />
     </div>
 
@@ -499,11 +500,24 @@ watch(
  * (chant inactive) and "large + centered" (chant active) with a single CSS shape.
  * The ChantTriggerOverlay's SVG mask punches a hole around this element so it pops
  * through the dim backdrop while keeping its true chant-word color. Hidden by
- * default via opacity:0 so it doesn't overlap normal UI. */
+ * default via opacity:0 so it doesn't overlap normal UI.
+ *
+ * Layout: both the count popover and the orbiting ChantPips live inside this wrapper
+ * and are absolutely-positioned at its center, so they SHARE the same origin (the
+ * pips orbit the icon). The wrapper itself is a 1x1 anchor point — its bounding rect
+ * naturally inflates to enclose both children, so circleHole() in the overlay reads
+ * a radius wide enough to cover both. */
 .count-spotlight {
   position: absolute;
   left: 50%;
   top: 50%;
+  /* Explicit box sized to enclose the pip orbit (radius ~57 pre-scale + a bit of
+   * pad). Gives the spotlight a stable bounding rect that circleHole() in the
+   * overlay reads to derive the punched-hole radius — both badge AND pips fit
+   * inside one circular hole. Children overflow visible; the wrapper just provides
+   * the rect. */
+  width: 140px;
+  height: 140px;
   z-index: 40;
   pointer-events: none;
   opacity: 0;
@@ -513,6 +527,22 @@ watch(
 }
 .count-spotlight.is-active {
   opacity: 1;
+}
+/* Center the count popover at the wrapper's centre. The wrapper has explicit
+ * dimensions (140x140) so children at 50%/50% land at the visual middle. */
+.count-spotlight :deep(.prompt-popover) {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+/* Centre the pip orbit ring at the same anchor. Pips themselves are absolutely
+ * positioned inside .chant-pips via translate(arcX, arcY), so anchoring .chant-pips
+ * at the wrapper's centre means the pips orbit exactly around the icon. */
+.count-spotlight :deep(.chant-pips) {
+  position: absolute;
+  left: 50%;
+  top: 50%;
 }
 
 /* Human's three-piece layout: [prompt-icon] [prompt-card] [count-icon]. Flex centers

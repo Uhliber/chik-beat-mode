@@ -76,10 +76,18 @@ function computeHoles(): void {
   // Lottery banner (this component's own element).
   const banner = rectHole(bannerEl.value);
   if (banner) out.push(banner);
-  // Per-seat count spotlights — circular punches to match the circular badges.
+  // Per-seat count spotlights — circular punches sized to include the orbiting
+  // ChantPips (which live INSIDE the spotlight wrapper and extend its bounding
+  // box). The badge + ring share one hole.
   document.querySelectorAll('[data-chant-spotlight]').forEach((el) => {
     const c = circleHole(el);
     if (c) out.push(c);
+  });
+  // Per-seat speech bubbles — pop-up shouts during the recital. Sit above the
+  // pill, well outside the count spotlight, so they get their own rect hole.
+  document.querySelectorAll('[data-chant-bubble]').forEach((el) => {
+    const r = rectHole(el);
+    if (r) out.push(r);
   });
   holes.value = out;
 }
