@@ -777,21 +777,23 @@ export class Game {
     const perSeatCounts: number[] = this.players.map((p) => p.topPrompt?.count ?? 0);
     const total = perSeatCounts.reduce((a, b) => a + b, 0);
 
-    // Pre-compute the recital walk: starting from the receiver, walking clockwise
-    // (+1 in the seat array per Game.neighborSeat), recite the chant in BEAT_ORDER
-    // starting from whatever beat the receiver's prompt corresponds to in the chant
-    // loop. We use the seat-walk simpler approach: each "step" picks the next seat
-    // clockwise and pairs it with the next beat in the 7-beat order. For visualization
-    // the per-seat assignment matters less than the per-step beat — players watch the
-    // chant land on a beat word, not on a seat.
+    // Pre-compute the recital walk: starting from the receiver, FINISH that seat's
+    // count entirely before moving to the next seat clockwise. The chant beat advances
+    // monotonically (BEAT_ORDER, looping) so step N is the Nth beat overall — but the
+    // SEAT only changes when the current seat's count has been exhausted. This matches
+    // the rulebook's "recite the chant aloud, one beat per count" walk where each beat
+    // is "spoken at" the player whose prompt is currently being counted.
     const n = this.players.length;
     const recital: { seatIndex: number; beatWord: ChantWord }[] = [];
-    // Start the spoken chant from the FIRST beat of a sequence (chik) — per rulebook
-    // we recite the full chant aloud, one beat per count, landing on the final beat.
-    for (let step = 0; step < total; step++) {
-      const seat = (receiverSeatIdx + step) % n;
-      const beat = BEAT_ORDER[step % BEAT_ORDER.length];
-      recital.push({ seatIndex: seat, beatWord: beat });
+    let step = 0;
+    for (let i = 0; i < n; i++) {
+      const seat = (receiverSeatIdx + i) % n;
+      const seatCount = perSeatCounts[seat] ?? 0;
+      for (let k = 0; k < seatCount; k++) {
+        const beat = BEAT_ORDER[step % BEAT_ORDER.length];
+        recital.push({ seatIndex: seat, beatWord: beat });
+        step++;
+      }
     }
     this.pendingChantRecital = recital;
 
