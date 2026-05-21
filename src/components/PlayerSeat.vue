@@ -146,12 +146,21 @@ const counterRotate = computed(() => {
 });
 
 // SpeechBubble visibility: track the latest shoutKey, show for ~800ms then hide.
+//
+// CRITICAL: only fire the bubble when shoutKey STRICTLY INCREASES. The parent's
+// `effectiveShout` merges recital shouts (high keys, fast during the chant) with
+// play shouts (older, lower keys). When the recital ends and recitalShouts clears,
+// the merged value falls back to the stale play shout — which has a SMALLER key
+// than the most recent recital step. Without the increase guard, every seat that
+// participated in the recital would re-flash its old play bubble at cleanup time,
+// producing a synchronized "everyone shouts" flash with no semantic meaning.
 const showBubble = ref(false);
 let bubbleTimer: number | null = null;
 watch(
   () => props.shoutKey,
-  (k) => {
+  (k, oldK) => {
     if (!props.shouted || !k) return;
+    if (oldK !== undefined && oldK !== null && k <= oldK) return;
     showBubble.value = true;
     if (bubbleTimer !== null) clearTimeout(bubbleTimer);
     bubbleTimer = window.setTimeout(() => { showBubble.value = false; }, 800);
@@ -163,7 +172,11 @@ watch(
   <div class="relative flex flex-col items-center gap-1">
     <!-- Speech bubble — pops above the player when they shout a chant word as they play. -->
     <div class="absolute -top-8 left-1/2 -translate-x-1/2 z-30 pointer-events-none">
-      <SpeechBubble :word="shouted ?? null" :visible="showBubble" />
+      <SpeechBubble
+        :word="shouted ?? null"
+        :visible="showBubble"
+        :seed="(shoutKey ?? 0) * 131 + player.seatIndex"
+      />
     </div>
 
     <!-- Compact opponents (mobile): hand fanned above pill. -->
