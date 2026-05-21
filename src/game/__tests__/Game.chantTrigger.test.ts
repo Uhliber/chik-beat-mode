@@ -190,6 +190,77 @@ describe('Chant Trigger — closing Chant Chik fires', () => {
   });
 });
 
+describe('Chant Trigger — landed beat math', () => {
+  // Regression: the engine used `BEAT_ORDER[total % 7]` for the landed beat, but
+  // BEAT_ORDER[0] is OPENING chik (rulebook treats mod=0 as CLOSING chik). Result
+  // was off-by-one — e.g. total=23 visually landed on wally (the 23rd count) but
+  // awarded power to the hindo owner. These tests pin the rulebook mapping.
+  //
+  // Rulebook table (sum mod 7 → landed):
+  //   0 → closing Chik (chik owner wins)
+  //   1 → opening Chik (NO winner)
+  //   2 → Wally,  3 → Hindo,  4 → Pop,  5 → Tambo,  6 → Riki
+
+  /** Force a chant trigger with a precomputed total. Uses a 6-player game so every
+   *  one of the 6 beats is claimed (no "unclaimed beat → no winner" edge case
+   *  muddying the test). Beats are deterministically assigned via beatOwners so
+   *  we know exactly who owns what regardless of the random pick order. */
+  function runTriggerWithTotal(target: number): { landed: string; winnerSeat: number | null } {
+    const g = new Game(seededRng(7));
+    g.setupVersus(6);
+    g.autoCompleteBeatSelection();
+    // Override beat ownership deterministically: seat i owns beat i (in CHANT_ORDER).
+    const beats: ChantWord[] = ['chik', 'wally', 'hindo', 'pop', 'tambo', 'riki'];
+    for (let i = 0; i < beats.length; i++) g.beatOwners.set(beats[i], i);
+    // Open the game so subsequent plays advance the chant.
+    const opener = g.players[g.activeSeatIndex];
+    const halo = opener.hand.find((c) => c.isHaloHalo)!;
+    g.submitVersusAction(opener.id, { type: 'play', cardId: halo.id, targetSeatIndex: (g.activeSeatIndex + 1) % 6 });
+    while (g.chant.currentIndex !== 6) g.chant.advance();
+
+    // Wipe everyone's prompt and install fake counts so the trigger sum is exact.
+    // Chant chik itself contributes its count (5) to the sum, so we subtract that
+    // from the target and spread the remainder onto seat 5.
+    for (const p of g.players) p.promptStack.length = 0;
+    const chantChikCount = 5;
+    const remaining = target - chantChikCount;
+    const fakeCard = (count: number): Card => new Card({ id: `fk-${Math.random()}`, prompt: 'left', word: 'wally', count });
+    if (remaining > 0) g.players[5].promptStack.push(fakeCard(remaining));
+
+    g.activeSeatIndex = 0;
+    const chantChik = new Card({ id: 'cc', prompt: 'free', word: 'chik', isChantChik: true, count: chantChikCount });
+    g.players[0].hand.push(chantChik);
+    const events: GameEvent[] = [];
+    g.on((e) => events.push(e));
+    g.submitVersusAction(g.players[0].id, { type: 'play', cardId: chantChik.id, targetSeatIndex: 1 });
+    const trigger = events.find((e) => e.kind === 'versusChantTriggered');
+    if (trigger?.kind !== 'versusChantTriggered') throw new Error('no trigger fired');
+    return { landed: String(trigger.landedBeat), winnerSeat: trigger.winnerSeatIndex };
+  }
+
+  it('total=7 lands on closing Chik (chik owner wins)', () => {
+    const { landed } = runTriggerWithTotal(7);
+    expect(landed).toBe('chik');
+  });
+  it('total=8 (mod 7 = 1) lands on OPENING Chik — no winner', () => {
+    const { landed, winnerSeat } = runTriggerWithTotal(8);
+    expect(landed).toBe('no-winner-opening');
+    expect(winnerSeat).toBeNull();
+  });
+  it('total=9 lands on Wally', () => {
+    const { landed } = runTriggerWithTotal(9);
+    expect(landed).toBe('wally');
+  });
+  it('total=23 (mod 7 = 2) lands on Wally — was hindo under the off-by-one bug', () => {
+    const { landed } = runTriggerWithTotal(23);
+    expect(landed).toBe('wally');
+  });
+  it('total=18 (mod 7 = 4) lands on Pop — matches the rulebook example', () => {
+    const { landed } = runTriggerWithTotal(18);
+    expect(landed).toBe('pop');
+  });
+});
+
 describe('Chant Power — give-cards validation', () => {
   let g: Game;
   beforeEach(() => {

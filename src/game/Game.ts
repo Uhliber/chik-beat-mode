@@ -819,15 +819,24 @@ export class Game {
     }
     this.pendingChantRecital = recital;
 
-    // The landed beat is the BEAT_ORDER entry at index (total mod 7). Per rulebook:
-    //   0 → closing Chik (Chik beat owner wins)
-    //   1 → opening Chik (NO winner)
-    //   2..5 → Wally, Hindo, Pop, Tambo
-    //   6 → Riki
-    const landedIdx = ((total % BEAT_ORDER.length) + BEAT_ORDER.length) % BEAT_ORDER.length;
+    // The landed beat is the beat spoken AT the Nth count. The recital walk above
+    // speaks BEAT_ORDER[step % 7] at zero-indexed step, so the Nth count (step N-1)
+    // speaks BEAT_ORDER[(total - 1) % 7]. That's the actual landed beat — using
+    // BEAT_ORDER[total % 7] would be off by one (the beat we'd land on if the
+    // chant continued ONE MORE count past the total).
+    //
+    // Per rulebook, sum mod 7 maps to:
+    //   0 → closing Chik (Chik beat owner wins)         → BEAT_ORDER[6]
+    //   1 → opening Chik (NO winner)                    → BEAT_ORDER[0]
+    //   2 → Wally, 3 → Hindo, 4 → Pop, 5 → Tambo, 6 → Riki
+    // Our BEAT_ORDER starts at opening chik (index 0) and ends at closing chik
+    // (index 6), so the BEAT_ORDER index for the landed beat is (total - 1) % 7.
+    // The no-winner-opening case is when total % 7 === 1 (rulebook mod 1).
+    const landedIdx = ((total - 1) % BEAT_ORDER.length + BEAT_ORDER.length) % BEAT_ORDER.length;
     let landedBeat: ChantWord | 'no-winner-opening' | 'no-winner-unclaimed' = BEAT_ORDER[landedIdx];
     let winnerSeatIndex: number | null = null;
-    if (landedIdx === 1) {
+    const isOpeningChik = ((total % BEAT_ORDER.length) + BEAT_ORDER.length) % BEAT_ORDER.length === 1;
+    if (isOpeningChik) {
       // Opening Chik → no winner regardless of who owns the Chik beat.
       landedBeat = 'no-winner-opening';
     } else {
