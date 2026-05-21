@@ -37,12 +37,22 @@ const hovering = ref(false);
 const toggle = () => { open.value = !open.value; };
 
 // ---- Desktop sizing ----
-const SLOT_W = 80;
-const SLOT_H = 112;
-const PREVIEW_W = 120;
-const PREVIEW_H = 168;
+//
+// All four card states (closed / preview / hovered) share the SAME aspect ratio so
+// the visible card stays a playing-card shape across transitions. Content is rendered
+// once at the read-size dimensions (READ_W × READ_H) and the surrounding scaler is
+// `transform: scale()`-ed to fit whichever size we're showing. This keeps the layout
+// — font sizes (via cqw), padding, gaps, the two-column grid — proportionally
+// IDENTICAL whether the card is tiny or full-size. The previous approach let the
+// cqw container shrink to ~120px wide, which made title fonts compute to ~7px and
+// the body text essentially unreadable while breaking the relative proportions.
+const ASPECT = 0.6;          // width / height
 const READ_W = 420;
-const READ_H = 740;
+const READ_H = Math.round(READ_W / ASPECT); // 700
+const PREVIEW_W = 130;
+const PREVIEW_H = Math.round(PREVIEW_W / ASPECT); // 216
+const SLOT_W = 80;
+const SLOT_H = Math.round(SLOT_W / ASPECT); // 133
 
 const slot = computed(() => ({
   width: (open.value ? PREVIEW_W : SLOT_W) + 'px',
@@ -58,6 +68,22 @@ const cardStyle = computed(() => {
     zIndex: open.value && hovering.value ? 50 : 'auto',
   };
 });
+
+/** Scale factor for the inner GuideContent. The content is rendered at READ_W×READ_H
+ *  always, then visually scaled to fit the current card size. transform-origin:
+ *  top-left so the (0, 0) corner of the content lines up with the card. */
+const contentScale = computed(() => {
+  if (!open.value) return 0;
+  const currentW = hovering.value ? READ_W : PREVIEW_W;
+  return currentW / READ_W;
+});
+const contentStyle = computed(() => ({
+  width: READ_W + 'px',
+  height: READ_H + 'px',
+  transform: `scale(${contentScale.value})`,
+  transformOrigin: 'top left',
+  transition: 'transform 300ms ease-out',
+}));
 </script>
 
 <template>
@@ -89,15 +115,20 @@ const cardStyle = computed(() => {
           }"
         />
         <div
-          class="absolute inset-0 backface-hidden rounded-lg shadow-xl ring-1 ring-black/15 guide-front"
+          class="absolute inset-0 backface-hidden rounded-lg shadow-xl ring-1 ring-black/15 guide-front overflow-hidden"
           style="transform: rotateY(180deg);"
         >
-          <GuideContent
-            :mode="mode"
-            :supports-tutorial="supportsTutorial"
-            :tutorial-completed="tutorialCompleted"
-            @start-tutorial="onStartTutorial"
-          />
+          <!-- Inner scaler — fixed READ_W×READ_H so GuideContent's cqw units always
+               compute against the same container width. The visible card size is
+               handled by scaling THIS wrapper, not by resizing the content. -->
+          <div :style="contentStyle">
+            <GuideContent
+              :mode="mode"
+              :supports-tutorial="supportsTutorial"
+              :tutorial-completed="tutorialCompleted"
+              @start-tutorial="onStartTutorial"
+            />
+          </div>
         </div>
       </div>
     </button>

@@ -220,8 +220,8 @@ defineEmits<{
   height: 100%;
   display: grid;
   grid-template-columns: 3fr 2fr;
-  gap: 3cqw;
-  padding: 3.5cqw 3.5cqw 2.5cqw;
+  gap: 2.4cqw;
+  padding: 2.4cqw 2.6cqw 2cqw;
   overflow: auto;
   color: #3a2a1f;
   font-family: var(--font-body);
