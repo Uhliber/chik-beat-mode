@@ -123,6 +123,16 @@ export class Game {
    *  these to animate the SpeechBubble hops one beat per count. Null when no trigger is
    *  in flight. */
   pendingChantRecital: { seatIndex: number; beatWord: ChantWord }[] | null = null;
+  /**
+   * True while a Chant Trigger is between "started" and "UI cleanup tail finished".
+   * Set in resolveChantTrigger; cleared by the view layer via endChantTriggerWindow()
+   * after the recital animation + landed-banner tail have played out. SimulationController
+   * reads this to PAUSE AI actions while the trigger is on screen — necessary for the
+   * no-winner branch where the engine resumes setActiveSeat immediately but the UI is
+   * still mid-recital. Without this flag, AI plays would fire over the chant animation,
+   * dragging in shout bubbles and stealing focus from the chant landed-beat reveal.
+   */
+  chantTriggerCoolingDown = false;
 
   private listeners: Listener[] = [];
   private rng: () => number;
@@ -359,6 +369,7 @@ export class Game {
     this.beatPickOrder = [];
     this.pendingChantPower = null;
     this.pendingChantRecital = null;
+    this.chantTriggerCoolingDown = false;
   }
 
   setStrictPromptsEnabled(on: boolean): void {
@@ -582,6 +593,13 @@ export class Game {
     return new Map(this.beatsBySeat);
   }
 
+  /** View-layer hook: signal that the chant-trigger overlay has finished animating
+   *  (recital + landed banner cleared from screen). Releases the AI controller from
+   *  the cooldown gate so play can resume. Safe to call multiple times. */
+  endChantTriggerWindow(): void {
+    this.chantTriggerCoolingDown = false;
+  }
+
   private versusPlay(seatIdx: number, cardId: string, targetSeatIndex: number): VersusActionResult {
     const player = this.players[seatIdx];
     const card = player.hand.find((c) => c.id === cardId);
@@ -774,6 +792,10 @@ export class Game {
    *      resume play with the receiving seat taking the next turn.
    */
   private resolveChantTrigger(sourceSeatIdx: number, chantChikId: string, receiverSeatIdx: number): void {
+    // Opens the cooldown window — controller will park AI actions until the view layer
+    // calls endChantTriggerWindow() at the end of the recital + landed-banner tail.
+    this.chantTriggerCoolingDown = true;
+
     const perSeatCounts: number[] = this.players.map((p) => p.topPrompt?.count ?? 0);
     const total = perSeatCounts.reduce((a, b) => a + b, 0);
 

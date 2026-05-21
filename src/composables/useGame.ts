@@ -542,6 +542,9 @@ export function useGame(opts: UseGameOptions = {}) {
         chantRecitalCurrentSeat.value = null;
         // No-winner: no chant-power-resolve will fire, so we tear down the overlay
         // ourselves after the recital plus a short tail so the landed banner is seen.
+        // Also release the engine's AI gate once the tail completes — the engine had
+        // already setActiveSeat'd the receiver synchronously, but we hold the AI back
+        // until the player has actually SEEN the recital land.
         if (e.winnerSeatIndex === null) {
           const stepMs = recitalStepMs.value;
           const recitalMs = stepMs === 0 ? 0 : e.total * stepMs;
@@ -550,6 +553,7 @@ export function useGame(opts: UseGameOptions = {}) {
             chantRecitalStepsBySeat.value = new Map();
             chantRecitalCurrentSeat.value = null;
             recitalShouts.value = {};
+            (game.value.endChantTriggerWindow?.());
           }, recitalMs + 1100);
         }
         break;
@@ -593,12 +597,18 @@ export function useGame(opts: UseGameOptions = {}) {
       }
       case 'versusChantPowerResolved':
         pendingChantPower.value = null;
-        // Tear down the trigger overlay after a brief beat so the landed banner is seen.
+        // Tear down the trigger overlay after a brief beat so the landed banner is
+        // seen. Also release the engine's AI cooldown gate so SimulationController
+        // resumes scheduling normal AI ticks. Without this, the no-winner & winner
+        // branches would diverge: winner case has pendingChantPower handling the
+        // timing, but the cleanup tail itself was unguarded — AI could fire plays
+        // and shout bubbles before the trigger overlay finished fading.
         window.setTimeout(() => {
           chantTrigger.value = null;
           chantRecitalStepsBySeat.value = new Map();
           chantRecitalCurrentSeat.value = null;
           recitalShouts.value = {};
+          (game.value.endChantTriggerWindow?.());
         }, 600);
         break;
       case 'versusStrictPenalty':

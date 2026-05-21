@@ -323,6 +323,22 @@ watch(
   { immediate: true },
 );
 
+// When the Chant Trigger overlay tears down, wipe the local play-shouts state. The
+// recitalShouts map clears at the same moment, so effectiveShout for every recital
+// participant would otherwise FALL BACK to a stale play-shout (the chant chik play
+// from before the trigger, or anything older still in the map). That fallback
+// re-triggers PlayerSeat's bubble watcher for every seat simultaneously — the
+// "everyone shouted altogether" flash. Clearing here means the merge returns null,
+// the watcher's `!props.shouted` guard kicks in, and no rogue bubbles fire.
+watch(
+  () => props.chantTriggerActive,
+  (active, prevActive) => {
+    if (prevActive && !active) {
+      shouts.value = {};
+    }
+  },
+);
+
 /** Merge normal-play shouts with Chant Trigger recital shouts. The recital fires the
  *  same SpeechBubble system as a regular play, but driven by useGame's recital walk. We
  *  prefer the recital shout when active so the chant overrides any stale play shout. */

@@ -264,6 +264,18 @@ export class SimulationController {
   private tick(): void {
     if (this.status !== 'running' || this.game.winnerId) return;
 
+    // Chant Trigger cooldown — once a trigger fires, the engine resolves the chant
+    // power chain immediately (including the no-winner path where setActiveSeat
+    // advances back to the receiver), but the UI is still mid-recital. PARK the AI
+    // until the view layer signals the trigger overlay has cleared via
+    // endChantTriggerWindow(). pendingChantPower is handled separately below — that
+    // branch fires its own timer that already waits for the recital + tail.
+    if (this.game.chantTriggerCoolingDown && !this.game.pendingChantPower) {
+      // Re-check in a moment; the UI will release the gate when the overlay tears down.
+      this.scheduleNext(400);
+      return;
+    }
+
     // Beat selection phase — AI auto-picks visibly after a short delay; humans pick via UI.
     if (this.game.setupPhase === 'beat-selection') {
       const pickerId = this.game.currentBeatPicker();
