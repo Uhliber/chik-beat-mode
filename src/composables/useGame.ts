@@ -1,4 +1,4 @@
-import { onUnmounted, reactive, ref, shallowRef, triggerRef } from 'vue';
+import { computed, onUnmounted, reactive, ref, shallowRef, triggerRef } from 'vue';
 import { App as CapApp } from '@capacitor/app';
 import type { Card } from '@/game/Card';
 import { Game } from '@/game/Game';
@@ -16,7 +16,7 @@ import {
   DEFAULT_PLAYGROUND_HAND_SIZE,
   DEFAULT_PROMPT_SIZE,
   DEFAULT_PROMPT_INFO_SIZE,
-  DEFAULT_SKIP_CHANT_RECITAL,
+  DEFAULT_CHANT_RECITAL_SPEED,
   DEFAULT_SPEED,
   DEFAULT_STRICT_PROMPTS,
   DEFAULT_WISP_ENABLED,
@@ -28,7 +28,8 @@ import {
   loadPlaygroundHandSize,
   loadPromptSize,
   loadPromptInfoSize,
-  loadSkipChantRecital,
+  loadChantRecitalSpeed,
+  RECITAL_STEP_MS_BY_SPEED,
   loadSoloBestTime,
   loadStrictPrompts,
   loadWispEnabled,
@@ -39,12 +40,13 @@ import {
   savePlaygroundHandSize,
   savePromptSize,
   savePromptInfoSize,
-  saveSkipChantRecital,
+  saveChantRecitalSpeed,
   saveSoloBestTime,
   saveStrictPrompts,
   saveWispEnabled,
   type PromptSize,
   type PromptInfoSize,
+  type ChantRecitalSpeed,
 } from './userPreferences';
 /** Re-exported for downstream callers that historically imported `PromptSize` from
  *  `useGame`. New code should import directly from `userPreferences`. */
@@ -84,9 +86,6 @@ export interface GameViewState {
 }
 
 const MAX_LOG = 50;
-/** Per-step delay for the Chant Trigger recital animation. Tuned so a typical
- *  ~20-count chant takes around 4s — slow enough to read, fast enough to not stall. */
-const RECITAL_STEP_MS = 280;
 
 export function useGame(opts: UseGameOptions = {}) {
   const initialMode: SimMode = opts.initialMode ?? 'versus';
@@ -183,18 +182,20 @@ export function useGame(opts: UseGameOptions = {}) {
     savePromptInfoSize(v);
   };
 
-  // Skip the chant-trigger recital animation — useful for fast play (or for users who
-  // don't want the spotlight + bubble walk between trigger and resolve). The controller
-  // mirrors the same setting so AI auto-resolve doesn't pre-empt the on-screen recital.
-  const skipChantRecital = ref(DEFAULT_SKIP_CHANT_RECITAL);
-  void loadSkipChantRecital().then((on) => {
-    skipChantRecital.value = on;
-    controller.value.setRecitalPacing(RECITAL_STEP_MS, on);
+  // Speed of the Chant Trigger recital animation: slow / normal / fast / skip. The
+  // controller mirrors the same setting so AI auto-resolve waits for the on-screen
+  // recital to finish.
+  const chantRecitalSpeed = ref<ChantRecitalSpeed>(DEFAULT_CHANT_RECITAL_SPEED);
+  /** Current per-step ms derived from `chantRecitalSpeed`. 0 = skip. */
+  const recitalStepMs = computed(() => RECITAL_STEP_MS_BY_SPEED[chantRecitalSpeed.value]);
+  void loadChantRecitalSpeed().then((v) => {
+    chantRecitalSpeed.value = v;
+    controller.value.setRecitalPacing(recitalStepMs.value);
   });
-  const setSkipChantRecital = (on: boolean) => {
-    skipChantRecital.value = on;
-    saveSkipChantRecital(on);
-    controller.value.setRecitalPacing(RECITAL_STEP_MS, on);
+  const setChantRecitalSpeed = (v: ChantRecitalSpeed) => {
+    chantRecitalSpeed.value = v;
+    saveChantRecitalSpeed(v);
+    controller.value.setRecitalPacing(recitalStepMs.value);
   };
 
   // Custom-deck state (used by any mode whose caps.hasCustomDeck === true; only
@@ -273,8 +274,8 @@ export function useGame(opts: UseGameOptions = {}) {
     savePromptSize(DEFAULT_PROMPT_SIZE);
     promptInfoSize.value = DEFAULT_PROMPT_INFO_SIZE;
     savePromptInfoSize(DEFAULT_PROMPT_INFO_SIZE);
-    skipChantRecital.value = DEFAULT_SKIP_CHANT_RECITAL;
-    saveSkipChantRecital(DEFAULT_SKIP_CHANT_RECITAL);
+    chantRecitalSpeed.value = DEFAULT_CHANT_RECITAL_SPEED;
+    saveChantRecitalSpeed(DEFAULT_CHANT_RECITAL_SPEED);
     // Guide-on-table: clear the explicit preference so it follows the platform default
     // again (desktop on, mobile off). Persistence layer treats null as "not set".
     guideOnTablePref.value = DEFAULT_GUIDE_ON_TABLE_PREF;
@@ -315,6 +316,23 @@ export function useGame(opts: UseGameOptions = {}) {
   const recitalShouts = ref<Record<number, { word: ChantWord; key: number }>>({});
   /** Seat that's currently being recited at — used to glow that seat's popover. */
   const chantRecitalCurrentSeat = ref<number | null>(null);
+  /** Map of seat → the global recital step at which that seat's run BEGAN. Derived
+   *  from the trigger's perSeatCounts + receiverSeatIndex; used by ChantPips to know
+   *  which beat word each lit pip represents (chik / wally / hindo / …). Empty unless
+   *  a trigger is active. */
+  const chantStartStepBySeat = computed<Map<number, number>>(() => {
+    const t = chantTrigger.value;
+    if (!t) return new Map();
+    const out = new Map<number, number>();
+    const n = t.perSeatCounts.length;
+    let step = 0;
+    for (let i = 0; i < n; i++) {
+      const seat = (t.receiverSeatIndex + i) % n;
+      out.set(seat, step);
+      step += t.perSeatCounts[seat] ?? 0;
+    }
+    return out;
+  });
 
   /** Pending Chant Power state (mirrors game.pendingChantPower so templates can react). */
   const pendingChantPower = ref<{
@@ -525,7 +543,8 @@ export function useGame(opts: UseGameOptions = {}) {
         // No-winner: no chant-power-resolve will fire, so we tear down the overlay
         // ourselves after the recital plus a short tail so the landed banner is seen.
         if (e.winnerSeatIndex === null) {
-          const recitalMs = skipChantRecital.value ? 0 : e.total * RECITAL_STEP_MS;
+          const stepMs = recitalStepMs.value;
+          const recitalMs = stepMs === 0 ? 0 : e.total * stepMs;
           window.setTimeout(() => {
             chantTrigger.value = null;
             chantRecitalStepsBySeat.value = new Map();
@@ -536,10 +555,9 @@ export function useGame(opts: UseGameOptions = {}) {
         break;
       }
       case 'versusChantRecitedBeat': {
-        // Per-step animation: defer each step by RECITAL_STEP_MS so the bubbles +
-        // popovers animate sequentially. Skip the delay entirely when the user has
-        // turned the recital animation off (then the chant power resolves immediately).
-        const stepDelayMs = skipChantRecital.value ? 0 : RECITAL_STEP_MS;
+        // Per-step animation: defer each step by the user's recital-speed step ms so
+        // the bubbles + pip rows animate sequentially. Speed = 'skip' fires immediately.
+        const stepDelayMs = recitalStepMs.value;
         const { seatIndex, beatWord, step } = e;
         const apply = () => {
           const next = new Map(chantRecitalStepsBySeat.value);
@@ -560,8 +578,9 @@ export function useGame(opts: UseGameOptions = {}) {
         // back until the recital animation completes so the user sees the chant land
         // before the give-cards picker appears. SimulationController watches the same
         // delay via its own queue so AI auto-resolve doesn't pre-empt the recital.
+        const stepMs = recitalStepMs.value;
         const trigger = chantTrigger.value;
-        const recitalMs = trigger && !skipChantRecital.value ? trigger.total * RECITAL_STEP_MS : 0;
+        const recitalMs = trigger && stepMs > 0 ? trigger.total * stepMs : 0;
         const awardEvent = e;
         window.setTimeout(() => {
           pendingChantPower.value = {
@@ -569,7 +588,7 @@ export function useGame(opts: UseGameOptions = {}) {
             receiverSeatIndex: awardEvent.receiverSeatIndex,
             chantChikId: '',
           };
-        }, recitalMs + (skipChantRecital.value ? 200 : 800));
+        }, recitalMs + (stepMs === 0 ? 200 : 800));
         break;
       }
       case 'versusChantPowerResolved':
@@ -648,7 +667,7 @@ export function useGame(opts: UseGameOptions = {}) {
     ctrl.setOptions({ speed: speed.value });
     ctrl.setMode(mode.value);
     ctrl.setAiSkill(aiSkill.value);
-    ctrl.setRecitalPacing(RECITAL_STEP_MS, skipChantRecital.value);
+    ctrl.setRecitalPacing(recitalStepMs.value);
     g.setStrictPromptsEnabled(strictPrompts.value);
     unsubGame = g.on(handleEvent);
     unsubStatus = ctrl.onStatusChange(handleStatus);
@@ -868,14 +887,15 @@ export function useGame(opts: UseGameOptions = {}) {
     chantTrigger,
     chantRecitalStepsBySeat,
     chantRecitalCurrentSeat,
+    chantStartStepBySeat,
     recitalShouts,
     pendingChantPower,
     submitBeatClaim,
     submitChantPowerResolve,
     promptInfoSize,
     setPromptInfoSize,
-    skipChantRecital,
-    setSkipChantRecital,
+    chantRecitalSpeed,
+    setChantRecitalSpeed,
   };
 }
 

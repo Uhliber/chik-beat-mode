@@ -60,6 +60,9 @@ const props = defineProps<{
   /** Per-seat recital state. Step counter & shouts driven by useGame. */
   chantRecitalStepsBySeat?: Map<number, number>;
   chantRecitalCurrentSeat?: number | null;
+  /** Per-seat starting beat index for the chant recital (which beat word each pip
+   *  represents — derived from receiverSeatIndex + perSeatCounts). */
+  chantStartStepBySeat?: Map<number, number>;
   recitalShouts?: Record<number, { word: ChantWord; key: number }>;
 }>();
 
@@ -444,7 +447,9 @@ function dispatchFlight(spec: FlightSpec): void {
           :owned-beats="beatsBySeat?.get(p.seatIndex) ?? []"
           :is-beat-picker="currentBeatPickerSeat === p.seatIndex"
           :chant-recital-active="chantTriggerActive && chantRecitalCurrentSeat === p.seatIndex"
-          :chant-recital-step="chantRecitalStepsBySeat?.get(p.seatIndex) ?? -1"
+          :chant-pips-lit="chantRecitalStepsBySeat?.get(p.seatIndex) ?? 0"
+          :chant-pips-start-step="chantStartStepBySeat?.get(p.seatIndex) ?? 0"
+          :chant-trigger-in-flight="chantTriggerActive ?? false"
           :prompt-info-size="promptInfoSize"
         />
       </div>
@@ -470,7 +475,9 @@ function dispatchFlight(spec: FlightSpec): void {
         :owned-beats="beatsBySeat?.get(humanSeat.seatIndex) ?? []"
         :is-beat-picker="currentBeatPickerSeat === humanSeat.seatIndex"
         :chant-recital-active="chantTriggerActive && chantRecitalCurrentSeat === humanSeat.seatIndex"
-        :chant-recital-step="chantRecitalStepsBySeat?.get(humanSeat.seatIndex) ?? -1"
+        :chant-pips-lit="chantRecitalStepsBySeat?.get(humanSeat.seatIndex) ?? 0"
+        :chant-pips-start-step="chantStartStepBySeat?.get(humanSeat.seatIndex) ?? 0"
+        :chant-trigger-in-flight="chantTriggerActive ?? false"
         :prompt-info-size="promptInfoSize"
         @card-aim-start="onAimStart"
       />

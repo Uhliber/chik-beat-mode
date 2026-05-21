@@ -24,6 +24,10 @@ const PROMPT_SIZE_VALUES: readonly PromptSize[] = ['small', 'medium', 'large', '
 export type PromptInfoSize = 'off' | 'small' | 'medium' | 'large';
 const PROMPT_INFO_SIZE_VALUES: readonly PromptInfoSize[] = ['off', 'small', 'medium', 'large'] as const;
 
+/* ===== Chant Trigger recital animation speed (slow / normal / fast / skip) ===== */
+export type ChantRecitalSpeed = 'slow' | 'normal' | 'fast' | 'skip';
+const CHANT_RECITAL_SPEED_VALUES: readonly ChantRecitalSpeed[] = ['slow', 'normal', 'fast', 'skip'] as const;
+
 /* ====================== Capacitor Preferences keys ====================== */
 export const PREF_KEYS = {
   soloBestTime: 'chik-solo-best-time-ms',
@@ -36,7 +40,7 @@ export const PREF_KEYS = {
   promptInfoSize: 'chik-prompt-info-size',
   eventLogEnabled: 'chik-event-log-enabled',
   guideOnTable: 'chik-guide-on-table',
-  skipChantRecital: 'chik-skip-chant-recital',
+  chantRecitalSpeed: 'chik-chant-recital-speed',
 } as const;
 
 /* ===== Canonical defaults — used at load-time AND by "Reset to defaults" ===== */
@@ -53,7 +57,7 @@ export const DEFAULT_STRICT_PROMPTS = false;
 export const DEFAULT_AI_SKILL: AiSkillLevel = 3;
 export const DEFAULT_PROMPT_SIZE: PromptSize = 'medium';
 export const DEFAULT_PROMPT_INFO_SIZE: PromptInfoSize = 'medium';
-export const DEFAULT_SKIP_CHANT_RECITAL = false;
+export const DEFAULT_CHANT_RECITAL_SPEED: ChantRecitalSpeed = 'normal';
 export const DEFAULT_SPEED = 1;
 /** Versus / Playground default seat count. Solo is locked to 1 by setMode. */
 export const DEFAULT_PLAYER_COUNT_TURN_BASED = 4;
@@ -169,9 +173,30 @@ export function savePromptInfoSize(v: PromptInfoSize): void {
   void Preferences.set({ key: PREF_KEYS.promptInfoSize, value: v }).catch(() => undefined);
 }
 
-/* ====================== Skip Chant Recital animation ====================== */
-export const loadSkipChantRecital = () => readBool(PREF_KEYS.skipChantRecital, DEFAULT_SKIP_CHANT_RECITAL);
-export const saveSkipChantRecital = (on: boolean) => writeBool(PREF_KEYS.skipChantRecital, on);
+/* ====================== Chant Recital animation speed ====================== */
+export async function loadChantRecitalSpeed(): Promise<ChantRecitalSpeed> {
+  try {
+    const { value } = await Preferences.get({ key: PREF_KEYS.chantRecitalSpeed });
+    if (value && (CHANT_RECITAL_SPEED_VALUES as readonly string[]).includes(value)) {
+      return value as ChantRecitalSpeed;
+    }
+    return DEFAULT_CHANT_RECITAL_SPEED;
+  } catch {
+    return DEFAULT_CHANT_RECITAL_SPEED;
+  }
+}
+export function saveChantRecitalSpeed(v: ChantRecitalSpeed): void {
+  void Preferences.set({ key: PREF_KEYS.chantRecitalSpeed, value: v }).catch(() => undefined);
+}
+
+/** Per-step delay in milliseconds for each recital speed. Slow = readable rehearsal,
+ *  fast = quick rhythm, skip = instant (no animation). */
+export const RECITAL_STEP_MS_BY_SPEED: Record<ChantRecitalSpeed, number> = {
+  slow:   480,
+  normal: 320,
+  fast:   180,
+  skip:   0,
+};
 
 /* ======================== Playground composition ======================== */
 export async function loadPlaygroundComposition(): Promise<PlaygroundComposition> {

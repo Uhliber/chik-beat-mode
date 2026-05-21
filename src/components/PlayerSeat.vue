@@ -4,6 +4,7 @@ import CardFan from './CardFan.vue';
 import BasePile from './BasePile.vue';
 import SpeechBubble from './SpeechBubble.vue';
 import PromptPopover from './PromptPopover.vue';
+import ChantPips from './ChantPips.vue';
 import { useResponsive } from '@/composables/useResponsive';
 import type { Player } from '@/game/Player';
 import type { Card } from '@/game/Card';
@@ -52,11 +53,15 @@ const props = defineProps<{
    *  to the player pill so the table can see who's claimed what. */
   ownedBeats?: ChantWord[];
   /** When set, this seat is currently the one being recited to during a Chant Trigger.
-   *  Drives the PromptPopover's recital glow and the pip counter. */
+   *  Drives the PromptPopover's recital glow. */
   chantRecitalActive?: boolean;
-  /** How many count units have been "spoken" at this seat in the active recital.
-   *  Drives the pip counter on the prompt popover. -1 = no recital. */
-  chantRecitalStep?: number;
+  /** Number of pips already lit at this seat (recital count units already spoken here). */
+  chantPipsLit?: number;
+  /** Global recital step at which THIS seat's run began — lets ChantPips derive which
+   *  beat word each pip represents (chik / wally / hindo / …) for color tinting. */
+  chantPipsStartStep?: number;
+  /** True while ANY Chant Trigger is in flight (so pips fade in/out cleanly). */
+  chantTriggerInFlight?: boolean;
   /** True while it's this seat's turn to claim a Beat Card in the setup phase. */
   isBeatPicker?: boolean;
   /** Display size for the floating prompt+count popover beside the active prompt. */
@@ -210,33 +215,73 @@ watch(
       />
     </div>
 
+    <!-- Chant Trigger recital pips — semicircle arc above the prompt card. One pip per
+         count value on the active prompt; pips light up as the chant counts at this
+         seat. Hidden when there's no trigger in flight. -->
+    <ChantPips
+      v-if="promptStack.length > 0"
+      :count="promptStack[promptStack.length - 1].count"
+      :lit="chantPipsLit ?? 0"
+      :active="chantTriggerInFlight ?? false"
+      :start-step="chantPipsStartStep ?? 0"
+    />
+
     <!-- Prompt stack: cards face-up sitting in front of this player. The top one is the
          active prompt; older cards stack underneath but are inert. The human's own pile
          is permanently ~30% larger than the opponents' piles so they can always read
-         their current prompt at a glance — independent of whose turn it is. -->
+         their current prompt at a glance — independent of whose turn it is.
+
+         Layout splits by seat ownership:
+         - HUMAN: prompt-icon popover LEFT of the card, count-icon popover RIGHT. Gives
+           the player two large, clearly separated readouts framing their own prompt.
+         - OPPONENTS: a single combined popover anchored to the right of the card,
+           kept upright (never rotated to the AI's table position) so the player can
+           read it without tilting their head. -->
     <div
       v-if="promptStack.length > 0"
       class="mt-1 prompt-pile-wrapper relative"
       :class="{ 'is-human': isHumanSeat }"
     >
-      <BasePile
-        :cards="promptStack"
-        :card-width="promptCardWidth"
-        :top-card-crop-top="topCardCropTop"
-        :hidden-ids="hiddenIds"
-        :base-id="`seat-${player.seatIndex}`"
-        :highlight-card-id="lastPlayedCardId"
-      />
-      <!-- Floating prompt + count badge beside the active prompt. Recolored to the
-           card's chant-word color so it reads at a glance even on small art. -->
-      <div class="prompt-popover-anchor">
+      <div v-if="isHumanSeat" class="human-prompt-row">
         <PromptPopover
           :card="promptStack[promptStack.length - 1]"
           :size="promptInfoSize ?? 'medium'"
+          mode="icon"
           :recital-active="chantRecitalActive ?? false"
-          :recital-step="chantRecitalStep ?? -1"
+        />
+        <BasePile
+          :cards="promptStack"
+          :card-width="promptCardWidth"
+          :top-card-crop-top="topCardCropTop"
+          :hidden-ids="hiddenIds"
+          :base-id="`seat-${player.seatIndex}`"
+          :highlight-card-id="lastPlayedCardId"
+        />
+        <PromptPopover
+          :card="promptStack[promptStack.length - 1]"
+          :size="promptInfoSize ?? 'medium'"
+          mode="count"
+          :recital-active="chantRecitalActive ?? false"
         />
       </div>
+      <template v-else>
+        <BasePile
+          :cards="promptStack"
+          :card-width="promptCardWidth"
+          :top-card-crop-top="topCardCropTop"
+          :hidden-ids="hiddenIds"
+          :base-id="`seat-${player.seatIndex}`"
+          :highlight-card-id="lastPlayedCardId"
+        />
+        <div class="prompt-popover-anchor">
+          <PromptPopover
+            :card="promptStack[promptStack.length - 1]"
+            :size="promptInfoSize ?? 'medium'"
+            mode="combined"
+            :recital-active="chantRecitalActive ?? false"
+          />
+        </div>
+      </template>
     </div>
 
     <!-- Solo clone: the active prompt mirrored in front of the human player so they can
@@ -363,5 +408,17 @@ watch(
   transform: translateY(-50%);
   pointer-events: none;
   z-index: 25;
+}
+
+/* Human's three-piece layout: [prompt-icon] [prompt-card] [count-icon]. Flex centers
+ * all three vertically; the popovers sit on either side of the BasePile. Pointer
+ * events stay disabled so the popovers don't intercept hand-drag gestures. */
+.human-prompt-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.human-prompt-row > :deep(.prompt-popover) {
+  pointer-events: none;
 }
 </style>

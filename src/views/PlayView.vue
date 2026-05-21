@@ -94,14 +94,15 @@ const {
   chantTrigger,
   chantRecitalStepsBySeat,
   chantRecitalCurrentSeat,
+  chantStartStepBySeat,
   recitalShouts,
   pendingChantPower,
   submitBeatClaim,
   submitChantPowerResolve,
   promptInfoSize,
   setPromptInfoSize,
-  skipChantRecital,
-  setSkipChantRecital,
+  chantRecitalSpeed,
+  setChantRecitalSpeed,
 } = useGame({ initialMode });
 
 // Tutorial mode: ?tutorial=1 query flips this on. Solo and Versus each have their own
@@ -710,6 +711,7 @@ function onPauseOverlayTap() {
         :chant-trigger-receiver-seat="chantTrigger?.receiverSeatIndex ?? null"
         :chant-recital-steps-by-seat="chantRecitalStepsBySeat"
         :chant-recital-current-seat="chantRecitalCurrentSeat"
+        :chant-start-step-by-seat="chantStartStepBySeat"
         :recital-shouts="recitalShouts"
         @solo-slam="onSoloSlam"
         @versus-play="onVersusPlay"
@@ -789,7 +791,7 @@ function onPauseOverlayTap() {
         :guide-on-table="guideOnTable"
         :prompt-size="promptSize"
         :prompt-info-size="promptInfoSize"
-        :skip-chant-recital="skipChantRecital"
+        :chant-recital-speed="chantRecitalSpeed"
         :strict-prompts="strictPrompts"
         :ai-skill="aiSkill"
         :player-count="playerCount"
@@ -803,7 +805,7 @@ function onPauseOverlayTap() {
         @show-guide="onShowGuide"
         @update:prompt-size="setPromptSize"
         @update:prompt-info-size="setPromptInfoSize"
-        @update:skip-chant-recital="setSkipChantRecital"
+        @update:chant-recital-speed="setChantRecitalSpeed"
         @update:strict-prompts="setStrictPrompts"
         @update:ai-skill="setAiSkill"
         @update:player-count="setPlayerCount"
@@ -832,7 +834,7 @@ function onPauseOverlayTap() {
         :guide-on-table="guideOnTable"
         :prompt-size="promptSize"
         :prompt-info-size="promptInfoSize"
-        :skip-chant-recital="skipChantRecital"
+        :chant-recital-speed="chantRecitalSpeed"
         :strict-prompts="strictPrompts"
         :ai-skill="aiSkill"
         :player-count="playerCount"
@@ -846,7 +848,7 @@ function onPauseOverlayTap() {
         @show-guide="onShowGuide"
         @update:prompt-size="setPromptSize"
         @update:prompt-info-size="setPromptInfoSize"
-        @update:skip-chant-recital="setSkipChantRecital"
+        @update:chant-recital-speed="setChantRecitalSpeed"
         @update:strict-prompts="setStrictPrompts"
         @update:ai-skill="setAiSkill"
         @update:player-count="setPlayerCount"

@@ -22,21 +22,25 @@ const props = defineProps<{
   card: Card | null;
   /** Display size — 'off' hides the popover. */
   size?: PromptInfoSize;
+  /** What to render. 'combined' = prompt icon + count icon side-by-side (AI seats).
+   *  'icon' = prompt icon only (human, anchored LEFT of the prompt card).
+   *  'count' = count icon only (human, anchored RIGHT of the prompt card). */
+  mode?: 'combined' | 'icon' | 'count';
   /** When true, lift z-index + glow so the popover stands out during a Chant Trigger. */
   recitalActive?: boolean;
-  /** Step counter pip — number of count units already spoken at this seat during the
-   *  active recital. -1 = inactive (no pip rendered). */
-  recitalStep?: number;
 }>();
 
 const effectiveSize = computed<PromptInfoSize>(() => props.size ?? 'medium');
 const isVisible = computed(() => !!props.card && effectiveSize.value !== 'off');
+const mode = computed<'combined' | 'icon' | 'count'>(() => props.mode ?? 'combined');
+const showIcon = computed(() => mode.value === 'combined' || mode.value === 'icon');
+const showCount = computed(() => mode.value === 'combined' || mode.value === 'count');
 
-/** Tier scales — each step roughly 1.4× the previous. Small = current legacy size. */
-const SIZE_PX: Record<Exclude<PromptInfoSize, 'off'>, { icon: number; count: number; gap: number; padX: number; padY: number; pip: number; pipFont: number }> = {
-  small:  { icon: 22, count: 20, gap: 5,  padX: 8,  padY: 5, pip: 22, pipFont: 12 },
-  medium: { icon: 32, count: 28, gap: 7,  padX: 10, padY: 6, pip: 26, pipFont: 13 },
-  large:  { icon: 46, count: 42, gap: 9,  padX: 14, padY: 8, pip: 32, pipFont: 16 },
+/** Tier scales — each step roughly 1.4× the previous. Small ≈ the legacy XS size. */
+const SIZE_PX: Record<Exclude<PromptInfoSize, 'off'>, { icon: number; count: number; gap: number; padX: number; padY: number }> = {
+  small:  { icon: 22, count: 20, gap: 5,  padX: 8,  padY: 5 },
+  medium: { icon: 32, count: 28, gap: 7,  padX: 10, padY: 6 },
+  large:  { icon: 46, count: 42, gap: 9,  padX: 14, padY: 8 },
 };
 const sizePx = computed(() => SIZE_PX[(effectiveSize.value === 'off' ? 'medium' : effectiveSize.value)]);
 
@@ -51,36 +55,24 @@ const countSvg = useInlineSvg(countUrl);
   <div
     v-if="isVisible"
     class="prompt-popover"
-    :class="[wordClass, { 'is-recital': recitalActive }]"
+    :class="[wordClass, `mode-${mode}`, { 'is-recital': recitalActive }]"
     :style="{
       gap: sizePx.gap + 'px',
       padding: `${sizePx.padY}px ${sizePx.padX}px`,
     }"
   >
     <div
+      v-if="showIcon"
       class="popover-icon"
       :style="{ width: sizePx.icon + 'px', height: sizePx.icon + 'px' }"
       v-html="promptSvg"
     />
     <div
+      v-if="showCount"
       class="popover-count"
       :style="{ width: sizePx.count + 'px', height: sizePx.count + 'px' }"
       v-html="countSvg"
     />
-    <!-- Recital pip: appears only during a Chant Trigger recital. Shows how many
-         count units have been "spoken" so far at this seat. -->
-    <div
-      v-if="recitalStep !== undefined && recitalStep > 0"
-      class="popover-pip"
-      :class="{ 'is-lit': recitalActive }"
-      :style="{
-        minWidth: sizePx.pip + 'px',
-        height: sizePx.pip + 'px',
-        fontSize: sizePx.pipFont + 'px',
-      }"
-    >
-      <span>{{ recitalStep }}</span>
-    </div>
   </div>
 </template>
 
@@ -119,30 +111,4 @@ const countSvg = useInlineSvg(countUrl);
   display: block;
 }
 
-.popover-pip {
-  position: absolute;
-  top: -8px;
-  right: -8px;
-  padding: 0 6px;
-  border-radius: 9999px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--word-color, var(--color-coral));
-  color: var(--color-cream-soft);
-  font-family: var(--font-body);
-  font-weight: 800;
-  line-height: 1;
-  letter-spacing: 0.02em;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.35);
-  border: 1.5px solid var(--color-cream-soft);
-}
-.popover-pip.is-lit {
-  animation: pip-pop 320ms cubic-bezier(.2, .8, .2, 1);
-}
-@keyframes pip-pop {
-  0%   { transform: scale(0.6); opacity: 0.6; }
-  60%  { transform: scale(1.25); opacity: 1; }
-  100% { transform: scale(1); opacity: 1; }
-}
 </style>

@@ -76,10 +76,9 @@ export class SimulationController {
   /** Timer for the AI's chant-power resolution. */
   private pendingChantPowerTimer: number | null = null;
   /** Per-step delay used by the Chant Trigger recital. Kept in sync with the UI so
-   *  the AI's auto-resolve doesn't pre-empt the on-screen recital. */
-  private recitalStepMs = 280;
-  /** When true, AI auto-resolves the chant power immediately (no recital wait). */
-  private skipChantRecital = false;
+   *  the AI's auto-resolve doesn't pre-empt the on-screen recital. 0 = skip mode
+   *  (recital is bypassed, AI resolves with only a short tail). */
+  private recitalStepMs = 320;
 
   /**
    * Pick a Beat Card for an AI during setup. Random unclaimed beat — there's no
@@ -160,10 +159,10 @@ export class SimulationController {
     this.aiSkill = level;
   }
 
-  /** Used by useGame to keep recital pacing + AI auto-resolve aligned with the UI prefs. */
-  setRecitalPacing(stepMs: number, skip: boolean): void {
-    this.recitalStepMs = stepMs;
-    this.skipChantRecital = skip;
+  /** Used by useGame to keep recital pacing + AI auto-resolve aligned with the UI pref.
+   *  Pass 0 for skip-mode (no recital wait). */
+  setRecitalPacing(stepMs: number): void {
+    this.recitalStepMs = Math.max(0, stepMs);
   }
 
   getAiSkill(): AiSkillLevel {
@@ -297,8 +296,9 @@ export class SimulationController {
       if (!winner || !winner.isAI) return; // human → UI submits
       if (this.pendingChantPowerTimer !== null) return;
       const recitalLen = this.game.pendingChantRecital?.length ?? 0;
-      const recitalMs = this.skipChantRecital ? 0 : recitalLen * this.recitalStepMs;
-      const delay = recitalMs + (this.skipChantRecital ? 400 : 1100);
+      const skip = this.recitalStepMs === 0;
+      const recitalMs = skip ? 0 : recitalLen * this.recitalStepMs;
+      const delay = recitalMs + (skip ? 400 : 1100);
       this.pendingChantPowerTimer = window.setTimeout(() => {
         this.pendingChantPowerTimer = null;
         if (!this.game.pendingChantPower) { this.scheduleNext(); return; }
