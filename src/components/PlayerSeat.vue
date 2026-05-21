@@ -149,7 +149,7 @@ const counterRotate = computed(() => {
  *  badge reads upright for the player, then scale up when active or hide-small when
  *  not. Single computed so the CSS transition has a continuous transform shape. */
 const spotlightTransform = computed(() => {
-  const scale = props.chantTriggerInFlight ? 1.7 : 0.5;
+  const scale = props.chantTriggerInFlight ? 1.4 : 0.5;
   const rotate = counterRotate.value;
   return `translate(-50%, -50%) ${rotate} scale(${scale})`.trim();
 });
@@ -511,13 +511,13 @@ watch(
   position: absolute;
   left: 50%;
   top: 50%;
-  /* Explicit box sized to enclose the pip orbit (radius ~57 pre-scale + a bit of
-   * pad). Gives the spotlight a stable bounding rect that circleHole() in the
-   * overlay reads to derive the punched-hole radius — both badge AND pips fit
-   * inside one circular hole. Children overflow visible; the wrapper just provides
-   * the rect. */
-  width: 140px;
-  height: 140px;
+  /* Explicit box sized to enclose the pip orbit (radius 36 + pip half-width 5 ≈ 41
+   * pre-scale) plus padding. Gives the spotlight a stable bounding rect that
+   * circleHole() in the overlay reads to derive the punched-hole radius — both
+   * badge AND pips fit inside one circular hole. Smaller than before to reduce
+   * spotlight overlap on tight desktop layouts. */
+  width: 100px;
+  height: 100px;
   z-index: 40;
   pointer-events: none;
   opacity: 0;

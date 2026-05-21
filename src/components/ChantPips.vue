@@ -48,20 +48,26 @@ interface Pip {
 const pips = computed<Pip[]>(() => {
   const n = props.count;
   if (n <= 0) return [];
-  // Two layout modes:
-  //  - orbit: full 360° ring around the anchor point. Used when the pips sit inside
-  //    the count-spotlight wrapper, encircling the scaled-up count icon.
-  //  - arc (default): shallow fan up to ~140° anchored above a baseline. Used for
-  //    the normal seat-attached presentation outside the spotlight.
-  // First pip is placed at the TOP of the ring (or center of the arc) so the visual
-  // counter starts in a predictable spot regardless of count.
   const out: Pip[] = [];
   if (props.orbit) {
-    const radius = 50;                       // pre-scale; parent transform multiplies in
+    // Slot-based arc: imagine a fixed 10-slot ring (36° per slot) and only render
+    // the first `count` slots, centered on the TOP of the ring (which faces the
+    // table center on every seat thanks to the seat-rotation layout). Pip 0 is
+    // the leftmost slot of the arc, pip N-1 is the rightmost — recital lighting
+    // walks left → right naturally.
+    //
+    // Polar convention here: angle = 0° → top, increasing CW. Convert to screen:
+    //   x = sin(angle) * radius
+    //   y = -cos(angle) * radius   (negate because screen-y is down)
+    const SLOT_DEG = 36;
+    const radius = 36;
+    const arcSpan = (n - 1) * SLOT_DEG;
+    const startDeg = -arcSpan / 2;
     for (let i = 0; i < n; i++) {
-      const angle = (i / n) * Math.PI * 2 - Math.PI / 2;     // start at 12 o'clock
-      const arcX = Math.cos(angle) * radius;
-      const arcY = Math.sin(angle) * radius;
+      const deg = startDeg + i * SLOT_DEG;
+      const rad = (deg * Math.PI) / 180;
+      const arcX = Math.sin(rad) * radius;
+      const arcY = -Math.cos(rad) * radius;
       const beatIdx = (props.startStep + i) % BEAT_ORDER.length;
       out.push({
         index: i,
@@ -135,13 +141,13 @@ const pips = computed<Pip[]>(() => {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 14px;
-  height: 14px;
+  width: 10px;
+  height: 10px;
   border-radius: 9999px;
   background: rgba(252, 246, 230, 0.32);
-  border: 1.5px solid rgba(252, 246, 230, 0.7);
-  margin-left: -7px;
-  margin-top: -7px;
+  border: 1.3px solid rgba(252, 246, 230, 0.7);
+  margin-left: -5px;
+  margin-top: -5px;
   transition: background-color 200ms ease, border-color 200ms ease, transform 280ms cubic-bezier(.2, .8, .2, 1);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }

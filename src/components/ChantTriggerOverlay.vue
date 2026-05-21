@@ -239,18 +239,18 @@ const maskPath = computed(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 18px 36px;
-  border-radius: 22px;
+  padding: 12px 26px;
+  border-radius: 18px;
   background: var(--color-cream-soft);
-  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.55);
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.5);
   animation: banner-in 360ms cubic-bezier(.2, .8, .2, 1);
-  min-width: 280px;
-  min-height: 78px;
+  min-width: 200px;
+  min-height: 60px;
 }
 .lottery-word {
   font-family: var(--font-display);
   font-weight: 700;
-  font-size: 3rem;
+  font-size: 2.1rem;
   letter-spacing: 0.06em;
   line-height: 1;
   color: var(--word-color, var(--color-coral-deep));
