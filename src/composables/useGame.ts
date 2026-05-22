@@ -1,9 +1,9 @@
-import { onUnmounted, reactive, ref, shallowRef, triggerRef } from 'vue';
+import { computed, onUnmounted, reactive, ref, shallowRef, triggerRef } from 'vue';
 import { App as CapApp } from '@capacitor/app';
 import type { Card } from '@/game/Card';
 import { Game } from '@/game/Game';
 import { SimulationController, type SimStatus, type SimMode, type AiSkillLevel } from '@/game/SimulationController';
-import type { BaseSide, CardPrompt, ChantWord, GameEvent, PlayerId, PlaygroundComposition, SoloAction, VersusAction } from '@/game/types';
+import type { BaseSide, CardPrompt, ChantPowerGift, ChantWord, GameEvent, PlayerId, PlaygroundComposition, SoloAction, VersusAction } from '@/game/types';
 import { modeCaps } from '@/game/modes';
 import { useBeatAudio } from './useBeatAudio';
 import {
@@ -15,6 +15,9 @@ import {
   DEFAULT_PLAYGROUND_COMPOSITION,
   DEFAULT_PLAYGROUND_HAND_SIZE,
   DEFAULT_PROMPT_SIZE,
+  DEFAULT_PROMPT_INFO_SIZE,
+  DEFAULT_CHANT_RECITAL_SPEED,
+  DEFAULT_DRAW_KEY_ENABLED,
   DEFAULT_SPEED,
   DEFAULT_STRICT_PROMPTS,
   DEFAULT_WISP_ENABLED,
@@ -25,7 +28,12 @@ import {
   loadPlaygroundComposition,
   loadPlaygroundHandSize,
   loadPromptSize,
+  loadPromptInfoSize,
+  loadChantRecitalSpeed,
+  loadDrawKeyEnabled,
+  RECITAL_STEP_MS_BY_SPEED,
   loadSoloBestTime,
+  loadSoloBestStreak,
   loadStrictPrompts,
   loadWispEnabled,
   saveAiSkill,
@@ -34,14 +42,20 @@ import {
   savePlaygroundComposition,
   savePlaygroundHandSize,
   savePromptSize,
+  savePromptInfoSize,
+  saveChantRecitalSpeed,
+  saveDrawKeyEnabled,
   saveSoloBestTime,
+  saveSoloBestStreak,
   saveStrictPrompts,
   saveWispEnabled,
   type PromptSize,
+  type PromptInfoSize,
+  type ChantRecitalSpeed,
 } from './userPreferences';
 /** Re-exported for downstream callers that historically imported `PromptSize` from
  *  `useGame`. New code should import directly from `userPreferences`. */
-export type { PromptSize };
+export type { PromptSize, PromptInfoSize };
 
 /**
  * A queued card-flight, snapshotted at event-emission time. Carries pre-captured DOM
@@ -55,7 +69,7 @@ export interface FlightSpec {
   faceUrl: string;
   fromRect: DOMRect;
   toRect: DOMRect;
-  /** For draw flights — flip back→face mid-flight so the drawer sees their card. */
+  /** For draw flights, flip back→face mid-flight so the drawer sees their card. */
   revealFace?: boolean;
   /** Shout-the-word state: the word + the seat that shouted it. Source-only events. */
   shoutWord?: ChantWord;
@@ -68,6 +82,13 @@ export interface FlightSpec {
 
 export interface UseGameOptions {
   initialMode?: SimMode;
+  /** When true, skip every `loadXxx()` call so all display + gameplay prefs stay
+   *  at their canonical defaults. Used by the tutorial so a player who's set
+   *  e.g. XL prompts or strict mode in their normal play gets a clean baseline
+   *  experience while learning. Setters still persist normally if the tutorial
+   *  ever opens the settings panel, we don't want to silently revert user
+   *  changes, we just don't want to inherit them on entry. */
+  skipPrefsLoad?: boolean;
 }
 
 export interface GameViewState {
@@ -80,6 +101,9 @@ const MAX_LOG = 50;
 
 export function useGame(opts: UseGameOptions = {}) {
   const initialMode: SimMode = opts.initialMode ?? 'versus';
+  /** When true, all `load*()` calls below are no-ops so every pref-driven ref
+   *  stays at its canonical default. Used by the tutorial, see UseGameOptions. */
+  const skipLoad = !!opts.skipPrefsLoad;
 
   const game = shallowRef<Game>(new Game());
   const controller = shallowRef<SimulationController>(new SimulationController(game.value));
@@ -99,17 +123,171 @@ export function useGame(opts: UseGameOptions = {}) {
   // ---- Solo timer state ----
   const soloElapsedMs = ref(0);
   const soloPenaltyMs = ref(0);
+  /** Total accumulated time credit from bonuses (chant-chik closing, combo streak,
+   *  etc). Subtracted from the displayed clock by PlayView. */
+  const soloBonusMs = ref(0);
   const soloRunning = ref(false);
   const soloBestTimeMs = ref<number | null>(null);
   const soloLastFinalMs = ref<number | null>(null);
   const soloIsNewBest = ref(false);
-  void loadSoloBestTime().then((ms) => {
+  if (!skipLoad) void loadSoloBestTime().then((ms) => {
     if (ms !== null) soloBestTimeMs.value = ms;
   });
 
+  /** All-time highest streak across every Solo Time Attack run. Tracked
+   *  independently of best time so a player who's still grinding toward their
+   *  fastest run can watch this number grow. Updated live the moment the
+   *  current streak surpasses it (no need to wait for cash-in). */
+  const soloBestStreak = ref<number | null>(null);
+  /** Set when the CURRENT run produced a fresh personal best streak. Surfaced
+   *  in the winner overlay so a slow-time-but-record-combo run still feels
+   *  like a win. Cleared by `initGame`. */
+  const soloIsNewBestStreak = ref(false);
+  if (!skipLoad) void loadSoloBestStreak().then((n) => {
+    if (n !== null) soloBestStreak.value = n;
+  });
+
+  // ---- Solo combo-streak state ----
+  //
+  // Each consecutive legal slam refills a streak bar; the bar drains over
+  // STREAK_BAR_MS wall-clock time. When the bar empties (or a penalty hits) the
+  // accumulated streak converts to a time credit and the streak resets.
+  //
+  // Drawing a card is NEUTRAL, the bar keeps depleting but the streak doesn't
+  // break. Penalties break the streak immediately. The bonus pays out in clean
+  // 1-second tiers (no decimals); the threshold ladder rewards sustained play
+  // without runaway bonuses:
+  //
+  //   streak 1–2  →  no bonus
+  //   streak 3–5  → −1s
+  //   streak 6–9  → −2s
+  //   streak 10+  → −3s (max)
+  const STREAK_BAR_MS = 3000;
+  /** Time credit added back to the streak bar when the player draws LEGALLY from the
+   *  deck. Compensates for the "search the hand for the next playable card" pause -
+   *  without it, a streak would silently die during a fishing turn. 400ms = enough
+   *  to survive 2-3 consecutive draws but not so much that the bar feels free. */
+  const STREAK_DRAW_GRACE_MS = 400;
+  const soloStreak = ref(0);
+  /** Remaining bar fill in ms (0..STREAK_BAR_MS). 0 = bar empty, no streak. */
+  const soloStreakBarMs = ref(0);
+  let soloStreakRafId: number | null = null;
+  let soloStreakLastTickAt = 0;
+  /** Most recent streak bonus awarded, drives a one-shot bubble in PlayView. */
+  const soloLastStreakBonus = ref<{ id: number; streak: number; bonusMs: number } | null>(null);
+  let nextStreakBonusId = 1;
+  /** Random rotation (±degrees) applied to the combo ×N label, refreshed on every
+   *  streak increment so each successive slam feels alive. ±10° keeps it punchy
+   *  without making the number unreadable. */
+  const soloStreakTiltDeg = ref(0);
+
+  function computeStreakBonus(streak: number): number {
+    if (streak < 3) return 0;
+    if (streak < 6) return 1000;
+    if (streak < 10) return 2000;
+    return 3000;
+  }
+
+  /** Streak tier 0..3, matching the bonus ladder (none / -1s / -2s / -3s). Drives
+   *  combo-label sizing (PlayView) and slam-sound pitch (below). */
+  function computeStreakTier(streak: number): 0 | 1 | 2 | 3 {
+    if (streak < 3) return 0;
+    if (streak < 6) return 1;
+    if (streak < 10) return 2;
+    return 3;
+  }
+
+  /** Pitch multiplier for the slam "success" tone. Tier 0/1 keep the default tone;
+   *  tier 2 (-2s bonus territory) bumps up a major third; tier 3 (-3s) jumps to a
+   *  perfect fifth, gives the audio a clear "I'm cooking" arc as the combo grows. */
+  function streakPitchMul(streak: number): number {
+    const tier = computeStreakTier(streak);
+    if (tier <= 1) return 1.0;
+    if (tier === 2) return 1.25;
+    return 1.5;
+  }
+
+  /** Tier-3 overflow drip. The tier ladder caps at -3s on cash-in, so without this
+   *  every slam past streak 10 has zero incremental reward. Solution: once the
+   *  player is past the cap, every 5 additional slams instantly subtracts -1s from
+   *  the timer (not held until cash-in, applied right now). First drip lands on
+   *  slam 15, then 20, 25, 30, … forever. Returns the ms to drip for THIS slam
+   *  (0 for slams that aren't a drip beat). */
+  function streakDripBonus(streak: number): number {
+    if (streak >= 15 && (streak - 10) % 5 === 0) return 1000;
+    return 0;
+  }
+
+  function finalizeStreak(): void {
+    const s = soloStreak.value;
+    const bonusMs = computeStreakBonus(s);
+    if (bonusMs > 0) {
+      soloBonusMs.value += bonusMs;
+      soloLastStreakBonus.value = { id: nextStreakBonusId++, streak: s, bonusMs };
+      beatAudio.ding('high');
+    }
+    soloStreak.value = 0;
+    soloStreakBarMs.value = 0;
+    soloStreakTiltDeg.value = 0;
+    if (soloStreakRafId !== null) {
+      cancelAnimationFrame(soloStreakRafId);
+      soloStreakRafId = null;
+    }
+  }
+
+  function pulseStreak(): void {
+    soloStreak.value += 1;
+    soloStreakBarMs.value = STREAK_BAR_MS;
+    // Fresh random tilt every increment, keeps the combo number lively. ±10°.
+    soloStreakTiltDeg.value = (Math.random() * 20) - 10;
+    // Live personal-best tracking: the moment the active streak passes the
+    // stored best, bump + persist immediately so the HUD "Top ×N" updates
+    // mid-run and survives a tab close or a penalty-induced break.
+    if (soloBestStreak.value === null || soloStreak.value > soloBestStreak.value) {
+      soloBestStreak.value = soloStreak.value;
+      soloIsNewBestStreak.value = true;
+      saveSoloBestStreak(soloStreak.value);
+    }
+    // Tier-3 overflow: instant -1s drip on every 5th slam past streak 10. This
+    // fires INDEPENDENT of cash-in (the -3s tier base is still held for break),
+    // so a 20-slam streak that breaks awards -3s (cash-in) + -2s (already
+    // dripped at slams 15 + 20) = -5s total. Routes through the same
+    // `soloLastStreakBonus` bubble as cash-in so the player sees instant feedback.
+    const drip = streakDripBonus(soloStreak.value);
+    if (drip > 0) {
+      soloBonusMs.value += drip;
+      soloLastStreakBonus.value = { id: nextStreakBonusId++, streak: soloStreak.value, bonusMs: drip };
+      beatAudio.ding('high');
+    }
+    soloStreakLastTickAt = performance.now();
+    if (soloStreakRafId === null) {
+      const tick = () => {
+        if (soloStreakBarMs.value <= 0) {
+          soloStreakRafId = null;
+          finalizeStreak();
+          return;
+        }
+        const now = performance.now();
+        const dt = now - soloStreakLastTickAt;
+        soloStreakLastTickAt = now;
+        soloStreakBarMs.value = Math.max(0, soloStreakBarMs.value - dt);
+        soloStreakRafId = requestAnimationFrame(tick);
+      };
+      soloStreakRafId = requestAnimationFrame(tick);
+    }
+  }
+
+  /** Add a small grace credit to the streak bar, fired when the player draws a
+   *  card legally (no penalty). Only does anything if a streak is currently in
+   *  flight; a draw alone never STARTS a streak. */
+  function pulseStreakDraw(): void {
+    if (soloStreak.value === 0 || soloStreakRafId === null) return;
+    soloStreakBarMs.value = Math.min(STREAK_BAR_MS, soloStreakBarMs.value + STREAK_DRAW_GRACE_MS);
+  }
+
   // Turn-indicator wisp (Versus only). Persisted, default ON.
   const wispEnabled = ref(DEFAULT_WISP_ENABLED);
-  void loadWispEnabled().then((on) => { wispEnabled.value = on; });
+  if (!skipLoad) void loadWispEnabled().then((on) => { wispEnabled.value = on; });
   const setWispEnabled = (on: boolean) => {
     wispEnabled.value = on;
     saveWispEnabled(on);
@@ -117,7 +295,7 @@ export function useGame(opts: UseGameOptions = {}) {
 
   // Event log visibility (desktop sidebar + mobile sheet). Persisted, default ON.
   const eventLogEnabled = ref(DEFAULT_EVENT_LOG_ENABLED);
-  void loadEventLogEnabled().then((on) => { eventLogEnabled.value = on; });
+  if (!skipLoad) void loadEventLogEnabled().then((on) => { eventLogEnabled.value = on; });
   const setEventLogEnabled = (on: boolean) => {
     eventLogEnabled.value = on;
     saveEventLogEnabled(on);
@@ -127,7 +305,7 @@ export function useGame(opts: UseGameOptions = {}) {
   // layer resolves null → !isMobile so desktop sees the floating guide by default and
   // mobile keeps the table clean; an explicit user toggle overrides either way.
   const guideOnTablePref = ref<boolean | null>(null);
-  void loadGuideOnTable().then((v) => { guideOnTablePref.value = v; });
+  if (!skipLoad) void loadGuideOnTable().then((v) => { guideOnTablePref.value = v; });
   const setGuideOnTable = (on: boolean) => {
     guideOnTablePref.value = on;
     saveGuideOnTable(on);
@@ -135,7 +313,7 @@ export function useGame(opts: UseGameOptions = {}) {
 
   // Strict-prompts house rule (Versus only). Persisted, default OFF.
   const strictPrompts = ref(DEFAULT_STRICT_PROMPTS);
-  void loadStrictPrompts().then((on) => {
+  if (!skipLoad) void loadStrictPrompts().then((on) => {
     strictPrompts.value = on;
     if (game.value) game.value.setStrictPromptsEnabled(on);
   });
@@ -147,7 +325,7 @@ export function useGame(opts: UseGameOptions = {}) {
 
   // AI skill (Versus only). Persisted, default 3 (Hard).
   const aiSkill = ref<AiSkillLevel>(DEFAULT_AI_SKILL);
-  void loadAiSkill().then((level) => {
+  if (!skipLoad) void loadAiSkill().then((level) => {
     aiSkill.value = level;
     if (controller.value) controller.value.setAiSkill(level);
   });
@@ -157,12 +335,46 @@ export function useGame(opts: UseGameOptions = {}) {
     if (controller.value) controller.value.setAiSkill(level);
   };
 
-  // Prompt-size display preference. Live — applies to the current round without restart.
+  // Prompt-size display preference. Live, applies to the current round without restart.
   const promptSize = ref<PromptSize>(DEFAULT_PROMPT_SIZE);
-  void loadPromptSize().then((v) => { promptSize.value = v; });
+  if (!skipLoad) void loadPromptSize().then((v) => { promptSize.value = v; });
   const setPromptSize = (v: PromptSize) => {
     promptSize.value = v;
     savePromptSize(v);
+  };
+
+  // Floating prompt+count popover size preference. 'off' hides the popovers entirely.
+  const promptInfoSize = ref<PromptInfoSize>(DEFAULT_PROMPT_INFO_SIZE);
+  if (!skipLoad) void loadPromptInfoSize().then((v) => { promptInfoSize.value = v; });
+  const setPromptInfoSize = (v: PromptInfoSize) => {
+    promptInfoSize.value = v;
+    savePromptInfoSize(v);
+  };
+
+  // Keyboard "D" shortcut for drawing from the deck. Persisted, default ON. The
+  // global keydown listener lives in PlayView; this ref just stores the toggle so
+  // the settings UI + the listener can read the same source of truth.
+  const drawKeyEnabled = ref(DEFAULT_DRAW_KEY_ENABLED);
+  if (!skipLoad) void loadDrawKeyEnabled().then((on) => { drawKeyEnabled.value = on; });
+  const setDrawKeyEnabled = (on: boolean) => {
+    drawKeyEnabled.value = on;
+    saveDrawKeyEnabled(on);
+  };
+
+  // Speed of the Chant Trigger recital animation: slow / normal / fast / skip. The
+  // controller mirrors the same setting so AI auto-resolve waits for the on-screen
+  // recital to finish.
+  const chantRecitalSpeed = ref<ChantRecitalSpeed>(DEFAULT_CHANT_RECITAL_SPEED);
+  /** Current per-step ms derived from `chantRecitalSpeed`. 0 = skip. */
+  const recitalStepMs = computed(() => RECITAL_STEP_MS_BY_SPEED[chantRecitalSpeed.value]);
+  if (!skipLoad) void loadChantRecitalSpeed().then((v) => {
+    chantRecitalSpeed.value = v;
+    controller.value.setRecitalPacing(recitalStepMs.value);
+  });
+  const setChantRecitalSpeed = (v: ChantRecitalSpeed) => {
+    chantRecitalSpeed.value = v;
+    saveChantRecitalSpeed(v);
+    controller.value.setRecitalPacing(recitalStepMs.value);
   };
 
   // Custom-deck state (used by any mode whose caps.hasCustomDeck === true; only
@@ -174,13 +386,13 @@ export function useGame(opts: UseGameOptions = {}) {
   const rebuildIfCustomDeckActive = () => {
     if (modeCaps(mode.value).hasCustomDeck && state.status === 'idle') initGame();
   };
-  // Async preference loads — if the game was initialized with defaults before these
+  // Async preference loads, if the game was initialized with defaults before these
   // resolve, rebuild so the persisted composition/hand size take effect.
-  void loadPlaygroundComposition().then((c) => {
+  if (!skipLoad) void loadPlaygroundComposition().then((c) => {
     playgroundComposition.value = c;
     rebuildIfCustomDeckActive();
   });
-  void loadPlaygroundHandSize().then((n) => {
+  if (!skipLoad) void loadPlaygroundHandSize().then((n) => {
     playgroundHandSize.value = n;
     rebuildIfCustomDeckActive();
   });
@@ -211,7 +423,7 @@ export function useGame(opts: UseGameOptions = {}) {
   };
 
   /** Reset every Sound + Game + Display preference back to its canonical default.
-   *  Intentionally leaves the playground deck (composition + hand size) alone — that
+   *  Intentionally leaves the playground deck (composition + hand size) alone, that
    *  has its own dedicated reset, so a user who built a custom deck doesn't lose it
    *  when they reach for "Reset to defaults" to undo a stray display tweak.
    *
@@ -220,7 +432,7 @@ export function useGame(opts: UseGameOptions = {}) {
   const resetGeneralDefaults = () => {
     // Sound
     beatAudio.setMuted(DEFAULT_AUDIO_MUTED);
-    // Game (turn-based only — leave solo's seat count alone)
+    // Game (turn-based only, leave solo's seat count alone)
     if (modeCaps(mode.value).isTurnBased) {
       playerCount.value = DEFAULT_PLAYER_COUNT_TURN_BASED;
     }
@@ -239,6 +451,12 @@ export function useGame(opts: UseGameOptions = {}) {
     saveEventLogEnabled(DEFAULT_EVENT_LOG_ENABLED);
     promptSize.value = DEFAULT_PROMPT_SIZE;
     savePromptSize(DEFAULT_PROMPT_SIZE);
+    promptInfoSize.value = DEFAULT_PROMPT_INFO_SIZE;
+    savePromptInfoSize(DEFAULT_PROMPT_INFO_SIZE);
+    chantRecitalSpeed.value = DEFAULT_CHANT_RECITAL_SPEED;
+    saveChantRecitalSpeed(DEFAULT_CHANT_RECITAL_SPEED);
+    drawKeyEnabled.value = DEFAULT_DRAW_KEY_ENABLED;
+    saveDrawKeyEnabled(DEFAULT_DRAW_KEY_ENABLED);
     // Guide-on-table: clear the explicit preference so it follows the platform default
     // again (desktop on, mobile off). Persistence layer treats null as "not set".
     guideOnTablePref.value = DEFAULT_GUIDE_ON_TABLE_PREF;
@@ -251,6 +469,73 @@ export function useGame(opts: UseGameOptions = {}) {
    * (and cleared on snap-played / kept).
    */
   const pendingSnapDraw = ref<{ playerId: PlayerId; cardId: string } | null>(null);
+
+  // ----- v1.2 Beat ownership + Chant Trigger state, mirrored for templates -----
+  const setupPhase = ref<'beat-selection' | 'play'>('play');
+  const beatOwners = ref<Map<ChantWord, number>>(new Map());
+  const beatsBySeat = ref<Map<number, ChantWord[]>>(new Map());
+  const currentBeatPickerSeat = ref<number | null>(null);
+
+  /** Live Chant Trigger state. `active` flips true on versusChantTriggered, false on
+   *  versusChantPowerResolved (or ~300ms after a no-winner trigger). The recital steps
+   *  are drained one-by-one with a per-step delay so SpeechBubbles + counter pips
+   *  animate sequentially around the table. */
+  const chantTrigger = ref<{
+    active: boolean;
+    sourceSeatIndex: number;
+    receiverSeatIndex: number;
+    total: number;
+    landedBeat: ChantWord | 'no-winner-opening' | 'no-winner-unclaimed';
+    winnerSeatIndex: number | null;
+    perSeatCounts: number[];
+  } | null>(null);
+  /** Recital step currently lit. Keyed by seat index → number of count units spoken so
+   *  far AT that seat. Updated as the recital walks. */
+  const chantRecitalStepsBySeat = ref<Map<number, number>>(new Map());
+  /** Speech bubble fired by the recital, one shout per beat step. Mirrors the existing
+   *  `shouts` pattern in GameTable so we can reuse SpeechBubble. */
+  const recitalShouts = ref<Record<number, { word: ChantWord; key: number }>>({});
+  /** Seat that's currently being recited at, used to glow that seat's popover. */
+  const chantRecitalCurrentSeat = ref<number | null>(null);
+  /** The beat word being spoken at the current recital step. Updates per step so the
+   *  ChantTriggerOverlay banner can display the chant lottery-style (cycling through
+   *  beats live), then freezes on the LANDED beat once the recital ends. Reset to
+   *  null when a new trigger fires. */
+  const chantRecitalCurrentBeat = ref<ChantWord | null>(null);
+  /** Monotonic step counter for the recital (increments by 1 per step). Drives the
+   *  lottery banner's <Transition> key so the flip animation re-fires even when the
+   *  same beat word is spoken twice in a row (e.g. closing chik → opening chik).
+   *  Without it, Vue would see no key change and skip the transition entirely. */
+  const chantRecitalTick = ref(0);
+  /** Once the recital finishes, this carries the winner seat index (or null if the
+   *  chant landed on an unclaimed/opening beat). Drives the burst-confetti overlay
+   *  and the "No beat owner" subtitle. Cleared on trigger teardown. */
+  const chantRevealWinnerSeat = ref<number | null>(null);
+  const chantRevealNoWinner = ref(false);
+  /** Map of seat → the global recital step at which that seat's run BEGAN. Derived
+   *  from the trigger's perSeatCounts + receiverSeatIndex; used by ChantPips to know
+   *  which beat word each lit pip represents (chik / wally / hindo / …). Empty unless
+   *  a trigger is active. */
+  const chantStartStepBySeat = computed<Map<number, number>>(() => {
+    const t = chantTrigger.value;
+    if (!t) return new Map();
+    const out = new Map<number, number>();
+    const n = t.perSeatCounts.length;
+    let step = 0;
+    for (let i = 0; i < n; i++) {
+      const seat = (t.receiverSeatIndex + i) % n;
+      out.set(seat, step);
+      step += t.perSeatCounts[seat] ?? 0;
+    }
+    return out;
+  });
+
+  /** Pending Chant Power state (mirrors game.pendingChantPower so templates can react). */
+  const pendingChantPower = ref<{
+    winnerSeatIndex: number;
+    receiverSeatIndex: number;
+    chantChikId: string;
+  } | null>(null);
   let soloRafId: number | null = null;
   let soloStartedAt = 0;
   const startSoloTimer = () => {
@@ -280,9 +565,9 @@ export function useGame(opts: UseGameOptions = {}) {
   const activeSeatIndex = ref<number>(-1);
 
   /**
-   * Flight queue — GameTable drains this on each push and starts a GSAP timeline per spec.
+   * Flight queue, GameTable drains this on each push and starts a GSAP timeline per spec.
    * Rects are captured here (synchronously inside the event listener) so the snapshot
-   * predates Vue's post-event re-render — the source seat is still at its pre-play layout
+   * predates Vue's post-event re-render, the source seat is still at its pre-play layout
    * when we read its bounding box.
    */
   const pendingFlights = ref<FlightSpec[]>([]);
@@ -300,6 +585,39 @@ export function useGame(opts: UseGameOptions = {}) {
     const p = game.value.players.find((x) => x.id === playerId);
     return !!p && !p.isAI;
   };
+
+  /**
+   * Queue a card-flight from the winner's seat to each gift recipient's seat after
+   * the Chant Power resolves. Reuses the existing 'draw' flight kind (cards landing
+   * in a hand), the engine already moved the cards into recipient.hand by the time
+   * versusChantPowerResolved fires, so we look them up there for the assetPath.
+   */
+  function queueFlightsForChantGifts(e: Extract<GameEvent, { kind: 'versusChantPowerResolved' }>): void {
+    const winnerSeat = e.winnerSeatIndex;
+    const fromRect = snapshotRect(`[data-seat-index="${winnerSeat}"]`);
+    if (!fromRect) return;
+    for (const gift of e.gifts) {
+      const toRect = snapshotRect(`[data-seat-index="${gift.recipientSeatIndex}"]`);
+      if (!toRect) continue;
+      const recipient = game.value.players[gift.recipientSeatIndex];
+      if (!recipient) continue;
+      for (const cardId of gift.cardIds) {
+        const card = recipient.hand.find((c) => c.id === cardId);
+        // Show the card face only when the human can plausibly want to see it: when
+        // the recipient is the human (their new card lands face-up in their fan).
+        const revealFace = !recipient.isAI && !!card;
+        pendingFlights.value.push({
+          id: nextFlightId++,
+          kind: 'draw',
+          cardId,
+          faceUrl: card?.assetPath ?? '',
+          fromRect,
+          toRect,
+          revealFace,
+        });
+      }
+    }
+  }
 
   function queueFlightForPlay(e: Extract<GameEvent, { kind: 'versusPlay' | 'soloSlam' }>): void {
     if (e.kind === 'versusPlay') {
@@ -344,7 +662,7 @@ export function useGame(opts: UseGameOptions = {}) {
   }
 
   function queueFlightForDraw(e: Extract<GameEvent, { kind: 'versusDraw' | 'soloDraw' }>): void {
-    if (!e.cardId) return; // empty-pile "pass" — nothing to fly
+    if (!e.cardId) return; // empty-pile "pass", nothing to fly
 
     const recipientId = e.kind === 'versusDraw' ? e.playerId : 'p1';
     const recipient = game.value.players.find((p) => p.id === recipientId);
@@ -385,7 +703,12 @@ export function useGame(opts: UseGameOptions = {}) {
       case 'versusPlay': {
         lastPlayedVirtualPos.value = game.value.chant.virtualPos;
         const pid = e.kind === 'versusPlay' ? e.playerId : 'p1';
-        if (isHumanEvent(pid)) beatAudio.fx('success');
+        if (isHumanEvent(pid)) {
+          // Solo slams climb the combo ladder via pitch, pulseStreak() runs
+          // immediately below, so the about-to-be streak is current + 1.
+          const pitchMul = e.kind === 'soloSlam' ? streakPitchMul(soloStreak.value + 1) : 1;
+          beatAudio.fx('success', { pitchMul });
+        }
         // BEAT ding on every play. If a card lands in front of the HUMAN (their turn is
         // now next), use the HIGH ding as a heads-up that they're up; otherwise use the
         // MIDDLE ding so each opponent-on-opponent play still has audible rhythm and the
@@ -395,7 +718,12 @@ export function useGame(opts: UseGameOptions = {}) {
           const targetIsHuman = !!target && !target.isAI;
           beatAudio.ding(targetIsHuman ? 'high' : 'middle');
         }
-        // Snapshot flight geometry synchronously — before Vue's re-render shifts the
+        // Solo combo streak, every successful slam pulses the streak: increment +
+        // refill the depletion bar. Penalties break the streak (see soloPenalty
+        // handler below). Drawing is neutral so the bar keeps depleting between
+        // forced draws.
+        if (e.kind === 'soloSlam') pulseStreak();
+        // Snapshot flight geometry synchronously, before Vue's re-render shifts the
         // source seat's bounding box. The Game.emit happens after the card has moved
         // into its destination, so we can find the card on the target side too.
         queueFlightForPlay(e);
@@ -404,12 +732,27 @@ export function useGame(opts: UseGameOptions = {}) {
       case 'versusDraw':
       case 'soloDraw': {
         queueFlightForDraw(e);
+        // Solo: legal draws extend the streak bar by a small grace amount so a
+        // legitimate "fishing for a beat-matching card" turn doesn't murder the
+        // streak. Penalty draws (unnecessary-draw) come through soloPenalty and
+        // break the streak as usual.
+        if (e.kind === 'soloDraw') pulseStreakDraw();
         break;
       }
       case 'soloPenalty':
         if (modeCaps(mode.value).isTimeAttack) {
           soloPenaltyMs.value += e.penaltyMs;
           beatAudio.fx('fail');
+          // Mistake → end the streak immediately. finalizeStreak() awards any
+          // pending bonus first, then resets.
+          finalizeStreak();
+        }
+        break;
+      case 'soloBonus':
+        if (modeCaps(mode.value).isTimeAttack) {
+          soloBonusMs.value += e.bonusMs;
+          // High-pitch ding to differentiate bonus from the regular slam success.
+          beatAudio.ding('high');
         }
         break;
       case 'chantAdvanced':
@@ -424,15 +767,156 @@ export function useGame(opts: UseGameOptions = {}) {
       case 'versusSnapDrawnPlayed':
         pendingSnapDraw.value = null;
         break;
+      case 'versusBeatPickerChanged':
+        currentBeatPickerSeat.value = e.seatIndex;
+        setupPhase.value = game.value.setupPhase;
+        beatOwners.value = new Map(game.value.beatOwners);
+        beatsBySeat.value = game.value.beatsOwnedBySeat();
+        break;
+      case 'versusBeatClaimed':
+        beatOwners.value = new Map(game.value.beatOwners);
+        beatsBySeat.value = game.value.beatsOwnedBySeat();
+        break;
+      case 'versusSetupCompleted':
+        setupPhase.value = 'play';
+        currentBeatPickerSeat.value = null;
+        break;
+      case 'versusChantTriggered': {
+        chantTrigger.value = {
+          active: true,
+          sourceSeatIndex: e.sourceSeatIndex,
+          receiverSeatIndex: e.receiverSeatIndex,
+          total: e.total,
+          landedBeat: e.landedBeat,
+          winnerSeatIndex: e.winnerSeatIndex,
+          perSeatCounts: e.perSeatCounts,
+        };
+        chantRecitalStepsBySeat.value = new Map();
+        recitalShouts.value = {};
+        chantRecitalCurrentSeat.value = null;
+        chantRecitalCurrentBeat.value = null;
+        chantRecitalTick.value = 0;
+        chantRevealWinnerSeat.value = null;
+        chantRevealNoWinner.value = false;
+        // No-winner: no chant-power-resolve will fire, so we tear down the overlay
+        // ourselves after the recital plus a short tail so the landed banner is seen.
+        // Also release the engine's AI gate once the tail completes, the engine had
+        // already setActiveSeat'd the receiver synchronously, but we hold the AI back
+        // until the player has actually SEEN the recital land.
+        if (e.winnerSeatIndex === null) {
+          const stepMs = recitalStepMs.value;
+          const recitalMs = stepMs === 0 ? 0 : e.total * stepMs;
+          // Right as the recital lands on the (unclaimed) beat: surface the
+          // "No beat owner" subtitle and play the penalty fail sound so the
+          // player gets a clear "nothing happened" cue.
+          window.setTimeout(() => {
+            chantRevealNoWinner.value = true;
+            beatAudio.fx('fail');
+          }, recitalMs);
+          window.setTimeout(() => {
+            chantTrigger.value = null;
+            chantRecitalStepsBySeat.value = new Map();
+            chantRecitalCurrentSeat.value = null;
+            chantRecitalCurrentBeat.value = null;
+            chantRecitalTick.value = 0;
+            chantRevealNoWinner.value = false;
+            recitalShouts.value = {};
+            (game.value.endChantTriggerWindow?.());
+          }, recitalMs + 1100);
+        } else {
+          // Winner branch, schedule the burst-confetti reveal at recital end so it
+          // bursts AT the moment the lottery freezes on the winning beat, not while
+          // the recital is still spinning.
+          const stepMs = recitalStepMs.value;
+          const recitalMs = stepMs === 0 ? 0 : e.total * stepMs;
+          const winnerSeat = e.winnerSeatIndex;
+          window.setTimeout(() => {
+            chantRevealWinnerSeat.value = winnerSeat;
+          }, recitalMs);
+        }
+        break;
+      }
+      case 'versusChantRecitedBeat': {
+        // Per-step animation: defer each step by the user's recital-speed step ms so
+        // the bubbles + pip rows animate sequentially. Speed = 'skip' fires immediately.
+        const stepDelayMs = recitalStepMs.value;
+        const { seatIndex, beatWord, step } = e;
+        const apply = () => {
+          const next = new Map(chantRecitalStepsBySeat.value);
+          next.set(seatIndex, (next.get(seatIndex) ?? 0) + 1);
+          chantRecitalStepsBySeat.value = next;
+          chantRecitalCurrentSeat.value = seatIndex;
+          chantRecitalCurrentBeat.value = beatWord;
+          // Bump the per-step tick so the lottery banner's <Transition> key
+          // changes even when consecutive steps land on the same beat word
+          // (e.g. closing chik → opening chik). Without this, the slot-machine
+          // flip animation silently skips those repeats.
+          chantRecitalTick.value = step + 1;
+          const prevKey = recitalShouts.value[seatIndex]?.key ?? 0;
+          recitalShouts.value = {
+            ...recitalShouts.value,
+            [seatIndex]: { word: beatWord, key: prevKey + 1 },
+          };
+        };
+        if (stepDelayMs === 0) apply(); else window.setTimeout(apply, step * stepDelayMs);
+        break;
+      }
+      case 'versusChantPowerAwarded': {
+        // The engine sets pendingChantPower synchronously, but we hold the UI mirror
+        // back until the recital animation completes so the user sees the chant land
+        // before the give-cards picker appears. SimulationController watches the same
+        // delay via its own queue so AI auto-resolve doesn't pre-empt the recital.
+        const stepMs = recitalStepMs.value;
+        const trigger = chantTrigger.value;
+        const recitalMs = trigger && stepMs > 0 ? trigger.total * stepMs : 0;
+        const awardEvent = e;
+        window.setTimeout(() => {
+          pendingChantPower.value = {
+            winnerSeatIndex: awardEvent.winnerSeatIndex,
+            receiverSeatIndex: awardEvent.receiverSeatIndex,
+            chantChikId: '',
+          };
+        }, recitalMs + (stepMs === 0 ? 200 : 800));
+        break;
+      }
+      case 'versusChantPowerResolved':
+        pendingChantPower.value = null;
+        // Animate the gifted cards flying from winner → recipients. Snap rects now,
+        // before the recipient hand re-fans on the next render and the seat anchor
+        // shifts. Reuses the standard 'draw' flight kind.
+        queueFlightsForChantGifts(e);
+        // Tear down the trigger overlay after a brief beat so the landed banner is
+        // seen. Also release the engine's AI cooldown gate so SimulationController
+        // resumes scheduling normal AI ticks. Without this, the no-winner & winner
+        // branches would diverge: winner case has pendingChantPower handling the
+        // timing, but the cleanup tail itself was unguarded, AI could fire plays
+        // and shout bubbles before the trigger overlay finished fading.
+        window.setTimeout(() => {
+          chantTrigger.value = null;
+          chantRecitalStepsBySeat.value = new Map();
+          chantRecitalCurrentSeat.value = null;
+          chantRecitalCurrentBeat.value = null;
+          chantRecitalTick.value = 0;
+          chantRevealWinnerSeat.value = null;
+          chantRevealNoWinner.value = false;
+          recitalShouts.value = {};
+          (game.value.endChantTriggerWindow?.());
+        }, 600);
+        break;
       case 'versusStrictPenalty':
-        // Same fail sting Solo penalties use — fires for ANY player so the human
+        // Same fail sting Solo penalties use, fires for ANY player so the human
         // can hear when an AI fumbles too (otherwise penalties are easy to miss).
         beatAudio.fx('fail');
         break;
       case 'winner':
         if (modeCaps(mode.value).isTimeAttack) {
           stopSoloTimer();
-          const final = soloElapsedMs.value + soloPenaltyMs.value;
+          // Cash in any in-flight streak before computing the final time. Without
+          // this, a player who finished the round mid-streak would lose the
+          // accumulated bonus to the bar's eventual depletion (which never fires
+          // after the game ends).
+          finalizeStreak();
+          const final = Math.max(0, soloElapsedMs.value + soloPenaltyMs.value - soloBonusMs.value);
           soloLastFinalMs.value = final;
           if (soloBestTimeMs.value === null || final < soloBestTimeMs.value) {
             soloBestTimeMs.value = final;
@@ -471,16 +955,38 @@ export function useGame(opts: UseGameOptions = {}) {
     stopSoloTimer();
     soloElapsedMs.value = 0;
     soloPenaltyMs.value = 0;
+    soloBonusMs.value = 0;
     soloLastFinalMs.value = null;
     soloIsNewBest.value = false;
+    soloIsNewBestStreak.value = false;
+    // Streak, cancel raf and zero everything so a new round starts clean.
+    if (soloStreakRafId !== null) { cancelAnimationFrame(soloStreakRafId); soloStreakRafId = null; }
+    soloStreak.value = 0;
+    soloStreakBarMs.value = 0;
+    soloStreakTiltDeg.value = 0;
+    soloLastStreakBonus.value = null;
     pendingFlights.value = [];
     pendingSnapDraw.value = null;
+    setupPhase.value = 'play';
+    beatOwners.value = new Map();
+    beatsBySeat.value = new Map();
+    currentBeatPickerSeat.value = null;
+    chantTrigger.value = null;
+    chantRecitalStepsBySeat.value = new Map();
+    recitalShouts.value = {};
+    chantRecitalCurrentSeat.value = null;
+    chantRecitalCurrentBeat.value = null;
+    chantRecitalTick.value = 0;
+    chantRevealWinnerSeat.value = null;
+    chantRevealNoWinner.value = false;
+    pendingChantPower.value = null;
 
     const g = new Game();
     const ctrl = new SimulationController(g);
     ctrl.setOptions({ speed: speed.value });
     ctrl.setMode(mode.value);
     ctrl.setAiSkill(aiSkill.value);
+    ctrl.setRecitalPacing(recitalStepMs.value);
     g.setStrictPromptsEnabled(strictPrompts.value);
     unsubGame = g.on(handleEvent);
     unsubStatus = ctrl.onStatusChange(handleStatus);
@@ -488,7 +994,7 @@ export function useGame(opts: UseGameOptions = {}) {
     controller.value = ctrl;
 
     // Per-mode setup dispatch. This is intentionally a switch on mode identity (not
-    // capability flags) because each mode's setup signature differs — buildSoloDeck
+    // capability flags) because each mode's setup signature differs, buildSoloDeck
     // takes nothing, setupVersus takes playerCount, setupPlayground takes the custom
     // PlaygroundSetup. Adding a new mode = add a case here and a row to MODE_CAPS.
     const assignTurnBasedSeats = () => {
@@ -531,6 +1037,14 @@ export function useGame(opts: UseGameOptions = {}) {
     }
     g.drawPile = reactive(g.drawPile) as Card[];
     g.soloBases = reactive(g.soloBases) as Game['soloBases'];
+
+    // Mirror v1.2 setup state into the reactive refs so templates have it right away.
+    setupPhase.value = g.setupPhase;
+    beatOwners.value = new Map(g.beatOwners);
+    beatsBySeat.value = g.beatsOwnedBySeat();
+    currentBeatPickerSeat.value = g.setupPhase === 'beat-selection'
+      ? (g.players.find((p) => p.id === g.currentBeatPicker())?.seatIndex ?? null)
+      : null;
 
     triggerRef(game);
     triggerRef(controller);
@@ -575,12 +1089,26 @@ export function useGame(opts: UseGameOptions = {}) {
 
   /** Human's snap-drawn target choice. Pass the seat index the snap should land on.
    *  Standard mode accepts only the left/right neighbours; strict mode accepts any
-   *  non-self seat. The "Keep" option was deliberately removed — the holder must play
+   *  non-self seat. The "Keep" option was deliberately removed, the holder must play
    *  a matching drawn Snap (matches the rulebook's emphasis on the Snap superpower). */
   const submitSnapPlay = (playerId: PlayerId, targetSeatIndex: number) => {
     if (state.status !== 'running') return;
     beatAudio.fx('tap');
     controller.value.submitVersusHumanAction(playerId, { type: 'snap-play', targetSeatIndex });
+  };
+
+  /** Human's beat pick during setup. */
+  const submitBeatClaim = (playerId: PlayerId, beat: ChantWord) => {
+    if (state.status !== 'running') return;
+    beatAudio.fx('tap');
+    controller.value.submitVersusHumanAction(playerId, { type: 'claim-beat', beat });
+  };
+
+  /** Human's chant-power give-cards decision. */
+  const submitChantPowerResolve = (playerId: PlayerId, gifts: ChantPowerGift[]) => {
+    if (state.status !== 'running') return;
+    beatAudio.fx('tap');
+    controller.value.submitVersusHumanAction(playerId, { type: 'chant-power-resolve', gifts });
   };
 
   const setMode = (m: SimMode) => {
@@ -633,8 +1161,18 @@ export function useGame(opts: UseGameOptions = {}) {
     lastPlayedVirtualPos,
     soloElapsedMs,
     soloPenaltyMs,
+    soloBonusMs,
+    soloStreak,
+    soloStreakBarMs,
+    soloStreakBarMaxMs: STREAK_BAR_MS,
+    soloStreakTiltDeg,
+    /** 0..3 tier matching the bonus ladder, drives combo-label sizing in PlayView. */
+    computeStreakTier,
+    soloLastStreakBonus,
     soloRunning,
     soloBestTimeMs,
+    soloBestStreak,
+    soloIsNewBestStreak,
     soloLastFinalMs,
     soloIsNewBest,
     pendingFlights,
@@ -670,6 +1208,29 @@ export function useGame(opts: UseGameOptions = {}) {
     submitSnapPlay,
     submitSoloAction,
     submitVersusAction,
+    // v1.2 additions
+    setupPhase,
+    beatOwners,
+    beatsBySeat,
+    currentBeatPickerSeat,
+    chantTrigger,
+    chantRecitalStepsBySeat,
+    chantRecitalCurrentSeat,
+    chantRecitalCurrentBeat,
+    chantRecitalTick,
+    chantRevealWinnerSeat,
+    chantRevealNoWinner,
+    chantStartStepBySeat,
+    recitalShouts,
+    pendingChantPower,
+    submitBeatClaim,
+    submitChantPowerResolve,
+    promptInfoSize,
+    setPromptInfoSize,
+    chantRecitalSpeed,
+    setChantRecitalSpeed,
+    drawKeyEnabled,
+    setDrawKeyEnabled,
   };
 }
 

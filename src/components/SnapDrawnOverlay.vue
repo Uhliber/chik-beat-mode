@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * Inline overlay for the "Snap drawn and matches the beat" moment. Anchored to the
- * deck inside GameTable rather than a modal — the drawn snap card flips up + offsets
+ * deck inside GameTable rather than a modal, the drawn snap card flips up + offsets
  * slightly above the deck and a ring of target chips appears around it.
  *
  *  - Human's pending snap: chips are clickable. Click one → submit snap-play.
@@ -20,7 +20,7 @@ import type { Player } from '@/game/Player';
 const props = defineProps<{
   /** The drawn snap card (face-up). Null = overlay hidden. */
   card: Card | null;
-  /** All seats — to compute label and chip positions. */
+  /** All seats, to compute label and chip positions. */
   players: Player[];
   /** Seat index of the snap's holder. -1 hides. */
   holderSeatIndex: number;
@@ -84,7 +84,7 @@ watch(() => props.legalTargets, () => requestAnimationFrame(computeAnchors));
 
 /** Place each chip on the ray from the deck centre toward the target seat's actual
  *  DOM position, at a fixed radius. So the "P4" chip appears in the direction P4
- *  is sitting — left chip ↔ left seat, regardless of legalTargets[] ordering. If a
+ *  is sitting, left chip ↔ left seat, regardless of legalTargets[] ordering. If a
  *  seat anchor isn't yet measurable, the chip falls back to an even fan around the deck. */
 const chipPositions = computed(() => {
   if (!anchors.value || props.legalTargets.length === 0) return [];

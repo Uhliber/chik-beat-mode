@@ -59,7 +59,7 @@ describe('applySoloScenario', () => {
 describe('applyVersusScenario', () => {
   it('pins chant + active seat + opened', () => {
     const g = new Game(seededRng(11));
-    g.setupVersus(4);
+    g.setupVersus(4); g.autoCompleteBeatSelection();
     applyVersusScenario(g, { beat: 'tambo', activeSeatIndex: 2, opened: true });
     expect(g.chant.current).toBe('tambo');
     expect(g.activeSeatIndex).toBe(2);
@@ -68,7 +68,7 @@ describe('applyVersusScenario', () => {
 
   it('rewrites specific seats hands without touching others', () => {
     const g = new Game(seededRng(12));
-    g.setupVersus(4);
+    g.setupVersus(4); g.autoCompleteBeatSelection();
     const seat2HandBefore = [...g.players[2].hand];
     applyVersusScenario(g, {
       hands: {
@@ -85,7 +85,7 @@ describe('applyVersusScenario', () => {
 
   it('pushes stubs onto promptStacks and registers fetch owners', () => {
     const g = new Game(seededRng(13));
-    g.setupVersus(4);
+    g.setupVersus(4); g.autoCompleteBeatSelection();
     applyVersusScenario(g, {
       promptStacks: [
         { seatIndex: 0, card: { word: 'hindo', prompt: 'fetch' }, fetchOwnerSeatIndex: 2 },
@@ -101,7 +101,7 @@ describe('applyVersusScenario', () => {
 
   it('places deckTop card at the END of the pile (pop()-able as top)', () => {
     const g = new Game(seededRng(14));
-    g.setupVersus(4);
+    g.setupVersus(4); g.autoCompleteBeatSelection();
     applyVersusScenario(g, { deckTop: { word: 'wally', prompt: 'snap' } });
     const top = g.drawPile[g.drawPile.length - 1];
     expect(top.word).toBe('wally');
@@ -110,7 +110,7 @@ describe('applyVersusScenario', () => {
 
   it('sets chainSourceSeatIndex when specified', () => {
     const g = new Game(seededRng(15));
-    g.setupVersus(4);
+    g.setupVersus(4); g.autoCompleteBeatSelection();
     applyVersusScenario(g, { chainSourceSeatIndex: 3 });
     expect((g as unknown as { chainSourceSeatIndex: number | null }).chainSourceSeatIndex).toBe(3);
   });

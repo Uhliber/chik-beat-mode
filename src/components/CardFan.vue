@@ -7,7 +7,7 @@ const props = defineProps<{
   cards: Card[];
   faceUp: boolean;
   cardWidth?: number;
-  /** Maximum total fan angle in degrees (BASE — actual angle bends wider when cards crowd). */
+  /** Maximum total fan angle in degrees (BASE, actual angle bends wider when cards crowd). */
   fanAngle?: number;
   /** Vertical lift toward the arc center (px). */
   arc?: number;
@@ -41,12 +41,12 @@ const props = defineProps<{
   cardInteractive?: (cardId: string) => boolean;
   /**
    * Per-card pulse highlight (circle mode). If provided, cards whose id passes get a
-   * heartbeat animation — used to draw the eye to Halo-Halo before the game opens.
+   * heartbeat animation, used to draw the eye to Halo-Halo before the game opens.
    */
   cardPulse?: (cardId: string) => boolean;
   /**
    * Card IDs currently in-flight (e.g. mid-draw animation). Filtered out of the fan so
-   * the slot doesn't appear until the GSAP flight lands — at which point the parent
+   * the slot doesn't appear until the GSAP flight lands, at which point the parent
    * removes the id and (optionally) adds it to `freshIds` to trigger the slide-in.
    */
   hiddenIds?: Set<string>;
@@ -78,7 +78,7 @@ const visibleCards = computed(() => {
 /** Cards hidden behind the "+N" indicator. */
 const hiddenCount = computed(() => Math.max(0, props.cards.length - visibleCards.value.length));
 
-/** Fan layout — adapts step + angle based on maxWidth so big hands curve instead of clipping. */
+/** Fan layout, adapts step + angle based on maxWidth so big hands curve instead of clipping. */
 const layouts = computed(() => {
   const n = visibleCards.value.length;
   if (n === 0) return [];
@@ -114,7 +114,7 @@ const onPointerDown = (card: Card, ev: PointerEvent) => {
 };
 
 // ---------------------------------------------------------------------------
-// CIRCLE MODE — polar layout around a centre. Cards' top edge faces outward, so
+// CIRCLE MODE, polar layout around a centre. Cards' top edge faces outward, so
 // the chant word at the top of each card peeks out around the perimeter even
 // when the hand is dense (e.g. all 56 cards in Solo).
 // ---------------------------------------------------------------------------
@@ -147,12 +147,12 @@ const circleLayouts = computed(() => {
     };
   });
 });
-/** Side length of the circle bounding box — exposed so parents can centre & size it. */
+/** Side length of the circle bounding box, exposed so parents can centre & size it. */
 const circleBoxSize = computed(() => (circleRadius.value + cardW.value * 1.6) * 2);
 </script>
 
 <template>
-  <!-- CIRCLE MODE (Solo) — polar halo around a centre. Cards rendered absolutely
+  <!-- CIRCLE MODE (Solo), polar halo around a centre. Cards rendered absolutely
        relative to the centre of a square box; CSS hover lifts each card OUTWARD
        along its angle vector so picking a card is tactile and exposes more of it. -->
   <div
@@ -264,7 +264,7 @@ const circleBoxSize = computed(() => (circleRadius.value + cardW.value * 1.6) * 
  * "Fresh card" entry animation. Applied to the INNER button/div wrapper (not the outer
  * fan-slot div which already owns the layout transform), so the keyframe's translate +
  * scale compose locally with the parent's layout transform instead of replacing it.
- * Fires for ~380ms after a newly-drawn card lands in the hand — gives the player a
+ * Fires for ~380ms after a newly-drawn card lands in the hand, gives the player a
  * clear visual of where in their fan the new card slotted in.
  */
 .is-fresh {
@@ -278,10 +278,10 @@ const circleBoxSize = computed(() => (circleRadius.value + cardW.value * 1.6) * 
 
 /* Circle-mode hover: pull the card INWARD (toward the centre of the halo) using a
    local +Y translate. Because the wrapper has already been rotated so the card's top
-   edge faces outward, +Y in local space always points back toward the centre — works
+   edge faces outward, +Y in local space always points back toward the centre, works
    for every card around the halo without per-card math.
 
-   No `filter` on descendants — that would create a stacking context and disable
+   No `filter` on descendants, that would create a stacking context and disable
    preserve-3d / backface-hidden inside CardView, exposing the back face under the
    front. */
 .circle-card-btn {

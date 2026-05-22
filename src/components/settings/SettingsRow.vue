@@ -49,7 +49,7 @@ function onRowClick() {
  * line is flex so icon + label + control sit on one row; the description sits beneath
  * it, indented past the icon so it lines up under the label. Putting the description
  * INSIDE the label column (as the previous version did) made it wrap into a narrow
- * gutter whenever the control was wide — like the 4-button "AI skill" segmented.
+ * gutter whenever the control was wide, like the 4-button "AI skill" segmented.
  */
 .settings-row {
   display: flex;
@@ -104,7 +104,7 @@ function onRowClick() {
 .row-control {
   /**
    * `margin-left: auto` consumes any remaining inline space in the row and converts it
-   * into a left margin on this element — the canonical flex pattern for "always at the
+   * into a left margin on this element, the canonical flex pattern for "always at the
    * end of the row, regardless of label width".
    */
   flex-shrink: 0;

@@ -2,40 +2,71 @@ import { Card } from './Card';
 import { CHANT_ORDER, type CardPrompt, type ChantWord, type PlaygroundComposition } from './types';
 
 /**
- * Solo deck — 56 cards using only Left/Right/Free prompts.
+ * Per-card count assignment from the v1.2 rulebook appendix. Each (word, prompt) cell
+ * is an array of count values because Right and Left have TWO cards per word (paired
+ * to sum to 10 where possible); the other prompts have one card per word.
  *
- * Per-word counts mirror the v1.0 Versus distribution (Chik = 16, others = 8 each) so the
- * chant beat is still hit at roughly the right rate. Halo-Halo Chik is the single
- * deterministic Free card that opens the game.
+ * Total count across all 56 Versus cards = 280, average 5, with each of the 7 Chant
+ * Trigger outcomes hit by exactly 8 cards (per the rulebook's design note). Chant Chik
+ * cards use the same counts as regular Chik.
+ */
+const COUNT_TABLE: Record<ChantWord, Record<CardPrompt, number[]>> = {
+  chik:  { right: [4, 6],  left: [4, 6], free: [5], stop: [5], snap: [5], fetch: [5] },
+  wally: { right: [1, 9],  left: [2, 8], free: [3], stop: [7], snap: [6], fetch: [4] },
+  hindo: { right: [0, 10], left: [2, 8], free: [3], stop: [7], snap: [6], fetch: [4] },
+  pop:   { right: [0, 10], left: [1, 9], free: [3], stop: [7], snap: [6], fetch: [4] },
+  tambo: { right: [0, 10], left: [1, 9], free: [2], stop: [8], snap: [6], fetch: [4] },
+  riki:  { right: [0, 10], left: [1, 9], free: [2], stop: [8], snap: [3], fetch: [7] },
+};
+
+/** Convenience for callers that want to know a card's count by (word, prompt, dup index). */
+export function countFor(word: ChantWord, prompt: CardPrompt, dupIndex = 0): number {
+  const arr = COUNT_TABLE[word][prompt];
+  return arr[dupIndex % arr.length];
+}
+
+/**
+ * Solo deck, 56 cards using only Left/Right/Free prompts.
  *
- *   Prompt  | Total | Chik | Wally | Hindo | Pop | Tambo | Riki
- *   --------+-------+------+-------+-------+-----+-------+------
- *   Left    | 21    |  6   |  3    |  3    |  3  |  3    |  3
- *   Right   | 21    |  6   |  3    |  3    |  3  |  3    |  3
- *   Free    | 14    |  4*  |  2    |  2    |  2  |  2    |  2     (* one is Halo-Halo Chik)
- *   Total   | 56    | 16   |  8    |  8    |  8  |  8    |  8
+ * Counts are assigned for art-set parity even though Solo doesn't read them, the same
+ * Card class is shared and assetPath would otherwise point at `…-undefined.png`. Pulls
+ * from the same per-word count table; for words/prompts with two counts (Right/Left)
+ * we cycle through the array; for single-count prompts (Free) we repeat.
  */
 export function buildSoloDeck(): Card[] {
   const cards: Card[] = [];
   const otherWords: ChantWord[] = ['wally', 'hindo', 'pop', 'tambo', 'riki'];
 
+  const pushSolo = (id: string, prompt: CardPrompt, word: ChantWord, dupIndex: number, isHaloHalo = false) => {
+    cards.push(new Card({ id, prompt, word, isHaloHalo, count: countFor(word, prompt, dupIndex) }));
+  };
+  const pushSoloChantChik = (id: string, prompt: CardPrompt, dupIndex: number) => {
+    cards.push(new Card({ id, prompt, word: 'chik', isChantChik: true, count: countFor('chik', prompt, dupIndex) }));
+  };
+
   // Left: 6 Chik + 3 each of the others
-  for (let i = 0; i < 6; i++) cards.push(new Card({ id: `solo-left-chik-${i}`, prompt: 'left', word: 'chik' }));
+  for (let i = 0; i < 6; i++) pushSolo(`solo-left-chik-${i}`, 'left', 'chik', i);
   for (const w of otherWords) {
-    for (let i = 0; i < 3; i++) cards.push(new Card({ id: `solo-left-${w}-${i}`, prompt: 'left', word: w }));
+    for (let i = 0; i < 3; i++) pushSolo(`solo-left-${w}-${i}`, 'left', w, i);
   }
 
   // Right: 6 Chik + 3 each of the others
-  for (let i = 0; i < 6; i++) cards.push(new Card({ id: `solo-right-chik-${i}`, prompt: 'right', word: 'chik' }));
+  for (let i = 0; i < 6; i++) pushSolo(`solo-right-chik-${i}`, 'right', 'chik', i);
   for (const w of otherWords) {
-    for (let i = 0; i < 3; i++) cards.push(new Card({ id: `solo-right-${w}-${i}`, prompt: 'right', word: w }));
+    for (let i = 0; i < 3; i++) pushSolo(`solo-right-${w}-${i}`, 'right', w, i);
   }
 
-  // Free: Halo-Halo Chik + 3 Chik + 2 each of the others
-  cards.push(new Card({ id: 'halohalo-chik', prompt: 'free', word: 'chik', isHaloHalo: true }));
-  for (let i = 0; i < 3; i++) cards.push(new Card({ id: `solo-free-chik-${i}`, prompt: 'free', word: 'chik' }));
+  // Free: Halo-Halo Chik + 3 Chant Chik (free) + 2 each of the others.
+  //
+  // The 3 generic Free Chik slots use the CHANT CHIK variant because there is no
+  // `free-chik-${count}.png` asset in /new/, only the Halo-Halo card carries a
+  // Free + Chik (regular) face (`free-chik-halohalo-5.png`). Without this swap the
+  // remaining 3 Free Chik cards would 404 their image. Solo mode doesn't use the
+  // Chant Trigger so isChantChik is purely visual here.
+  pushSolo('halohalo-chik', 'free', 'chik', 0, true);
+  for (let i = 0; i < 3; i++) pushSoloChantChik(`solo-free-chant-chik-${i}`, 'free', i);
   for (const w of otherWords) {
-    for (let i = 0; i < 2; i++) cards.push(new Card({ id: `solo-free-${w}-${i}`, prompt: 'free', word: w }));
+    for (let i = 0; i < 2; i++) pushSolo(`solo-free-${w}-${i}`, 'free', w, i);
   }
 
   if (cards.length !== 56) {
@@ -45,41 +76,57 @@ export function buildSoloDeck(): Card[] {
 }
 
 /**
- * Versus deck — canonical v1.0 56-card distribution.
+ * Versus deck, canonical v1.2 56-card distribution. Half of the 16 Chik cards are
+ * Chant Chik variants (8 each); per prompt, the regular/Chant-Chik split is even so
+ * the rulebook's per-prompt count distribution (Right/Left: 4 and 6; others: 5) is
+ * preserved across both variants.
  *
- *   Prompt | Chik | Wally | Hindo | Pop | Tambo | Riki | Total
- *   -------+------+-------+-------+-----+-------+------+------
- *   Right  |  4   |  2    |  2    |  2  |  2    |  2   | 14
- *   Left   |  4   |  2    |  2    |  2  |  2    |  2   | 14
- *   Free   |  2*  |  1    |  1    |  1  |  1    |  1   |  7   (* one is Halo-Halo Chik)
- *   Stop   |  2   |  1    |  1    |  1  |  1    |  1   |  7
- *   Snap   |  2   |  1    |  1    |  1  |  1    |  1   |  7
- *   Fetch  |  2   |  1    |  1    |  1  |  1    |  1   |  7
- *   Total  | 16   |  8    |  8    |  8  |  8    |  8   | 56
+ *   Prompt | Chik regular | Chant Chik | Wally | Hindo | Pop | Tambo | Riki | Total
+ *   -------+--------------+-----------+-------+-------+-----+-------+------+------
+ *   Right  |  2           |  2        |  2    |  2    |  2  |  2    |  2   | 14
+ *   Left   |  2           |  2        |  2    |  2    |  2  |  2    |  2   | 14
+ *   Free   |  1 (Halo-H.) |  1        |  1    |  1    |  1  |  1    |  1   |  7
+ *   Stop   |  1           |  1        |  1    |  1    |  1  |  1    |  1   |  7
+ *   Snap   |  1           |  1        |  1    |  1    |  1  |  1    |  1   |  7
+ *   Fetch  |  1           |  1        |  1    |  1    |  1  |  1    |  1   |  7
+ *   Total  | 8            |  8        |  8    |  8    |  8  |  8    |  8   | 56
  */
 export function buildVersusDeck(): Card[] {
   const cards: Card[] = [];
   const prompts: CardPrompt[] = ['right', 'left', 'free', 'stop', 'snap', 'fetch'];
-  const chikPerPrompt: Record<CardPrompt, number> = { right: 4, left: 4, free: 2, stop: 2, snap: 2, fetch: 2 };
+  // Half of each Chik prompt bucket is regular, the other half is Chant Chik. For
+  // Right/Left (4 total Chik cards each), that's 2+2. For everyone else (2 Chik each),
+  // that's 1+1.
+  const chikPerVariant: Record<CardPrompt, number> = { right: 2, left: 2, free: 1, stop: 1, snap: 1, fetch: 1 };
   const otherPerPrompt: Record<CardPrompt, number> = { right: 2, left: 2, free: 1, stop: 1, snap: 1, fetch: 1 };
   const otherWords: ChantWord[] = ['wally', 'hindo', 'pop', 'tambo', 'riki'];
 
   for (const prompt of prompts) {
-    // Chik cards for this prompt — the Free prompt has one Halo-Halo Chik baked in.
-    if (prompt === 'free') {
-      cards.push(new Card({ id: 'halohalo-chik', prompt: 'free', word: 'chik', isHaloHalo: true }));
-      for (let i = 0; i < chikPerPrompt.free - 1; i++) {
-        cards.push(new Card({ id: `free-chik-${i}`, prompt: 'free', word: 'chik' }));
-      }
-    } else {
-      for (let i = 0; i < chikPerPrompt[prompt]; i++) {
-        cards.push(new Card({ id: `${prompt}-chik-${i}`, prompt, word: 'chik' }));
-      }
+    // Regular Chik bucket. The single Free Chik (regular) IS the Halo-Halo opener.
+    for (let i = 0; i < chikPerVariant[prompt]; i++) {
+      const isHalo = prompt === 'free' && i === 0;
+      const id = isHalo ? 'halohalo-chik' : `${prompt}-chik-${i}`;
+      cards.push(new Card({ id, prompt, word: 'chik', isHaloHalo: isHalo, count: countFor('chik', prompt, i) }));
     }
-    // Other-word cards for this prompt.
+    // Chant Chik bucket, same counts, isChantChik = true.
+    for (let i = 0; i < chikPerVariant[prompt]; i++) {
+      cards.push(new Card({
+        id: `${prompt}-chant-chik-${i}`,
+        prompt,
+        word: 'chik',
+        isChantChik: true,
+        count: countFor('chik', prompt, i),
+      }));
+    }
+    // Other-word cards.
     for (const w of otherWords) {
       for (let i = 0; i < otherPerPrompt[prompt]; i++) {
-        cards.push(new Card({ id: `${prompt}-${w}-${i}`, prompt, word: w }));
+        cards.push(new Card({
+          id: `${prompt}-${w}-${i}`,
+          prompt,
+          word: w,
+          count: countFor(w, prompt, i),
+        }));
       }
     }
   }
@@ -91,14 +138,9 @@ export function buildVersusDeck(): Card[] {
 }
 
 /**
- * Playground deck builder. Caller supplies total counts per prompt — within each
- * prompt the cards are distributed with Chik weighted 2× (matches the canonical
- * v1.0 ratio). For clean integer math, total per prompt SHOULD be a multiple of 7
- * (so the split is 2N Chik + N of each other word). Non-multiples are best-effort:
- * floor-allocate the Chik portion, then fill the rest evenly across the other words.
- *
- * Free is the prompt that carries the Halo-Halo Chik. If free count is 0 we throw —
- * the engine needs at least one Halo-Halo to open the game.
+ * Playground deck builder. Same per-prompt totals as before; the Chik portion of each
+ * prompt is split evenly between regular Chik (with the Halo-Halo being the first Free
+ * Chik) and Chant Chik. Counts use the per-word table.
  */
 export function buildPlaygroundDeck(composition: PlaygroundComposition): Card[] {
   if ((composition.free ?? 0) < 1) {
@@ -111,24 +153,29 @@ export function buildPlaygroundDeck(composition: PlaygroundComposition): Card[] 
   for (const prompt of prompts) {
     const total = composition[prompt] ?? 0;
     if (total <= 0) continue;
-    // Split: 2N Chik + N each of 5 other words = 7N when total = 7N. For arbitrary
-    // total, distribute as evenly as possible, rounding the Chik portion to ceil(2/7).
     const chikCount = Math.max(0, Math.round((total * 2) / 7));
+    // Split Chik between regular and Chant Chik. Halo-Halo lives in the regular Free Chik bucket.
+    const regularChik = Math.ceil(chikCount / 2);
+    const chantChik = chikCount - regularChik;
     let remaining = total - chikCount;
-    // Spread `remaining` across 5 other words. Earlier words get one extra if it doesn't divide evenly.
     const perOther = Math.floor(remaining / otherWords.length);
     let extra = remaining - perOther * otherWords.length;
 
-    // Chik cards — Free's first one is the Halo-Halo opener.
-    if (prompt === 'free') {
-      cards.push(new Card({ id: 'halohalo-chik', prompt: 'free', word: 'chik', isHaloHalo: true }));
-      for (let i = 0; i < chikCount - 1; i++) {
-        cards.push(new Card({ id: `free-chik-${i}`, prompt: 'free', word: 'chik' }));
-      }
-    } else {
-      for (let i = 0; i < chikCount; i++) {
-        cards.push(new Card({ id: `${prompt}-chik-${i}`, prompt, word: 'chik' }));
-      }
+    // Regular Chik.
+    for (let i = 0; i < regularChik; i++) {
+      const isHalo = prompt === 'free' && i === 0;
+      const id = isHalo ? 'halohalo-chik' : `${prompt}-chik-${i}`;
+      cards.push(new Card({ id, prompt, word: 'chik', isHaloHalo: isHalo, count: countFor('chik', prompt, i) }));
+    }
+    // Chant Chik.
+    for (let i = 0; i < chantChik; i++) {
+      cards.push(new Card({
+        id: `${prompt}-chant-chik-${i}`,
+        prompt,
+        word: 'chik',
+        isChantChik: true,
+        count: countFor('chik', prompt, i),
+      }));
     }
 
     // Other words.
@@ -136,7 +183,12 @@ export function buildPlaygroundDeck(composition: PlaygroundComposition): Card[] 
       const count = perOther + (extra > 0 ? 1 : 0);
       if (extra > 0) extra--;
       for (let i = 0; i < count; i++) {
-        cards.push(new Card({ id: `${prompt}-${w}-${i}`, prompt, word: w }));
+        cards.push(new Card({
+          id: `${prompt}-${w}-${i}`,
+          prompt,
+          word: w,
+          count: countFor(w, prompt, i),
+        }));
       }
       remaining -= count;
       if (remaining < 0) break;

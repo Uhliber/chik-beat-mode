@@ -5,7 +5,7 @@ import { ref, watch } from 'vue';
  * Reusable bottom sheet for mobile. Slides up from the bottom; drag the handle (or anywhere
  * in the header bar) downward past a threshold to dismiss. Tap the backdrop to dismiss.
  *
- * Pure pointer events (works on mouse + touch). No external animation library — CSS
+ * Pure pointer events (works on mouse + touch). No external animation library, CSS
  * transitions on `transform: translateY(...)` carry the slide.
  */
 
@@ -86,7 +86,7 @@ watch(
         }"
         @click.stop
       >
-        <!-- Drag handle area — pointer events here trigger drag-to-dismiss. -->
+        <!-- Drag handle area, pointer events here trigger drag-to-dismiss. -->
         <div
           class="pt-3 pb-2 px-4 cursor-grab active:cursor-grabbing select-none"
           style="touch-action: none;"
@@ -113,7 +113,7 @@ watch(
           </div>
         </div>
 
-        <!-- Body — scrollable. -->
+        <!-- Body, scrollable. -->
         <div class="sheet-scroll flex-1 overflow-y-auto px-4 pb-4" style="touch-action: pan-y;">
           <slot />
         </div>
@@ -123,7 +123,7 @@ watch(
 </template>
 
 <style scoped>
-/* Themed scrollbar — coral-deep at low alpha against the cream sheet background, so it
+/* Themed scrollbar, coral-deep at low alpha against the cream sheet background, so it
  * blends with the rest of the settings UI instead of showing the browser's default
  * bright-white scrollbar. Covers Firefox + WebKit. */
 .sheet-scroll {

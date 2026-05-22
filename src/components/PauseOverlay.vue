@@ -6,7 +6,7 @@ defineEmits<{ (e: 'resume'): void }>();
   <!--
     Full-screen pause shield. Sits at z-25 so it's above the table and the desktop event
     log (z-20) but below the headers (z-30 / z-40), the mute button (z-30), and the solo
-    HUD (z-30) — that way back-to-menu, mute, and the visible timer all stay reachable
+    HUD (z-30), that way back-to-menu, mute, and the visible timer all stay reachable
     while the rest of the game is inert. Clicking anywhere on the shield emits 'resume'.
   -->
   <div

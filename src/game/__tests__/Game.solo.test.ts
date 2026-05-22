@@ -90,7 +90,7 @@ describe('Game (Solo)', () => {
     g.submitSoloAction({ type: 'slam', cardId: leftWally!.id, baseSide: 'left' });
     expect(g.soloActivePrompt).toBe('left');
 
-    // Pull in a RIGHT-typed Hindo and slam it on LEFT base. Card's own prompt is right —
+    // Pull in a RIGHT-typed Hindo and slam it on LEFT base. Card's own prompt is right -
     // but the gate is on the PREVIOUS prompt (left), so left base is required. Legal.
     let rightHindo = g.players[0].hand.find((c) => c.prompt === 'right' && c.word === 'hindo');
     if (!rightHindo) {
@@ -115,6 +115,57 @@ describe('Game (Solo)', () => {
     const r = g.submitSoloAction({ type: 'draw' });
     expect(r.type).toBe('penalty');
     if (r.type === 'penalty') expect(r.reason).toBe('unnecessary-draw');
+  });
+
+  it('emits a soloBonus when slamming a Chant Chik on the closing chik beat', async () => {
+    // Open the game with halo-halo, then fast-forward the chant to closing chik
+    // (index 6). Inject a Free Chant Chik into the hand on an allowed base and
+    // slam it; expect a soloBonus event of -1000ms alongside the soloSlam.
+    const { Card: CardCtor } = await import('../Card');
+    const halo = g.players[0].hand.find((c) => c.isHaloHalo)!;
+    g.submitSoloAction({ type: 'slam', cardId: halo.id, baseSide: 'left' });
+    while (g.chant.currentIndex !== 6) g.chant.advance();
+    const chantChik = new CardCtor({ id: 'cc', prompt: 'free', word: 'chik', isChantChik: true, count: 5 });
+    g.players[0].hand.push(chantChik);
+    events.length = 0;
+    // After Halo-Halo (Free prompt) any base is legal for the next slam.
+    const r = g.submitSoloAction({ type: 'slam', cardId: chantChik.id, baseSide: 'left' });
+    expect(r.type).toBe('success');
+    const bonus = events.find((e) => e.kind === 'soloBonus');
+    expect(bonus).toBeTruthy();
+    if (bonus?.kind === 'soloBonus') {
+      expect(bonus.reason).toBe('chant-chik-closing');
+      expect(bonus.bonusMs).toBe(1000);
+    }
+  });
+
+  it('does NOT emit a bonus for a non-Chant-Chik chik played on closing beat', async () => {
+    const { Card: CardCtor } = await import('../Card');
+    const halo = g.players[0].hand.find((c) => c.isHaloHalo)!;
+    g.submitSoloAction({ type: 'slam', cardId: halo.id, baseSide: 'left' });
+    while (g.chant.currentIndex !== 6) g.chant.advance();
+    const plainChik = new CardCtor({ id: 'plain', prompt: 'free', word: 'chik', count: 5 });
+    g.players[0].hand.push(plainChik);
+    events.length = 0;
+    g.submitSoloAction({ type: 'slam', cardId: plainChik.id, baseSide: 'left' });
+    expect(events.find((e) => e.kind === 'soloBonus')).toBeUndefined();
+  });
+
+  it('does NOT emit a bonus for a Chant Chik played on a non-closing chik beat', async () => {
+    const { Card: CardCtor } = await import('../Card');
+    const halo = g.players[0].hand.find((c) => c.isHaloHalo)!;
+    g.submitSoloAction({ type: 'slam', cardId: halo.id, baseSide: 'left' });
+    // After halo-halo the chant is at index 1 (wally). Don't advance, play a
+    // chant chik on a non-chik beat would be wrong-beat anyway, so we need to
+    // land on the OPENING chik (index 0, after looping). Advance through the
+    // chant once to land back on opening chik.
+    while (g.chant.currentIndex !== 0) g.chant.advance();
+    const chantChik = new CardCtor({ id: 'cc-open', prompt: 'free', word: 'chik', isChantChik: true, count: 5 });
+    g.players[0].hand.push(chantChik);
+    events.length = 0;
+    g.submitSoloAction({ type: 'slam', cardId: chantChik.id, baseSide: 'left' });
+    // Plays successfully (chik matches chik beat) but NO bonus, only closing chik fires it.
+    expect(events.find((e) => e.kind === 'soloBonus')).toBeUndefined();
   });
 
   it('allows draws when no beat-matching card is in hand', () => {

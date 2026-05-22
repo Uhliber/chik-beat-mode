@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * The tabletop the game is played on. A rounded rectangle tilted around the X axis via
- * CSS 3D perspective — from the viewer's angle it reads as a trapezium with soft
+ * CSS 3D perspective, from the viewer's angle it reads as a trapezium with soft
  * corners (top edge foreshortened, bottom edge wider). Sits at the back of the
  * GameTable's stacking context so seats, prompt stacks, wisp, etc. paint above it.
  */
@@ -27,7 +27,7 @@
 .table-top {
   width: min(82%, 760px);
   height: min(78%, 540px);
-  /** Cream tabletop pulled from the theme tokens — `--color-table` for the main fill,
+  /** Cream tabletop pulled from the theme tokens, `--color-table` for the main fill,
    *  `--color-table-edge` for the darker bottom edge, giving a soft far-edge falloff
    *  under the perspective tilt. */
   background:

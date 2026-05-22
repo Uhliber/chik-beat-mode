@@ -10,7 +10,7 @@
  *                      game listener resolves on the matching event → advance()
  *   else            → wait for Next click
  *
- * `useGame.handleEvent` is untouched — we subscribe a SECOND listener to Game.on. The
+ * `useGame.handleEvent` is untouched, we subscribe a SECOND listener to Game.on. The
  * engine supports multiple listeners (`private listeners: Listener[]`). Order is
  * deterministic: useGame subscribes first during initGame; tutorial subscribes after,
  * reads only.
@@ -18,7 +18,7 @@
  * Pause/resume contract: the SimulationController is paused on every step that has an
  * `expect`. It's resumed inside `demo()` blocks so scripted AI submissions actually
  * flow through the normal event machinery, then paused again on completion. The
- * SimulationController is never STOPPED here — that would tear down the game; we let
+ * SimulationController is never STOPPED here, that would tear down the game; we let
  * the parent route do the stop on unmount.
  */
 
@@ -26,7 +26,7 @@ import { computed, onUnmounted, ref, shallowRef, triggerRef } from 'vue';
 import type { Ref, ShallowRef } from 'vue';
 import type { Game } from '@/game/Game';
 import type { SimulationController } from '@/game/SimulationController';
-import type { GameEvent } from '@/game/types';
+import type { BaseSide, GameEvent } from '@/game/types';
 import { matchExpect, canonicalActionFor, SOLO_STEPS, VERSUS_STEPS } from '@/tutorial/steps';
 import type { TutorialStep, SpotlightTarget } from '@/tutorial/steps';
 import { saveTutorialCompletion, type TutorialMode } from '@/tutorial/persistence';
@@ -37,7 +37,7 @@ export interface UseTutorialOptions {
   mode: TutorialMode;
   game: ShallowRef<Game>;
   controller: ShallowRef<SimulationController>;
-  /** Reactive in-flight cards from useGame — controller waits for this to settle before
+  /** Reactive in-flight cards from useGame, controller waits for this to settle before
    *  advancing copy so the UI doesn't flicker. */
   pendingFlights: Ref<{ id: number }[]>;
 }
@@ -57,7 +57,7 @@ export function useTutorial(opts: UseTutorialOptions) {
   let awaitResolver: ((e: GameEvent) => void) | null = null;
   let hintTimer: number | null = null;
 
-  // Tutorial mode forces strict prompts OFF on the engine — strict mode lets the player
+  // Tutorial mode forces strict prompts OFF on the engine, strict mode lets the player
   // attempt illegal plays (with a penalty), which would let them stray off the tutorial's
   // expected path. The user's saved preference is unaffected and re-applies on the next
   // round outside the tutorial. We re-apply at the start of every step in case useGame's
@@ -95,6 +95,31 @@ export function useTutorial(opts: UseTutorialOptions) {
         return `[data-tutorial-target="deck"], [data-base-id="deck"]`;
       case 'base':
         return `[data-tutorial-target="base-${target.side}"], [data-base-id="${target.side}"]`;
+      case 'active-solo-base': {
+        // Read live from engine state so the spotlight follows the player's
+        // choice (e.g. step 3 highlights whichever base the player just slammed
+        // Halo-Halo on). Falls back to Left if no active prompt is set yet -
+        // shouldn't happen in practice since this kind is only used by steps
+        // that follow an opener.
+        const side = (opts.game.value as unknown as { soloActiveBaseSide: BaseSide | null }).soloActiveBaseSide ?? 'left';
+        return `[data-tutorial-target="base-${side}"], [data-base-id="${side}"]`;
+      }
+      case 'legal-solo-base': {
+        // Where the NEXT slam must land. Driven by the active prompt's
+        // DIRECTION, not where the active card happens to sit (those can
+        // disagree, e.g. Right-prompt card slammed on Left base via a Free
+        // opener means the next slam must still go to Right). For Free /
+        // null prompts, fall back to the active base.
+        const internals = opts.game.value as unknown as {
+          soloActivePrompt: import('@/game/types').CardPrompt | null;
+          soloActiveBaseSide: BaseSide | null;
+        };
+        const side: BaseSide =
+          internals.soloActivePrompt === 'left' ? 'left' :
+          internals.soloActivePrompt === 'right' ? 'right' :
+          internals.soloActiveBaseSide ?? 'left';
+        return `[data-tutorial-target="base-${side}"], [data-base-id="${side}"]`;
+      }
       case 'card-in-hand': {
         const human = opts.game.value.players[0];
         if (!human) return null;
@@ -113,7 +138,7 @@ export function useTutorial(opts: UseTutorialOptions) {
 
   /** Where the speech card should sit on screen. Two-pass rule:
    *   1. Any step that requires the player to ACT (has an expect matcher) needs the
-   *      human's hand visible — the hand sits at the bottom, so put the card at the
+   *      human's hand visible, the hand sits at the bottom, so put the card at the
    *      top. This covers playCard / slamBase / draw / snapPlay.
    *   2. For pure-narrative / demo steps, position the card AWAY from the spotlight
    *      so the highlighted element stays visible.
@@ -123,7 +148,7 @@ export function useTutorial(opts: UseTutorialOptions) {
     const step = currentStep.value;
     if (!step) return 'bottom';
     if (step.expect) {
-      // The user is about to interact with their hand — keep the hand area clear.
+      // The user is about to interact with their hand, keep the hand area clear.
       return 'top';
     }
     const target = step.spotlight ?? null;
@@ -135,6 +160,8 @@ export function useTutorial(opts: UseTutorialOptions) {
         return target.seatIndex === 0 ? 'top' : 'bottom';
       case 'deck':
       case 'base':
+      case 'active-solo-base':
+      case 'legal-solo-base':
         return 'bottom';
       case 'selector':
         return 'bottom';
@@ -203,7 +230,7 @@ export function useTutorial(opts: UseTutorialOptions) {
     // resolved between setup and now (or any other code path turned it on).
     forceStrictPromptsOff();
 
-    // Pause the simulation controller while we set up and run scripted demo moves —
+    // Pause the simulation controller while we set up and run scripted demo moves -
     // we don't want it scheduling AI ticks that conflict with the script. The
     // controller will be started again before awaiting-input so useGame's submit gate
     // (which requires status === 'running') accepts the human's play.
@@ -230,7 +257,7 @@ export function useTutorial(opts: UseTutorialOptions) {
     }
 
     if (step.expect) {
-      // Awaiting human input — start the controller so useGame's status === 'running'
+      // Awaiting human input, start the controller so useGame's status === 'running'
       // gate passes for the human's submit calls. The controller's tick() is a no-op
       // when the active seat is human (Game.players[activeSeat].isAI === false), so
       // it doesn't trigger any auto-play during the human's turn.
@@ -241,7 +268,7 @@ export function useTutorial(opts: UseTutorialOptions) {
       }
       startHintTimer();
     } else {
-      // Narrative step — keep the controller paused (likely already is, from the
+      // Narrative step, keep the controller paused (likely already is, from the
       // demo's pause). The previous step's last play queued a scheduleNext() that
       // would otherwise have the AI auto-play through the rest of the round while
       // the user reads. PauseOverlay is suppressed in tutorial mode (PlayView gates

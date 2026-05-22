@@ -3,10 +3,13 @@ import { computed, ref, watch } from 'vue';
 import CardFan from './CardFan.vue';
 import BasePile from './BasePile.vue';
 import SpeechBubble from './SpeechBubble.vue';
+import PromptPopover from './PromptPopover.vue';
+import ChantPips from './ChantPips.vue';
 import { useResponsive } from '@/composables/useResponsive';
 import type { Player } from '@/game/Player';
 import type { Card } from '@/game/Card';
 import type { ChantWord } from '@/game/types';
+import type { PromptInfoSize } from '@/composables/userPreferences';
 
 const { width: viewportW, isMobile } = useResponsive();
 
@@ -32,7 +35,7 @@ const props = defineProps<{
   shouted?: ChantWord | null;
   /** Monotonic counter that re-triggers the bubble even if the word didn't change. */
   shoutKey?: number;
-  /** Card IDs that just landed in this player's hand — CardFan plays a slide-in for each. */
+  /** Card IDs that just landed in this player's hand, CardFan plays a slide-in for each. */
   freshCardIds?: Set<string>;
   /** Display-size preference for the top prompt card. 'medium' is the historical default. */
   promptSize?: 'small' | 'medium' | 'large' | 'xl';
@@ -46,6 +49,29 @@ const props = defineProps<{
    *  + glow to tell the player "this is what starts the game". The parent decides when
    *  to flip this on (pre-open phases of Solo/Versus); the seat just decorates. */
   pulseHaloHalo?: boolean;
+  /** Beats this player owns (Versus only). Rendered as a row of word-color dots next
+   *  to the player pill so the table can see who's claimed what. */
+  ownedBeats?: ChantWord[];
+  /** When set, this seat is currently the one being recited to during a Chant Trigger.
+   *  Drives the PromptPopover's recital glow. */
+  chantRecitalActive?: boolean;
+  /** Number of pips already lit at this seat (recital count units already spoken here). */
+  chantPipsLit?: number;
+  /** Global recital step at which THIS seat's run began, lets ChantPips derive which
+   *  beat word each pip represents (chik / wally / hindo / …) for color tinting. */
+  chantPipsStartStep?: number;
+  /** True while ANY Chant Trigger is in flight (so pips fade in/out cleanly). */
+  chantTriggerInFlight?: boolean;
+  /** True while it's this seat's turn to claim a Beat Card in the setup phase. */
+  isBeatPicker?: boolean;
+  /** Display size for the floating prompt+count popover beside the active prompt. */
+  promptInfoSize?: PromptInfoSize;
+  /** Degrees the parent seat container is rotated (desktop radial layout rotates
+   *  opponent seats so their cards face the table). Set to 0 for the human seat and
+   *  for layouts that don't rotate (mobile semicircle). Used to counter-rotate the
+   *  popover + pip overlays so they stay UPRIGHT for the human player to read,
+   *  regardless of where the opponent is sitting. */
+  seatRotation?: number;
 }>();
 
 const emit = defineEmits<{
@@ -56,7 +82,7 @@ const promptStack = computed<Card[]>(() => props.player.promptStack);
 
 /**
  * The HUMAN player's own prompt pile renders ~30% larger than the opponents' piles so
- * they can always read their current prompt at a glance — independent of whose turn it
+ * they can always read their current prompt at a glance, independent of whose turn it
  * is right now. The "active seat" highlight (pill colour + wisp) handles the "whose
  * turn" question; this size bump answers "what am I being told to do".
  */
@@ -65,7 +91,7 @@ const humanBumpedWidth = computed(() =>
   props.isHumanSeat ? Math.round(basePromptCardWidth.value * 1.3) : basePromptCardWidth.value,
 );
 
-/** promptSize is a USER preference that only applies to the HUMAN's own pile — AI
+/** promptSize is a USER preference that only applies to the HUMAN's own pile, AI
  *  opponents always render at their stock size so the player can't accidentally make the
  *  opposing tableau dwarf their own. Maps Small/Medium/Large/XL onto a uniform scale
  *  that's applied to every card in the human's pile (top + stack); XL additionally
@@ -87,7 +113,7 @@ const topCardCropTop = computed(() => effectivePromptSize.value === 'xl');
  *  region so the layout reclaims that vertical space. The faded slice spans 50% → 85%
  *  of the card's natural height, so ~35% of (cardWidth × 1.45) is visually empty and
  *  free to overlap. Only applies when there's an actual prompt visible above the hand
- *  (either Versus's real promptStack or the Solo clone) — otherwise we'd pull the hand
+ *  (either Versus's real promptStack or the Solo clone), otherwise we'd pull the hand
  *  up into the empty space below the pill. */
 const hasPromptAboveHand = computed(
   () => promptStack.value.length > 0 || (props.isHumanSeat && !!props.extraPromptCard),
@@ -112,13 +138,38 @@ const haloHaloIds = computed<Set<string>>(() => {
 });
 const cardPulse = (cardId: string): boolean => haloHaloIds.value.has(cardId);
 
+/** CSS transform that counter-rotates an overlay back to the human's reading frame.
+ *  Empty string = no counter-rotation needed (no parent rotation, or human seat). */
+const counterRotate = computed(() => {
+  const r = props.seatRotation ?? 0;
+  return r === 0 ? '' : `rotate(${-r}deg)`;
+});
+
+/** Compose the count-spotlight transform: center on the seat, counter-rotate so the
+ *  badge reads upright for the player, then scale up when active or hide-small when
+ *  not. Single computed so the CSS transition has a continuous transform shape. */
+const spotlightTransform = computed(() => {
+  const scale = props.chantTriggerInFlight ? 1.4 : 0.5;
+  const rotate = counterRotate.value;
+  return `translate(-50%, -50%) ${rotate} scale(${scale})`.trim();
+});
+
 // SpeechBubble visibility: track the latest shoutKey, show for ~800ms then hide.
+//
+// CRITICAL: only fire the bubble when shoutKey STRICTLY INCREASES. The parent's
+// `effectiveShout` merges recital shouts (high keys, fast during the chant) with
+// play shouts (older, lower keys). When the recital ends and recitalShouts clears,
+// the merged value falls back to the stale play shout, which has a SMALLER key
+// than the most recent recital step. Without the increase guard, every seat that
+// participated in the recital would re-flash its old play bubble at cleanup time,
+// producing a synchronized "everyone shouts" flash with no semantic meaning.
 const showBubble = ref(false);
 let bubbleTimer: number | null = null;
 watch(
   () => props.shoutKey,
-  (k) => {
+  (k, oldK) => {
     if (!props.shouted || !k) return;
+    if (oldK !== undefined && oldK !== null && k <= oldK) return;
     showBubble.value = true;
     if (bubbleTimer !== null) clearTimeout(bubbleTimer);
     bubbleTimer = window.setTimeout(() => { showBubble.value = false; }, 800);
@@ -128,9 +179,16 @@ watch(
 
 <template>
   <div class="relative flex flex-col items-center gap-1">
-    <!-- Speech bubble — pops above the player when they shout a chant word as they play. -->
+    <!-- Speech bubble, pops above the player when they shout a chant word as they
+         play. During a chant trigger this sits BEHIND the dim wash (not spotlit) so
+         the bright count spotlights stay the focal element; the bubble still pops
+         per recital step but reads as ambient flavor. -->
     <div class="absolute -top-8 left-1/2 -translate-x-1/2 z-30 pointer-events-none">
-      <SpeechBubble :word="shouted ?? null" :visible="showBubble" />
+      <SpeechBubble
+        :word="shouted ?? null"
+        :visible="showBubble"
+        :seed="(shoutKey ?? 0) * 131 + player.seatIndex"
+      />
     </div>
 
     <!-- Compact opponents (mobile): hand fanned above pill. -->
@@ -176,25 +234,159 @@ watch(
         v-if="isHumanSeat"
         class="ml-1 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-white/20"
       >YOU</span>
+      <!-- Compact-mobile AI prompt info: inline prompt icon + count beside the
+           pill. On mobile the floating popover anchored beside the AI's prompt
+           card gets too small / hidden behind card art, so we surface the same
+           info as a stable inline pair inside the pill. Hidden when user pref
+           is 'off' or when there's no active prompt yet. Desktop AI seats still
+           use the floating popover via `prompt-popover-anchor` below. -->
+      <template
+        v-if="compact && !isHumanSeat && promptStack.length > 0 && (promptInfoSize ?? 'medium') !== 'off'"
+      >
+        <span class="pill-popover-pair">
+          <PromptPopover
+            :card="promptStack[promptStack.length - 1]"
+            size="small"
+            mode="icon"
+            :recital-active="chantRecitalActive ?? false"
+          />
+          <PromptPopover
+            v-show="!chantTriggerInFlight"
+            :card="promptStack[promptStack.length - 1]"
+            size="small"
+            mode="count"
+            :recital-active="chantRecitalActive ?? false"
+          />
+        </span>
+      </template>
+    </div>
+
+    <!-- Beat-owner dots row, sits between pill and prompt stack. Shows who owns which
+         chant beat. The setup phase highlights the dot ring of whoever's picking right
+         now (handled by the `is-picker` outer ring). -->
+    <div
+      v-if="ownedBeats && ownedBeats.length > 0"
+      class="beat-owner-dots mt-1"
+      :class="{ 'is-picker': isBeatPicker }"
+      aria-hidden="true"
+    >
+      <span
+        v-for="b in ownedBeats"
+        :key="b"
+        :class="`beat-dot word-${b}`"
+        :title="`Beat: ${b}`"
+      />
+    </div>
+
+    <!-- Recital count spotlight, when the chant trigger fires, the count badge
+         scales up + centers on the seat so the player sees how much "value" each
+         seat contributes to the chant. Counter-rotated so it reads upright.
+         Rendered for ANY seat with an active prompt, count=0 seats still spotlight
+         their "0" badge so the player sees the seat contributes nothing this round
+         (instead of just disappearing from the dim mask). Opacity + scale transition
+         handles entry/exit. ChantPips lives INSIDE so they orbit the icon and share
+         the same spotlight hole. -->
+    <div
+      v-if="promptStack.length > 0"
+      class="count-spotlight"
+      :class="{ 'is-active': chantTriggerInFlight }"
+      :style="{ transform: spotlightTransform }"
+      :data-chant-spotlight="player.seatIndex"
+    >
+      <PromptPopover
+        :card="promptStack[promptStack.length - 1]"
+        size="large"
+        mode="count"
+        :recital-active="chantRecitalActive ?? false"
+      />
+      <ChantPips
+        :count="promptStack[promptStack.length - 1].count"
+        :lit="chantPipsLit ?? 0"
+        :active="chantTriggerInFlight ?? false"
+        :start-step="chantPipsStartStep ?? 0"
+        orbit
+      />
     </div>
 
     <!-- Prompt stack: cards face-up sitting in front of this player. The top one is the
          active prompt; older cards stack underneath but are inert. The human's own pile
          is permanently ~30% larger than the opponents' piles so they can always read
-         their current prompt at a glance — independent of whose turn it is. -->
+         their current prompt at a glance, independent of whose turn it is.
+
+         Layout splits by seat ownership:
+         - HUMAN: prompt-icon popover LEFT of the card, count-icon popover RIGHT. Gives
+           the player two large, clearly separated readouts framing their own prompt.
+         - OPPONENTS: a single combined popover anchored to the right of the card,
+           kept upright (never rotated to the AI's table position) so the player can
+           read it without tilting their head. -->
     <div
       v-if="promptStack.length > 0"
-      class="mt-1 prompt-pile-wrapper"
+      class="mt-1 prompt-pile-wrapper relative"
       :class="{ 'is-human': isHumanSeat }"
+      :data-tutorial-target="`prompt-${player.seatIndex}`"
     >
-      <BasePile
-        :cards="promptStack"
-        :card-width="promptCardWidth"
-        :top-card-crop-top="topCardCropTop"
-        :hidden-ids="hiddenIds"
-        :base-id="`seat-${player.seatIndex}`"
-        :highlight-card-id="lastPlayedCardId"
-      />
+      <div v-if="isHumanSeat" class="human-prompt-row">
+        <PromptPopover
+          :card="promptStack[promptStack.length - 1]"
+          :size="promptInfoSize ?? 'medium'"
+          mode="icon"
+          :recital-active="chantRecitalActive ?? false"
+          :data-tutorial-target="`prompt-info-${player.seatIndex}`"
+        />
+        <BasePile
+          :cards="promptStack"
+          :card-width="promptCardWidth"
+          :top-card-crop-top="topCardCropTop"
+          :hidden-ids="hiddenIds"
+          :base-id="`seat-${player.seatIndex}`"
+          :highlight-card-id="lastPlayedCardId"
+        />
+        <!-- The inline count badge hides during the chant trigger, the spotlight
+             count below takes over so attention focuses on the per-seat count. -->
+        <PromptPopover
+          v-show="!chantTriggerInFlight"
+          :card="promptStack[promptStack.length - 1]"
+          :size="promptInfoSize ?? 'medium'"
+          mode="count"
+          :recital-active="chantRecitalActive ?? false"
+          :data-tutorial-target="`prompt-count-${player.seatIndex}`"
+        />
+      </div>
+      <template v-else>
+        <BasePile
+          :cards="promptStack"
+          :card-width="promptCardWidth"
+          :top-card-crop-top="topCardCropTop"
+          :hidden-ids="hiddenIds"
+          :base-id="`seat-${player.seatIndex}`"
+          :highlight-card-id="lastPlayedCardId"
+        />
+        <!-- AI popovers: two circular badges side-by-side, anchored beside the card.
+             Counter-rotated as a group so the prompt-then-count reading order stays
+             intact regardless of the seat's table-facing rotation. The count badge
+             hides during chant trigger, the spotlight below takes over.
+             Hidden on compact (mobile) layouts, the inline pair inside the player
+             pill takes over so the icons stay visible regardless of card art clipping. -->
+        <div
+          v-if="!compact"
+          class="prompt-popover-anchor ai-pair"
+          :style="counterRotate ? { transform: `translateY(-50%) ${counterRotate}` } : undefined"
+        >
+          <PromptPopover
+            :card="promptStack[promptStack.length - 1]"
+            :size="promptInfoSize ?? 'medium'"
+            mode="icon"
+            :recital-active="chantRecitalActive ?? false"
+          />
+          <PromptPopover
+            v-show="!chantTriggerInFlight"
+            :card="promptStack[promptStack.length - 1]"
+            :size="promptInfoSize ?? 'medium'"
+            mode="count"
+            :recital-active="chantRecitalActive ?? false"
+          />
+        </div>
+      </template>
     </div>
 
     <!-- Solo clone: the active prompt mirrored in front of the human player so they can
@@ -260,7 +452,7 @@ watch(
 <style scoped>
 /**
  * Smooth the size change on the prompt pile when the active seat rotates. Without this
- * the pile snaps to its new size — fine but jarring. Easing the wrapper's transform-origin
+ * the pile snaps to its new size, fine but jarring. Easing the wrapper's transform-origin
  * with a soft scale also adds a hint of "pop" on the seat that just gained focus.
  */
 .prompt-pile-wrapper {
@@ -280,5 +472,128 @@ watch(
 }
 .player-pill {
   z-index: 20;
+}
+/* Inline AI prompt-info pair shown inside the compact (mobile) player pill.
+ * Tight gap, slight negative left-margin so it visually belongs to the pill
+ * group without forcing the pill's own gap (currently 8px) between the hand
+ * count and these badges. The PromptPopover circles already carry their own
+ * background + shadow, so we don't need to style the wrapper itself, just
+ * give it a flex shell. */
+.pill-popover-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: -2px;
+}
+
+/* Beat-owner dots, one per claimed beat. The setup-phase highlight pulses the row
+ * when this seat is the current picker. */
+.beat-owner-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border-radius: 9999px;
+  background: rgba(0, 0, 0, 0.18);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+.beat-owner-dots.is-picker {
+  animation: beat-picker-pulse 1.2s ease-in-out infinite;
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.25),
+    0 0 0 2px rgba(252, 246, 230, 0.92);
+}
+@keyframes beat-picker-pulse {
+  0%, 100% { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25), 0 0 0 2px rgba(252, 246, 230, 0.92); }
+  50%      { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25), 0 0 0 5px rgba(252, 246, 230, 0.5); }
+}
+.beat-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 9999px;
+  background: var(--word-color, var(--color-coral));
+  border: 1px solid rgba(252, 246, 230, 0.9);
+}
+
+/* Anchor that floats the prompt popover to the right side of the prompt stack. The
+ * absolute positioning + translateY centres it vertically on the top card. */
+.prompt-popover-anchor {
+  position: absolute;
+  left: calc(100% + 6px);
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  z-index: 25;
+}
+
+/* AI variant: two circular popovers side-by-side. Flex centers them vertically on
+ * the prompt card; small gap keeps them visually distinct without crowding. */
+.prompt-popover-anchor.ai-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Recital count spotlight, large count badge anchored at the seat group's center.
+ * The transform is computed inline so we can interpolate between "small + hidden"
+ * (chant inactive) and "large + centered" (chant active) with a single CSS shape.
+ * The ChantTriggerOverlay's SVG mask punches a hole around this element so it pops
+ * through the dim backdrop while keeping its true chant-word color. Hidden by
+ * default via opacity:0 so it doesn't overlap normal UI.
+ *
+ * Layout: both the count popover and the orbiting ChantPips live inside this wrapper
+ * and are absolutely-positioned at its center, so they SHARE the same origin (the
+ * pips orbit the icon). The wrapper itself is a 1x1 anchor point, its bounding rect
+ * naturally inflates to enclose both children, so circleHole() in the overlay reads
+ * a radius wide enough to cover both. */
+.count-spotlight {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  /* Explicit box sized to enclose the pip orbit (radius 36 + pip half-width 5 ≈ 41
+   * pre-scale) plus padding. Gives the spotlight a stable bounding rect that
+   * circleHole() in the overlay reads to derive the punched-hole radius, both
+   * badge AND pips fit inside one circular hole. Smaller than before to reduce
+   * spotlight overlap on tight desktop layouts. */
+  width: 100px;
+  height: 100px;
+  z-index: 40;
+  pointer-events: none;
+  opacity: 0;
+  filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.5));
+  transform-origin: center center;
+  transition: transform 380ms cubic-bezier(.2, .8, .2, 1), opacity 280ms ease;
+}
+.count-spotlight.is-active {
+  opacity: 1;
+}
+/* Center the count popover at the wrapper's centre. The wrapper has explicit
+ * dimensions (140x140) so children at 50%/50% land at the visual middle. */
+.count-spotlight :deep(.prompt-popover) {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+/* Centre the pip orbit ring at the same anchor. Pips themselves are absolutely
+ * positioned inside .chant-pips via translate(arcX, arcY), so anchoring .chant-pips
+ * at the wrapper's centre means the pips orbit exactly around the icon. */
+.count-spotlight :deep(.chant-pips) {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+}
+
+/* Human's three-piece layout: [prompt-icon] [prompt-card] [count-icon]. Flex centers
+ * all three vertically; the popovers sit on either side of the BasePile. Pointer
+ * events stay disabled so the popovers don't intercept hand-drag gestures. */
+.human-prompt-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.human-prompt-row > :deep(.prompt-popover) {
+  pointer-events: none;
 }
 </style>

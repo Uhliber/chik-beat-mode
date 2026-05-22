@@ -30,7 +30,7 @@ describe('loadTutorialCompletion', () => {
 
   it('returns true for whichever flags are set', async () => {
     saveTutorialCompletion('solo');
-    // Saves are fire-and-forget — give the microtask a beat to land.
+    // Saves are fire-and-forget, give the microtask a beat to land.
     await Promise.resolve();
     const c = await loadTutorialCompletion();
     expect(c.solo).toBe(true);

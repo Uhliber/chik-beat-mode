@@ -1,11 +1,13 @@
 import { Card } from './Card';
 import { Player } from './Player';
-import { Chant } from './Chant';
+import { Chant, BEAT_ORDER } from './Chant';
 import { buildSoloDeck, buildVersusDeck, buildPlaygroundDeck, shuffle } from './Deck';
 import { modeCaps } from './modes';
+import { CHANT_ORDER } from './types';
 import type {
   BaseSide,
   CardPrompt,
+  ChantPowerGift,
   ChantWord,
   GameEvent,
   GameMode,
@@ -23,10 +25,13 @@ import type {
 type Listener = (e: GameEvent) => void;
 
 const SOLO_PENALTY_MS = 2000;
+/** Time credit for slamming a Chant Chik card on the closing-chik beat (chant index
+ *  6 before advance). One per qualifying slam; UI shows a green -1s bubble. */
+const SOLO_CHANT_CHIK_CLOSING_BONUS_MS = 1000;
 
 /** Which Solo bases are legal NEXT, given the prompt of the most-recently-slammed card.
  *  Solo's direction gate flipped in v1.1: it's now the PREVIOUS card's prompt that
- *  decides where the NEXT card must land — mirroring Versus where the recipient's top
+ *  decides where the NEXT card must land, mirroring Versus where the recipient's top
  *  prompt dictates how they can play. `null` (pre-open) means either base is fair game. */
 function allowedBasesAfter(prompt: CardPrompt | null): BaseSide[] {
   if (prompt === 'left') return ['left'];
@@ -51,9 +56,9 @@ export class Game {
 
   /** Cards waiting to be drawn. Shared by both modes. */
   drawPile: Card[] = [];
-  /** Solo only — Left and Right discard stacks. */
+  /** Solo only, Left and Right discard stacks. */
   soloBases: { left: Card[]; right: Card[] } = { left: [], right: [] };
-  /** Solo only — the most-recently-slammed card. Its PROMPT (left/right/free) dictates
+  /** Solo only, the most-recently-slammed card. Its PROMPT (left/right/free) dictates
    *  which base the NEXT card may be slammed on (left → left base, right → right base,
    *  free → either). Null before the Halo-Halo opener lands, in which case Halo-Halo may
    *  go on either base. The UI uses this id to highlight + enlarge the active prompt. */
@@ -81,7 +86,7 @@ export class Game {
    * (wrong beat, wrong direction, stopped). Instead the play is rejected as a "strict
    * penalty": the card stays in hand, the player is forced to draw 1 (respecting Fetch),
    * and their turn ends. Lets players experiment with prompts and learn through
-   * feedback instead of being blocked by the UI. Default OFF — the canonical rulebook
+   * feedback instead of being blocked by the UI. Default OFF, the canonical rulebook
    * behaviour. Setter persists via UI/composable.
    */
   strictPromptsEnabled = false;
@@ -94,6 +99,43 @@ export class Game {
   /** Records who played each Fetch card so we know whose hand to drain when its recipient
    *  is forced to draw. Cleared on setup. */
   private fetchOwners: Map<string, number> = new Map();
+
+  // ----- v1.2 Beat ownership + Chant Trigger -----
+  /**
+   * Versus setup phase. After dealing, we enter 'beat-selection' and the Halo-Halo
+   * holder picks first; selection then advances clockwise. Once every required beat is
+   * claimed, we flip to 'play' and the Halo-Halo holder takes the first turn.
+   */
+  setupPhase: 'beat-selection' | 'play' = 'play';
+  /** Map of chant word → seat index that owns the Beat Card for that word. -1 = unclaimed. */
+  beatOwners: Map<ChantWord, number> = new Map();
+  /** Per-seat list of beats they've claimed (only relevant for the 3-player case, where
+   *  each player picks 2 beats). Used by UI to render beat-owner badges next to seats. */
+  private beatsBySeat: Map<number, ChantWord[]> = new Map();
+  /** Ordered list of seat indices that still need to pick a Beat Card, in pick order
+   *  (clockwise from the Halo-Halo holder). Front of list is whose turn it is to pick;
+   *  empty = setup complete. */
+  private beatPickOrder: number[] = [];
+  /**
+   * Pending Chant Power state. Set when a Chant Chik closes a sequence AND the landed
+   * beat is owned by a player. Engine pauses turn rotation until the winner submits a
+   * `chant-power-resolve` action choosing up to 3 cards to give away. Cleared on resolve.
+   */
+  pendingChantPower: { winnerSeatIndex: number; receiverSeatIndex: number; chantChikId: string } | null = null;
+  /** Pre-computed recital steps for the most recent Chant Trigger. The view layer reads
+   *  these to animate the SpeechBubble hops one beat per count. Null when no trigger is
+   *  in flight. */
+  pendingChantRecital: { seatIndex: number; beatWord: ChantWord }[] | null = null;
+  /**
+   * True while a Chant Trigger is between "started" and "UI cleanup tail finished".
+   * Set in resolveChantTrigger; cleared by the view layer via endChantTriggerWindow()
+   * after the recital animation + landed-banner tail have played out. SimulationController
+   * reads this to PAUSE AI actions while the trigger is on screen, necessary for the
+   * no-winner branch where the engine resumes setActiveSeat immediately but the UI is
+   * still mid-recital. Without this flag, AI plays would fire over the chant animation,
+   * dragging in shout bubbles and stealing focus from the chant landed-beat reveal.
+   */
+  chantTriggerCoolingDown = false;
 
   private listeners: Listener[] = [];
   private rng: () => number;
@@ -123,7 +165,7 @@ export class Game {
     this.players.push(new Player('p1', 0));
     this.players[0].isAI = false;
 
-    // Set aside Halo-Halo so it's guaranteed to be in the opening hand — otherwise the
+    // Set aside Halo-Halo so it's guaranteed to be in the opening hand, otherwise the
     // player could be forced to draw blindly until they fish the opener out of the deck,
     // which is fiddly and not what Solo is meant to test.
     const fullDeck = buildSoloDeck();
@@ -194,16 +236,19 @@ export class Game {
       p.hand.some((c) => c.isHaloHalo),
     )?.id ?? null;
 
-    // The Halo-Halo holder takes the first turn.
+    // The Halo-Halo holder takes the first turn, but not until beat selection is done.
     const haloSeat = this.players.findIndex((p) => p.id === this.haloHaloOwnerId);
     this.activeSeatIndex = haloSeat >= 0 ? haloSeat : 0;
 
+    this.initBeatSelection(haloSeat, playerCount);
+
     this.emit({ kind: 'setup', mode: 'versus', playerCount });
     this.emit({ kind: 'dealt' });
+    this.emit({ kind: 'versusBeatPickerChanged', seatIndex: this.beatPickOrder[0] ?? null });
   }
 
   /**
-   * Playground setup — Versus with sandbox knobs:
+   * Playground setup, Versus with sandbox knobs:
    *  - custom deck composition (per-prompt totals, Chik-2× word ratio preserved)
    *  - variable starting hand size (3..14, vs Versus's fixed 7)
    *
@@ -211,7 +256,7 @@ export class Game {
    * structure mirrors setupVersus exactly: set aside Halo-Halo + (N-1) Chiks for the
    * guaranteed-Chik deal, draw (handSize-1) random remainder cards, then 1 from the
    * Chik pool. Rules engine (chain, prompts, Stop/Snap/Fetch, etc.) is identical to
-   * Versus from here on — only this setup function and the deck composition differ.
+   * Versus from here on, only this setup function and the deck composition differ.
    */
   setupPlayground(opts: PlaygroundSetup): void {
     const { playerCount, handSize, composition } = opts;
@@ -275,8 +320,37 @@ export class Game {
     const haloSeat = this.players.findIndex((p) => p.id === this.haloHaloOwnerId);
     this.activeSeatIndex = haloSeat >= 0 ? haloSeat : 0;
 
+    this.initBeatSelection(haloSeat, playerCount);
+
     this.emit({ kind: 'setup', mode: 'playground', playerCount });
     this.emit({ kind: 'dealt' });
+    this.emit({ kind: 'versusBeatPickerChanged', seatIndex: this.beatPickOrder[0] ?? null });
+  }
+
+  /**
+   * Per-rulebook setup of the beat-selection phase. Beats per player: 3p=2 each,
+   * 4p=1 each (2 unclaimed), 5p=1 each (1 unclaimed), 6p=1 each. Pick order is
+   * clockwise from the Halo-Halo holder; in the 3-player case the loop runs twice so
+   * the Halo-Halo holder also picks 4th.
+   *
+   * Public so the tutorial can reset to beat-selection phase mid-game (after
+   * re-seeding hands so the human holds Halo-Halo). Not for normal gameplay use.
+   */
+  initBeatSelection(haloSeat: number, playerCount: number): void {
+    this.setupPhase = 'beat-selection';
+    this.beatOwners.clear();
+    this.beatsBySeat.clear();
+    for (const w of CHANT_ORDER) this.beatOwners.set(w, -1);
+    for (let i = 0; i < playerCount; i++) this.beatsBySeat.set(i, []);
+
+    const beatsPerPlayer = playerCount === 3 ? 2 : 1;
+    const order: number[] = [];
+    for (let round = 0; round < beatsPerPlayer; round++) {
+      for (let i = 0; i < playerCount; i++) {
+        order.push((haloSeat + i + playerCount) % playerCount);
+      }
+    }
+    this.beatPickOrder = order;
   }
 
   private resetState(): void {
@@ -295,6 +369,13 @@ export class Game {
     this.stopConverted = false;
     this.fetchOwners.clear();
     this.pendingSnapDraw = null;
+    this.setupPhase = 'play';
+    this.beatOwners.clear();
+    this.beatsBySeat.clear();
+    this.beatPickOrder = [];
+    this.pendingChantPower = null;
+    this.pendingChantRecital = null;
+    this.chantTriggerCoolingDown = false;
   }
 
   setStrictPromptsEnabled(on: boolean): void {
@@ -317,7 +398,7 @@ export class Game {
       if (!card) return { type: 'penalty', reason: 'wrong-beat', cardId: action.cardId, penaltyMs: 0 };
 
       // Opening gate: only Halo-Halo Chik may open the game. Halo-Halo's prompt is Free,
-      // so allowedBasesAfter(null) = either base — the opener may land on Left or Right.
+      // so allowedBasesAfter(null) = either base, the opener may land on Left or Right.
       if (!this.opened) {
         if (!card.isHaloHalo) {
           return this.emitSoloPenalty('wrong-beat', card.id, action.baseSide);
@@ -337,7 +418,7 @@ export class Game {
       if (!card.matchesBeat(beat)) {
         return this.emitSoloPenalty('wrong-beat', card.id, action.baseSide);
       }
-      // Base must match the PREVIOUS prompt's direction — Left → only Left base, Right →
+      // Base must match the PREVIOUS prompt's direction, Left → only Left base, Right →
       // only Right base, Free → either. The card's OWN prompt is unconstrained; it
       // becomes the new active prompt for the next turn.
       if (!allowedBasesAfter(this.soloActivePrompt).includes(action.baseSide)) {
@@ -347,6 +428,22 @@ export class Game {
       // Legal slam.
       this.applySoloSlam(card, action.baseSide);
       this.emit({ kind: 'soloSlam', cardId: card.id, baseSide: action.baseSide, cardWord: card.word, cardPrompt: card.prompt });
+
+      // Chant Chik closing bonus, if this slam is a Chant Chik AND it lands on
+      // the closing-chik beat (chant.currentIndex === 6 BEFORE the upcoming
+      // advance), the player earns a -1s time credit. Solo mode doesn't actually
+      // resolve a Chant Trigger (no opponents to walk), so this is a pure timing
+      // bonus that rewards the player for setting up + cashing the chant chik.
+      if (card.isChantChik && this.chant.currentIndex === 6) {
+        this.emit({
+          kind: 'soloBonus',
+          reason: 'chant-chik-closing',
+          bonusMs: SOLO_CHANT_CHIK_CLOSING_BONUS_MS,
+          cardId: card.id,
+          baseSide: action.baseSide,
+        });
+      }
+
       this.advanceChant();
 
       // Win check.
@@ -359,7 +456,7 @@ export class Game {
 
     // action.type === 'draw'
     if (this.drawPile.length === 0) {
-      // Drawing from an empty pile is harmless — just a no-op. Don't penalize.
+      // Drawing from an empty pile is harmless, just a no-op. Don't penalize.
       return { type: 'drew', cardId: null };
     }
     // Unnecessary-draw penalty: only AFTER the game has opened, and only if the player
@@ -383,7 +480,7 @@ export class Game {
       this.emit({ kind: 'soloDraw', cardId: drawn.id });
     }
 
-    // Win check after draw (in case this was the last possible action — empty pile + empty hand).
+    // Win check after draw (in case this was the last possible action, empty pile + empty hand).
     if (player.cardCount === 0 && this.drawPile.length === 0) {
       this.declareWinner(player.id);
       return { type: 'winner' };
@@ -414,6 +511,21 @@ export class Game {
     if (!modeCaps(this.mode).isTurnBased || this.winnerId) {
       return { type: 'rejected', reason: 'not-your-turn' };
     }
+
+    // Beat-selection phase: only `claim-beat` actions are accepted, and only from the
+    // player whose pick is currently up.
+    if (this.setupPhase === 'beat-selection') {
+      if (action.type !== 'claim-beat') return { type: 'rejected', reason: 'wrong-setup-phase' };
+      return this.claimBeat(playerId, action.beat);
+    }
+
+    // Chant-power pending: only `chant-power-resolve` from the winner is accepted. The
+    // active seat marker stays parked on the chant chik recipient until power resolves.
+    if (this.pendingChantPower) {
+      if (action.type !== 'chant-power-resolve') return { type: 'rejected', reason: 'no-pending-chant-power' };
+      return this.resolveChantPower(playerId, action.gifts);
+    }
+
     const seatIdx = this.players.findIndex((p) => p.id === playerId);
     if (seatIdx === -1 || seatIdx !== this.activeSeatIndex) {
       return { type: 'rejected', reason: 'not-your-turn' };
@@ -436,7 +548,78 @@ export class Game {
     if (action.type === 'play') {
       return this.versusPlay(seatIdx, action.cardId, action.targetSeatIndex);
     }
-    return this.versusDraw(seatIdx);
+    if (action.type === 'draw') {
+      return this.versusDraw(seatIdx);
+    }
+    return { type: 'rejected', reason: 'wrong-setup-phase' };
+  }
+
+  /**
+   * Beat-selection action. Validates the calling player is whose pick is up and the
+   * beat is unclaimed. Emits a beat-claimed event and advances pick order; when the
+   * order list empties, flips setup phase to 'play' and emits setup-completed.
+   */
+  claimBeat(playerId: PlayerId, beat: ChantWord): VersusActionResult {
+    if (this.setupPhase !== 'beat-selection') return { type: 'rejected', reason: 'wrong-setup-phase' };
+    const seatIdx = this.players.findIndex((p) => p.id === playerId);
+    if (seatIdx === -1) return { type: 'rejected', reason: 'not-your-turn' };
+    if (this.beatPickOrder.length === 0) return { type: 'rejected', reason: 'wrong-setup-phase' };
+    if (this.beatPickOrder[0] !== seatIdx) return { type: 'rejected', reason: 'not-your-beat-pick' };
+    const owner = this.beatOwners.get(beat);
+    if (owner === undefined || owner >= 0) return { type: 'rejected', reason: 'beat-already-claimed' };
+
+    this.beatOwners.set(beat, seatIdx);
+    this.beatsBySeat.get(seatIdx)?.push(beat);
+    this.beatPickOrder.shift();
+    this.emit({ kind: 'versusBeatClaimed', seatIndex: seatIdx, beat });
+
+    if (this.beatPickOrder.length === 0) {
+      this.setupPhase = 'play';
+      this.emit({ kind: 'versusSetupCompleted' });
+      this.emit({ kind: 'versusBeatPickerChanged', seatIndex: null });
+    } else {
+      this.emit({ kind: 'versusBeatPickerChanged', seatIndex: this.beatPickOrder[0] });
+    }
+    return { type: 'played', cardId: '', targetSeatIndex: seatIdx, chainTriggered: false };
+  }
+
+  /**
+   * Test/setup helper: auto-claim all remaining Beat Cards in pick order (random
+   * unclaimed beat for each picker). Useful for tests that want to skip the interactive
+   * setup phase, and as a fast-path for code that doesn't surface beat selection.
+   */
+  autoCompleteBeatSelection(): void {
+    while (this.beatPickOrder.length > 0) {
+      const seat = this.beatPickOrder[0];
+      const player = this.players[seat];
+      const unclaimed: ChantWord[] = [];
+      for (const w of CHANT_ORDER) {
+        const owner = this.beatOwners.get(w) ?? -1;
+        if (owner < 0) unclaimed.push(w);
+      }
+      if (!player || unclaimed.length === 0) break;
+      const beat = unclaimed[Math.floor(this.rng() * unclaimed.length)];
+      this.claimBeat(player.id, beat);
+    }
+  }
+
+  /** Whose pick is currently up during beat selection (null if selection is complete). */
+  currentBeatPicker(): PlayerId | null {
+    if (this.setupPhase !== 'beat-selection' || this.beatPickOrder.length === 0) return null;
+    return this.players[this.beatPickOrder[0]]?.id ?? null;
+  }
+
+  /** Snapshot of beats owned by each seat (key = seat index). Empty arrays are kept so
+   *  the view can render a "no beats" badge if needed. */
+  beatsOwnedBySeat(): Map<number, ChantWord[]> {
+    return new Map(this.beatsBySeat);
+  }
+
+  /** View-layer hook: signal that the chant-trigger overlay has finished animating
+   *  (recital + landed banner cleared from screen). Releases the AI controller from
+   *  the cooldown gate so play can resume. Safe to call multiple times. */
+  endChantTriggerWindow(): void {
+    this.chantTriggerCoolingDown = false;
   }
 
   private versusPlay(seatIdx: number, cardId: string, targetSeatIndex: number): VersusActionResult {
@@ -467,18 +650,18 @@ export class Game {
 
   /**
    * Wrong-move penalty (strict prompts mode only). The attempted play is reverted: the
-   * card stays in the player's hand and they instead draw 1 card. Fetch still applies —
+   * card stays in the player's hand and they instead draw 1 card. Fetch still applies -
    * if the penalty player's top prompt is a Fetch, the draw comes from the Fetch
    * owner's hand.
    *
    * Chain rule: a strict penalty IS a forced draw, so it follows the same chain bounce
-   * as any other forced draw — if the player who placed the current prompt is still
+   * as any other forced draw, if the player who placed the current prompt is still
    * the chain source, the turn bounces back to them. Conceptually this is equivalent
    * to the player passing because they couldn't play legally.
    */
   private applyStrictPenalty(seatIdx: number, card: Card, reason: StrictPenaltyReason): VersusActionResult {
     const player = this.players[seatIdx];
-    // No card movement — the card never leaves hand. Just force a draw + advance.
+    // No card movement, the card never leaves hand. Just force a draw + advance.
     // versusDraw handles Fetch, empty pile, Snap-drawn, AND the chain bounce.
     let penaltyCardId: string | null = null;
     const cardCountBefore = player.cardCount;
@@ -548,7 +731,7 @@ export class Game {
    * The seat array advances CLOCKWISE around the table as viewed from above
    * (south -> west -> north -> east). But each player sitting AT their seat and
    * looking inward has their right hand pointing the OTHER way around the table
-   * — counter-clockwise from above. So "to my right" at the table is the
+   *, counter-clockwise from above. So "to my right" at the table is the
    * PREVIOUS index in the seat array (mod n), and "to my left" is the next.
    */
   private neighborSeat(seatIdx: number, dir: 'left' | 'right'): number {
@@ -566,6 +749,13 @@ export class Game {
     }
     const player = this.players[seatIdx];
     const target = this.players[targetSeatIndex];
+
+    // Chant Trigger check, must happen BEFORE we advance the chant, since the trigger
+    // condition keys off the CURRENT beat position (= what beat the card was played on).
+    // Per rulebook: only the CLOSING Chik of a sequence (beat index 6) fires; the
+    // opening Chik (index 0) never triggers, even if it's a Chant Chik. The opener
+    // Halo-Halo is at index 0, so it's automatically excluded.
+    const isClosingChantChik = card.isChantChik && this.chant.currentIndex === 6 && this.opened;
 
     player.removeCard(card.id);
     target.promptStack.push(card);
@@ -588,7 +778,7 @@ export class Game {
 
     this.advanceChant();
 
-    // Win check.
+    // Win check (the player emptied their hand by playing the last card).
     if (player.cardCount === 0) {
       this.declareWinner(player.id);
       return { type: 'winner', playerId: player.id };
@@ -597,9 +787,177 @@ export class Game {
     // Chain bookkeeping: the player who just played is the new chain source. If target
     // is forced to draw on their turn, source gets a bonus turn.
     this.chainSourceSeatIndex = seatIdx;
-    this.setActiveSeat(targetSeatIndex, /* viaChain */ false);
+
+    if (isClosingChantChik) {
+      // The Chant Chik is now on `target.promptStack` (so it counts toward the sum).
+      // resolveChantTrigger handles emitting events, computing the landed beat, and
+      // either parking the engine (pendingChantPower) or resuming normally.
+      this.resolveChantTrigger(seatIdx, card.id, targetSeatIndex);
+    } else {
+      this.setActiveSeat(targetSeatIndex, /* viaChain */ false);
+    }
 
     return { type: 'played', cardId: card.id, targetSeatIndex, chainTriggered: false };
+  }
+
+  /**
+   * Chant Trigger resolution. Called when a Chant Chik is played as the closing Chik
+   * of a sequence. Steps:
+   *   1. Sum the count values of every player's active prompt (the chant chik itself
+   *      was already placed and counts toward the sum).
+   *   2. Compute the landed beat from `sum mod 7` per the rulebook table.
+   *   3. Pre-compute the per-step recital walk (clockwise from the receiving seat, one
+   *      beat per count, totaling `sum` steps). Stored in `pendingChantRecital` so the
+   *      view layer can animate the walk via versusChantRecitedBeat events.
+   *   4. Emit versusChantTriggered with the result. If the beat has an owner, park
+   *      the engine in pendingChantPower and emit versusChantPowerAwarded. If not,
+   *      resume play with the receiving seat taking the next turn.
+   */
+  private resolveChantTrigger(sourceSeatIdx: number, chantChikId: string, receiverSeatIdx: number): void {
+    // Opens the cooldown window, controller will park AI actions until the view layer
+    // calls endChantTriggerWindow() at the end of the recital + landed-banner tail.
+    this.chantTriggerCoolingDown = true;
+
+    const perSeatCounts: number[] = this.players.map((p) => p.topPrompt?.count ?? 0);
+    const total = perSeatCounts.reduce((a, b) => a + b, 0);
+
+    // Pre-compute the recital walk: starting from the receiver, FINISH that seat's
+    // count entirely before moving to the next seat clockwise. The chant beat advances
+    // monotonically (BEAT_ORDER, looping) so step N is the Nth beat overall, but the
+    // SEAT only changes when the current seat's count has been exhausted. This matches
+    // the rulebook's "recite the chant aloud, one beat per count" walk where each beat
+    // is "spoken at" the player whose prompt is currently being counted.
+    const n = this.players.length;
+    const recital: { seatIndex: number; beatWord: ChantWord }[] = [];
+    let step = 0;
+    for (let i = 0; i < n; i++) {
+      const seat = (receiverSeatIdx + i) % n;
+      const seatCount = perSeatCounts[seat] ?? 0;
+      for (let k = 0; k < seatCount; k++) {
+        const beat = BEAT_ORDER[step % BEAT_ORDER.length];
+        recital.push({ seatIndex: seat, beatWord: beat });
+        step++;
+      }
+    }
+    this.pendingChantRecital = recital;
+
+    // The landed beat is the beat spoken AT the Nth count. The recital walk above
+    // speaks BEAT_ORDER[step % 7] at zero-indexed step, so the Nth count (step N-1)
+    // speaks BEAT_ORDER[(total - 1) % 7]. That's the actual landed beat, using
+    // BEAT_ORDER[total % 7] would be off by one (the beat we'd land on if the
+    // chant continued ONE MORE count past the total).
+    //
+    // Per rulebook, sum mod 7 maps to:
+    //   0 → closing Chik (Chik beat owner wins)         → BEAT_ORDER[6]
+    //   1 → opening Chik (NO winner)                    → BEAT_ORDER[0]
+    //   2 → Wally, 3 → Hindo, 4 → Pop, 5 → Tambo, 6 → Riki
+    // Our BEAT_ORDER starts at opening chik (index 0) and ends at closing chik
+    // (index 6), so the BEAT_ORDER index for the landed beat is (total - 1) % 7.
+    // The no-winner-opening case is when total % 7 === 1 (rulebook mod 1).
+    const landedIdx = ((total - 1) % BEAT_ORDER.length + BEAT_ORDER.length) % BEAT_ORDER.length;
+    let landedBeat: ChantWord | 'no-winner-opening' | 'no-winner-unclaimed' = BEAT_ORDER[landedIdx];
+    let winnerSeatIndex: number | null = null;
+    const isOpeningChik = ((total % BEAT_ORDER.length) + BEAT_ORDER.length) % BEAT_ORDER.length === 1;
+    if (isOpeningChik) {
+      // Opening Chik → no winner regardless of who owns the Chik beat.
+      landedBeat = 'no-winner-opening';
+    } else {
+      const owner = this.beatOwners.get(landedBeat as ChantWord) ?? -1;
+      if (owner < 0) {
+        // Beat is unclaimed (4p/5p case). Land it but no power awarded.
+        landedBeat = 'no-winner-unclaimed';
+      } else {
+        winnerSeatIndex = owner;
+      }
+    }
+
+    this.emit({
+      kind: 'versusChantTriggered',
+      sourceSeatIndex: sourceSeatIdx,
+      receiverSeatIndex: receiverSeatIdx,
+      chantChikId,
+      total,
+      landedBeat,
+      winnerSeatIndex,
+      perSeatCounts,
+    });
+
+    // Emit each recital step so the view can animate the SpeechBubble walk.
+    for (let step = 0; step < recital.length; step++) {
+      const entry = recital[step];
+      this.emit({
+        kind: 'versusChantRecitedBeat',
+        seatIndex: entry.seatIndex,
+        beatWord: entry.beatWord,
+        step,
+        totalSteps: recital.length,
+      });
+    }
+
+    if (winnerSeatIndex !== null) {
+      // Park: the winner now owes a chant-power-resolve. Active seat is conceptually
+      // the receiver (next to play after resolve) but the only legal action is from
+      // the winner. submitVersusAction handles routing.
+      this.pendingChantPower = { winnerSeatIndex, receiverSeatIndex: receiverSeatIdx, chantChikId };
+      this.emit({ kind: 'versusChantPowerAwarded', winnerSeatIndex, receiverSeatIndex: receiverSeatIdx });
+      // Do NOT call setActiveSeat, wait for chant-power-resolve.
+    } else {
+      // No winner, resume normally with the receiver taking the next turn.
+      this.setActiveSeat(receiverSeatIdx, /* viaChain */ false);
+    }
+  }
+
+  /**
+   * Apply a chant-power-resolve action. Validates the caller is the pending winner,
+   * the gifts total 0–3 cards, every gifted card is in the winner's hand, and every
+   * recipient seat is valid (not the winner, in-range). Moves cards from winner.hand
+   * to recipients[].hand, emits versusChantPowerResolved, then either declares the
+   * winner (if their hand is now empty) or resumes play with the receiver.
+   */
+  private resolveChantPower(playerId: PlayerId, gifts: ChantPowerGift[]): VersusActionResult {
+    if (!this.pendingChantPower) return { type: 'rejected', reason: 'no-pending-chant-power' };
+    const { winnerSeatIndex, receiverSeatIndex } = this.pendingChantPower;
+    const seatIdx = this.players.findIndex((p) => p.id === playerId);
+    if (seatIdx !== winnerSeatIndex) return { type: 'rejected', reason: 'no-pending-chant-power' };
+    const winner = this.players[winnerSeatIndex];
+
+    const allCardIds = gifts.flatMap((g) => g.cardIds);
+    if (allCardIds.length > 3) return { type: 'rejected', reason: 'invalid-gift-count' };
+    if (new Set(allCardIds).size !== allCardIds.length) return { type: 'rejected', reason: 'invalid-gift-count' };
+    if (allCardIds.length > winner.cardCount) return { type: 'rejected', reason: 'invalid-gift-count' };
+    for (const cardId of allCardIds) {
+      if (!winner.hand.some((c) => c.id === cardId)) return { type: 'rejected', reason: 'card-not-in-hand' };
+    }
+    for (const g of gifts) {
+      if (g.recipientSeatIndex === winnerSeatIndex) return { type: 'rejected', reason: 'invalid-gift-target' };
+      if (g.recipientSeatIndex < 0 || g.recipientSeatIndex >= this.players.length) {
+        return { type: 'rejected', reason: 'invalid-gift-target' };
+      }
+    }
+
+    // Apply the gifts: pull each card out of winner's hand, into recipients'.
+    for (const g of gifts) {
+      const recipient = this.players[g.recipientSeatIndex];
+      for (const cardId of g.cardIds) {
+        const card = winner.removeCard(cardId);
+        if (card) recipient.addCard(card);
+      }
+    }
+
+    this.pendingChantPower = null;
+    this.pendingChantRecital = null;
+    this.emit({ kind: 'versusChantPowerResolved', winnerSeatIndex, gifts });
+
+    // Win-by-chant-power: if the winner gave away their last cards, they win.
+    if (winner.cardCount === 0) {
+      this.declareWinner(winner.id);
+      return { type: 'winner', playerId: winner.id };
+    }
+
+    // Otherwise play resumes from the receiver. The Chant Chik is now their prompt.
+    this.chainSourceSeatIndex = null;
+    this.setActiveSeat(receiverSeatIndex, /* viaChain */ false);
+    return { type: 'played', cardId: '', targetSeatIndex: receiverSeatIndex, chainTriggered: false };
   }
 
   private versusDraw(seatIdx: number): VersusActionResult {
@@ -644,7 +1002,7 @@ export class Game {
           this.emit({ kind: 'versusStopConverted' });
         }
       } else {
-        // Empty pile — no draw. Ensure Stops are converted.
+        // Empty pile, no draw. Ensure Stops are converted.
         if (!this.stopConverted) {
           this.stopConverted = true;
           this.emit({ kind: 'versusStopConverted' });
@@ -656,7 +1014,7 @@ export class Game {
     // Snap-when-drawn: if drawnCard is a Snap matching the current beat, PARK in a
     // pending state and let the holder pick a target. For the human this surfaces as
     // an inline overlay anchored to the deck; the AI controller auto-resolves it after
-    // a short delay so the player can see the AI's choice. No turn rotation here —
+    // a short delay so the player can see the AI's choice. No turn rotation here -
     // versusSnapPlay() drives that once the choice lands.
     if (drawnCard && drawnCard.prompt === 'snap' && drawnCard.matchesBeat(this.chant.current)) {
       this.pendingSnapDraw = { playerId: player.id, cardId: drawnCard.id };
@@ -671,11 +1029,11 @@ export class Game {
       this.emit({ kind: 'versusChainStarted', sourceSeatIndex: sourceSeat, targetSeatIndex: seatIdx });
       // chainSource takes the bonus turn next.
       this.setActiveSeat(sourceSeat, /* viaChain */ true);
-      // chainSource STAYS the chain source — if their bonus play causes another draw, they bounce again.
+      // chainSource STAYS the chain source, if their bonus play causes another draw, they bounce again.
       return { type: 'drew', cardId: drawnCard?.id ?? null, from: source, snapPlayedImmediately };
     }
 
-    // Chain ends (or never started). Play passes clockwise from the player who drew —
+    // Chain ends (or never started). Play passes clockwise from the player who drew -
     // unless the drawer IS the chain source (their own draw ends the chain; play passes
     // clockwise from THEIR seat).
     this.emit({ kind: 'versusChainEnded', reason: 'source-drew' });
@@ -691,8 +1049,8 @@ export class Game {
 
   /**
    * Commit a pending snap-play. Called after versusDraw lands a Snap that matches the
-   * current beat — the engine parks via `pendingSnapDraw` and waits for this. The
-   * drawer MUST play the snap (no "keep" — that option was deliberately removed); the
+   * current beat, the engine parks via `pendingSnapDraw` and waits for this. The
+   * drawer MUST play the snap (no "keep", that option was deliberately removed); the
    * only choice is target seat.
    *
    * Validation:
@@ -800,10 +1158,10 @@ export class Game {
   /**
    * Which seats can the player at `seatIdx` target right now?
    *  - Pre-open Halo-Halo opening: any non-self seat.
-   *  - Strict-prompts mode ON: any non-self seat — illegal targets / wrong beat will
+   *  - Strict-prompts mode ON: any non-self seat, illegal targets / wrong beat will
    *    be allowed by the engine and converted to a penalty draw. The UI's wheel widens
    *    accordingly; the human learns through feedback instead of being blocked.
-   *  - Strict-prompts mode OFF (default): standard rulebook gating — beat must match
+   *  - Strict-prompts mode OFF (default): standard rulebook gating, beat must match
    *    and direction must obey the prompt.
    *
    * `ignoreStrictMode = true` always computes rulebook-legal targets regardless of the

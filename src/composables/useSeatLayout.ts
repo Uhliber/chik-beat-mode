@@ -3,7 +3,7 @@ import { computed, type Ref } from 'vue';
 export interface SeatPosition {
   /** 0..1 normalized position around the table */
   angle: number;
-  /** CSS transform: translate(...) rotate(...) — applied to the seat container */
+  /** CSS transform: translate(...) rotate(...), applied to the seat container */
   transform: string;
   /** Rotation in degrees so cards/UI face the table center */
   rotation: number;
@@ -24,7 +24,7 @@ export type SeatLayoutMode = 'radial' | 'semicircle' | 'solo';
  *    the central main base, and the slam wheel can naturally point at each opponent.
  *
  * @param count   number of seats (2..6)
- * @param radius  CSS distance from table center (px) — same scale for both modes
+ * @param radius  CSS distance from table center (px), same scale for both modes
  * @param mode    'radial' (full circle) or 'semicircle' (P1 bottom, opponents top arc)
  */
 export function useSeatLayout(
@@ -35,7 +35,7 @@ export function useSeatLayout(
   const seats = computed<SeatPosition[]>(() => {
     const m = typeof mode === 'string' ? mode : mode.value;
     // SOLO: a single seat at dead centre. The hand renders as a circle around this anchor,
-    // not via PlayerSeat — so all that matters is x = y = 0 and no rotation.
+    // not via PlayerSeat, so all that matters is x = y = 0 and no rotation.
     if (m === 'solo') {
       return [{ angle: 0, x: 0, y: 0, rotation: 0, transform: 'translate(0px, 0px)' }];
     }
@@ -48,7 +48,7 @@ export function useSeatLayout(
       //   y =  R · cos(φ)   (CSS y grows downward → +R = bottom, −R = top)
       // Seat 0 (P1) at φ = 0 (south). Opponents (1..N-1) span the top semicircle
       // [π/2, 3π/2] in even slices, so seat 1 is upper-LEFT and seat N-1 is upper-RIGHT.
-      // Seats are NOT rotated — the player pill, owned base etc. all stay UPRIGHT on
+      // Seats are NOT rotated, the player pill, owned base etc. all stay UPRIGHT on
       // mobile so they're always readable. Only the (x, y) position varies.
       const opponents = n - 1;
       for (let i = 0; i < n; i++) {

@@ -135,3 +135,9 @@
   0%, 100% { transform: scale(0.7); opacity: 0.45; }
   50%      { transform: scale(1.15); opacity: 1; }
 }
+
+/* Chant Trigger ambiance: handled entirely by the SVG mask in ChantTriggerOverlay
+ * (evenodd punch-outs around the lottery banner + per-seat count spotlights).
+ * Keeping no brightness/saturate filter here means the highlighted elements retain
+ * their true colors — important for the chant-word tints on pips, popovers, and the
+ * lottery banner. */

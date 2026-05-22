@@ -5,7 +5,7 @@
  *  - SOLO   : single player vs. the clock, 2 bases (Left, Right), Left/Right/Free prompts only.
  *  - VERSUS : 3-6 players, turn-based, full v1.0 ruleset with all six prompts.
  *
- * The engine is framework-agnostic — no Vue, no Capacitor.
+ * The engine is framework-agnostic, no Vue, no Capacitor.
  */
 
 export const CHANT_ORDER = ['chik', 'wally', 'hindo', 'pop', 'tambo', 'riki'] as const;
@@ -21,20 +21,20 @@ export const CHANT_POINTS: Record<ChantWord, number> = {
 };
 
 /**
- * Prompt — what the card does when it sits in front of a player (Versus) or which base
+ * Prompt, what the card does when it sits in front of a player (Versus) or which base
  * it can be slammed on (Solo, where only `right`, `left`, `free` appear in the deck).
  */
 export type CardPrompt = 'right' | 'left' | 'free' | 'stop' | 'snap' | 'fetch';
 
 export const CARD_PROMPTS: readonly CardPrompt[] = ['right', 'left', 'free', 'stop', 'snap', 'fetch'] as const;
 
-/** Solo physical-base side. Versus has no center bases — prompts attach to seats instead. */
+/** Solo physical-base side. Versus has no center bases, prompts attach to seats instead. */
 export type BaseSide = 'left' | 'right';
 
 export type GameMode = 'solo' | 'versus' | 'playground';
 
 /**
- * Playground deck composition — total count of each prompt in the custom-built deck.
+ * Playground deck composition, total count of each prompt in the custom-built deck.
  * Within each prompt, words are distributed with Chik weighted 2× (matches the canonical
  * v1.0 ratio). So a multiplier-of-7 makes the math clean: at N×7, the prompt contributes
  * 2N Chik cards plus N of each other word.
@@ -60,6 +60,10 @@ export type SoloAction =
 
 export type SoloPenaltyReason = 'wrong-base' | 'wrong-beat' | 'unnecessary-draw';
 
+/** Solo bonus reasons, flip side of penalties. Each triggers a green time-credit
+ *  bubble. Extensible: future bonuses (perfect-run, fast-finish, etc.) drop in here. */
+export type SoloBonusReason = 'chant-chik-closing';
+
 export type SoloActionResult =
   | { type: 'opened'; cardId: string; baseSide: BaseSide }
   | { type: 'success'; cardId: string; baseSide: BaseSide }
@@ -74,7 +78,17 @@ export type SoloActionResult =
 export type VersusAction =
   | { type: 'play'; cardId: string; targetSeatIndex: number }
   | { type: 'draw' }
-  | { type: 'snap-play'; targetSeatIndex: number };
+  | { type: 'snap-play'; targetSeatIndex: number }
+  | { type: 'claim-beat'; beat: ChantWord }
+  | { type: 'chant-power-resolve'; gifts: ChantPowerGift[] };
+
+/** One bundle of cards from the chant-power winner to a single recipient. The engine
+ *  accepts an array of these per resolve action so the winner can split up to 3 cards
+ *  across multiple opponents (or pile them all on one). */
+export interface ChantPowerGift {
+  recipientSeatIndex: number;
+  cardIds: string[];
+}
 
 export type VersusRejectReason =
   | 'not-your-turn'
@@ -83,7 +97,13 @@ export type VersusRejectReason =
   | 'illegal-target'
   | 'stopped'
   | 'self-target'
-  | 'no-pending-snap';
+  | 'no-pending-snap'
+  | 'wrong-setup-phase'
+  | 'beat-already-claimed'
+  | 'not-your-beat-pick'
+  | 'no-pending-chant-power'
+  | 'invalid-gift-target'
+  | 'invalid-gift-count';
 
 export type StrictPenaltyReason = 'wrong-beat' | 'illegal-target' | 'stopped';
 
@@ -105,6 +125,7 @@ export type GameEvent =
   | { kind: 'soloSlam'; cardId: string; baseSide: BaseSide; cardWord: ChantWord; cardPrompt: CardPrompt }
   | { kind: 'soloDraw'; cardId: string }
   | { kind: 'soloPenalty'; reason: SoloPenaltyReason; cardId?: string; baseSide?: BaseSide; penaltyMs: number }
+  | { kind: 'soloBonus'; reason: SoloBonusReason; bonusMs: number; cardId?: string; baseSide?: BaseSide }
   // Versus events
   | { kind: 'versusPlay'; playerId: PlayerId; cardId: string; targetSeatIndex: number; cardWord: ChantWord; cardPrompt: CardPrompt }
   | { kind: 'versusDraw'; playerId: PlayerId; cardId: string | null; from: 'pile' | 'hand'; fromPlayerId?: PlayerId }
@@ -114,7 +135,16 @@ export type GameEvent =
   | { kind: 'versusTurnChanged'; playerId: PlayerId; seatIndex: number; viaChain: boolean }
   | { kind: 'versusChainStarted'; sourceSeatIndex: number; targetSeatIndex: number }
   | { kind: 'versusChainEnded'; reason: 'target-played' | 'source-drew' }
-  | { kind: 'versusStopConverted' }   // draw pile emptied — Stops become Left/Right
+  | { kind: 'versusStopConverted' }   // draw pile emptied, Stops become Left/Right
+  // Beat ownership (setup phase, Versus / Playground)
+  | { kind: 'versusBeatPickerChanged'; seatIndex: number | null }
+  | { kind: 'versusBeatClaimed'; seatIndex: number; beat: ChantWord }
+  | { kind: 'versusSetupCompleted' }
+  // Chant Trigger (Versus / Playground)
+  | { kind: 'versusChantTriggered'; sourceSeatIndex: number; receiverSeatIndex: number; chantChikId: string; total: number; landedBeat: ChantWord | 'no-winner-opening' | 'no-winner-unclaimed'; winnerSeatIndex: number | null; perSeatCounts: number[] }
+  | { kind: 'versusChantRecitedBeat'; seatIndex: number; beatWord: ChantWord; step: number; totalSteps: number }
+  | { kind: 'versusChantPowerAwarded'; winnerSeatIndex: number; receiverSeatIndex: number }
+  | { kind: 'versusChantPowerResolved'; winnerSeatIndex: number; gifts: ChantPowerGift[] }
   // Shared
   | { kind: 'chantAdvanced'; from: ChantWord; to: ChantWord }
   | { kind: 'winner'; playerId: PlayerId };

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * iOS-style grouped section card. Optional title above the card. Children should be
- * SettingsRow instances — the group renders thin internal dividers between them.
+ * SettingsRow instances, the group renders thin internal dividers between them.
  */
 defineProps<{ title?: string }>();
 </script>
@@ -36,7 +36,7 @@ defineProps<{ title?: string }>();
 }
 /**
  * Thin internal dividers between rows. The previous implementation put the divider as
- * `display: block; margin-left: 56px;` inside each row via `::after` — which made the
+ * `display: block; margin-left: 56px;` inside each row via `::after`, which made the
  * pseudo-element a FLEX ITEM in the row's flex layout (because each row is `display:
  * flex`). That phantom 56px-margin flex item at the end of the row was pushing the
  * actual `.row-control` 56px short of the right edge. The fix: absolutely-positioned

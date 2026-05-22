@@ -2,18 +2,18 @@ import { ref } from 'vue';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 
 /**
- * Synthesised audio + haptic feedback for the game. No audio files — Web Audio generates
+ * Synthesised audio + haptic feedback for the game. No audio files, Web Audio generates
  * short tones with exponential decay envelopes; haptics go through @capacitor/haptics so
  * they fire on real iOS/Android devices and no-op gracefully on the web.
  *
  * Two families of feedback live here:
- *  - `ding(kind)` — the BEAT/Play mode metronome. 'middle' for in-between ticks, 'high'
+ *  - `ding(kind)`, the BEAT/Play mode metronome. 'middle' for in-between ticks, 'high'
  *    for the final tick of YOUR turn (DING!), 'low' for the final tick of someone else's.
- *  - `fx(kind)` — UI/game-event feedback. 'tap' for card or button presses, 'success' for
+ *  - `fx(kind)`, UI/game-event feedback. 'tap' for card or button presses, 'success' for
  *    a correct slam, 'fail' for a miscall / penalty / wrong card. Each kind layers a
  *    subtle haptic on top of the audio.
  *
- * `audioMuted` only gates audio. Haptics fire regardless — silent feedback is welcome
+ * `audioMuted` only gates audio. Haptics fire regardless, silent feedback is welcome
  * even when the player has muted sound for a public-place play.
  */
 export type DingKind = 'middle' | 'high' | 'low';
@@ -60,7 +60,7 @@ function ding(kind: DingKind): void {
   osc.stop(now + 0.2);
 }
 
-/** Subtle 1.5 kHz sine click — short, percussive, used for any tap (button + card). */
+/** Subtle 1.5 kHz sine click, short, percussive, used for any tap (button + card). */
 function playTap(c: AudioContext): void {
   const now = c.currentTime;
   const osc = c.createOscillator();
@@ -76,14 +76,16 @@ function playTap(c: AudioContext): void {
   osc.stop(now + 0.06);
 }
 
-/** Two-tone arpeggio E5 → G5, "you got it" feel. */
-function playSuccess(c: AudioContext): void {
+/** Two-tone arpeggio E5 → G5, "you got it" feel.
+ *  `pitchMul` shifts both tones up by a constant ratio, used in Solo to climb the
+ *  combo ladder (1.0 = base, 1.25 = +major third, 1.5 = +perfect fifth). */
+function playSuccess(c: AudioContext, pitchMul = 1): void {
   const now = c.currentTime;
   for (const [freq, offset] of [[660, 0], [784, 0.045]] as const) {
     const osc = c.createOscillator();
     const gain = c.createGain();
     osc.type = 'sine';
-    osc.frequency.value = freq;
+    osc.frequency.value = freq * pitchMul;
     const t = now + offset;
     gain.gain.setValueAtTime(0, t);
     gain.gain.linearRampToValueAtTime(0.18, t + 0.005);
@@ -95,7 +97,7 @@ function playSuccess(c: AudioContext): void {
   }
 }
 
-/** Buzzy descending tone — triangle wave dropping 240 → 160 Hz. */
+/** Buzzy descending tone, triangle wave dropping 240 → 160 Hz. */
 function playFail(c: AudioContext): void {
   const now = c.currentTime;
   const osc = c.createOscillator();
@@ -118,14 +120,20 @@ const HAPTIC_BY_FX: Record<FxKind, ImpactStyle> = {
   fail: ImpactStyle.Heavy,
 };
 
-function fx(kind: FxKind): void {
+/** Options for `fx`. `pitchMul` is honored by the 'success' kind only, used to
+ *  ramp the slam tone up the combo ladder in Solo. Other kinds ignore it. */
+export interface FxOpts {
+  pitchMul?: number;
+}
+
+function fx(kind: FxKind, opts: FxOpts = {}): void {
   // Audio: gated by mute, lazy-init AudioContext on first call.
   if (!audioMuted.value) {
     const c = ensureContext();
     if (c) {
       if (c.state === 'suspended') c.resume().catch(() => undefined);
       if (kind === 'tap') playTap(c);
-      else if (kind === 'success') playSuccess(c);
+      else if (kind === 'success') playSuccess(c, opts.pitchMul ?? 1);
       else playFail(c);
     }
   }

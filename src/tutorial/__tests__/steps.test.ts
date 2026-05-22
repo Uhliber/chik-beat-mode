@@ -14,7 +14,7 @@ import type { GameEvent } from '@/game/types';
 function setupGameForMode(mode: 'solo' | 'versus'): Game {
   const g = new Game(seededRng(101));
   if (mode === 'solo') g.setupSolo();
-  else g.setupVersus(4);
+  else g.setupVersus(4); g.autoCompleteBeatSelection();
   return g;
 }
 
@@ -60,9 +60,13 @@ async function runStepAndExpectMatch(step: import('../steps').TutorialStep, mode
   };
 }
 
-describe('SOLO_STEPS — each step\'s canonical action satisfies its matcher', () => {
+describe('SOLO_STEPS, each step\'s canonical action satisfies its matcher', () => {
   for (const step of SOLO_STEPS) {
-    it(`${step.id}`, async () => {
+    // Steps flagged `requiresCascadeState` depend on engine state that only exists
+    // after the prior steps have run. The full-walk-through test below covers
+    // them in sequence; running them in isolation here is a guaranteed penalty.
+    const testFn = step.requiresCascadeState ? it.skip : it;
+    testFn(`${step.id}`, async () => {
       const result = await runStepAndExpectMatch(step, 'solo');
       if (!result.ok) throw new Error(`${step.id}: ${result.reason}`);
       expect(result.ok).toBe(true);
@@ -70,9 +74,13 @@ describe('SOLO_STEPS — each step\'s canonical action satisfies its matcher', (
   }
 });
 
-describe('VERSUS_STEPS — each step\'s canonical action satisfies its matcher', () => {
+describe('VERSUS_STEPS, each step\'s canonical action satisfies its matcher', () => {
   for (const step of VERSUS_STEPS) {
-    it(`${step.id}`, async () => {
+    // Steps flagged `requiresCascadeState` depend on prior steps' engine state
+    // (orchestrated counts, drawn cards, etc). The full-walk-through test below
+    // covers them in sequence; isolation would re-fail by design.
+    const testFn = step.requiresCascadeState ? it.skip : it;
+    testFn(`${step.id}`, async () => {
       const result = await runStepAndExpectMatch(step, 'versus');
       if (!result.ok) throw new Error(`${step.id}: ${result.reason}`);
       expect(result.ok).toBe(true);
@@ -80,7 +88,7 @@ describe('VERSUS_STEPS — each step\'s canonical action satisfies its matcher',
   }
 });
 
-describe('Full tutorial walk-through — each step\'s state is independent of prior steps', () => {
+describe('Full tutorial walk-through, each step\'s state is independent of prior steps', () => {
   it('Versus: all 10 steps advance cleanly in sequence with canonical actions', { timeout: 30000 }, async () => {
     const g = setupGameForMode('versus');
     for (let i = 0; i < VERSUS_STEPS.length; i++) {
@@ -105,10 +113,13 @@ describe('Full tutorial walk-through — each step\'s state is independent of pr
       }
     }
     // No exception thrown → all steps walked through cleanly.
-    expect(VERSUS_STEPS.length).toBe(11);
+    // v1.2: original 10 + claim-beat (3) + counts/chant-chik/trigger-play/power/done
+    // = 16 total. The trigger-play step orchestrates a real Chant Trigger so the
+    // player experiences the recital + win animation.
+    expect(VERSUS_STEPS.length).toBe(16);
   });
 
-  it('Solo: all 5 steps advance cleanly in sequence with canonical actions', async () => {
+  it('Solo: all steps advance cleanly in sequence with canonical actions', async () => {
     const g = setupGameForMode('solo');
     for (let i = 0; i < SOLO_STEPS.length; i++) {
       const step = SOLO_STEPS[i];
@@ -124,11 +135,14 @@ describe('Full tutorial walk-through — each step\'s state is independent of pr
         throw new Error(`step ${i} (${step.id}): submitSoloAction returned penalty "${result.reason}"`);
       }
     }
-    expect(SOLO_STEPS.length).toBe(5);
+    // Solo tutorial reworked into a single end-to-end run, fixed hand at the
+    // start, scripted demo segment in the middle, narrative wrap-up at the end.
+    // 8 interactive/narrative + 3 cleanup = 11 total.
+    expect(SOLO_STEPS.length).toBe(11);
   });
 });
 
-describe('matchExpect — discriminator coverage', () => {
+describe('matchExpect, discriminator coverage', () => {
   it('rejects non-matching event kinds', () => {
     const g = setupGameForMode('versus');
     const fakePlay: GameEvent = {
